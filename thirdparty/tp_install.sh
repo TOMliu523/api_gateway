@@ -2,6 +2,9 @@
 
 #1. The name of the compressed file needs to match the name of the directory where it is compressed plus the suffix .zip  (dirname.zip  --> unzip  --> dirname)
 #2. It is best to keep the version number used in the zip name
+#3. dependencies:
+    # cmake make gcc g++ libpcre2-dev meson ninja-build
+    # libnuma-dev pkgconf libpcap-dev
 
 set -ex
 
@@ -51,6 +54,10 @@ CURDIR=`pwd`/`dirname $0`
 INSTALL=${CURDIR}/../install
 [[ $# -eq 2 ]] && INSTALL="$1"
 
+# Dependent apt-get -install -y pkgconf
+export PKG_CONFIG_PATH=${INSTALL}/lib/pkgconfig:${PKG_CONFIG_PATH}
+export LD_LIBRARY_PATH=${INSTALL}/lib:${LD_LIBRARY_PATH}
+
 function install_cmake()
 {
     zip_file=$1
@@ -79,10 +86,6 @@ function install_make()
         "make install"
 }
 
-# Dependent apt-get -install -y pkgconf
-export PKG_CONFIG_PATH=${INSTALL}/lib/pkgconfig:${PKG_CONFIG_PATH}
-export LD_LIBRARY_PATH=${INSTALL}/lib:${LD_LIBRARY_PATH}
-
 # Go to the third-party library directory
 pushd $CURDIR
 
@@ -101,14 +104,13 @@ install_cmake jansson-2.14.1.tar.bz2 ${INSTALL}/lib/libjansson.a
 install_cmake libyang-3.12.2.zip ${INSTALL}/lib/libyang.so
 install_cmake sysrepo-master.zip ${INSTALL}/lib/libsysrepo.so
 
-#Dependent installation tools: meson ninja-build
-#Dependent library: libnuma-dev
 install_lib \
-    dpdk-stable-24.11.2.tar.xz \
+    dpdk-stable-23.11.4.tar.xz \
     ${INSTALL}/lib/libdpdk.a \
-    "meson setup build --prefix=${INSTALL}" \
-    "ninja -C build" \
-    "ninja -C build install"
+    "meson --prefix=${INSTALL} build" \
+    "cd build" \
+    "ninja" \
+    "ninja install"
 
 # Compilation complete, return
 popd
