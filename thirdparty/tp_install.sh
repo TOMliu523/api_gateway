@@ -103,8 +103,14 @@ install_cmake libyang-3.12.2.zip ${INSTALL}/lib/libyang.so
 install_cmake sysrepo-master.zip ${INSTALL}/lib/libsysrepo.so
 
 install_lib \
+    LuaJIT-2.1.zip \
+    ${INSTALL}/usr/local/lib/libluajit-5.1.so \
+    "make -j ${PROC}" \
+    "make install DESTDIR=${INSTALL}"
+
+install_lib \
     dpdk-stable-23.11.4.tar.xz \
-    ${INSTALL}/lib/libdpdk.a \
+    ${INSTALL}/lib/x86_64-linux-gnu/librte_ring.so \
     "meson --prefix=${INSTALL} build" \
     "cd build" \
     "ninja -j {PROC}" \
