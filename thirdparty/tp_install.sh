@@ -87,6 +87,11 @@ function install_make()
 # Go to the third-party library directory
 pushd $CURDIR
 
+install_make jemalloc-5.3.0.tar.bz2 ${INSTALL}/lib/libjemalloc.so
+install_cmake jansson-2.14.1.tar.bz2 ${INSTALL}/lib/libjansson.a
+install_cmake libyang-3.12.2.zip ${INSTALL}/lib/libyang.so
+install_cmake sysrepo-master.zip ${INSTALL}/lib/libsysrepo.so
+
 install_lib \
     mongoose-master.zip \
     ${INSTALL}/lib/libmongoose.a \
@@ -96,11 +101,6 @@ install_lib \
     "mkdir -p ${INSTALL}/lib" \
     "install mongoose.h ${INSTALL}/include" \
     "install libmongoose.a ${INSTALL}/lib"
-
-install_make jemalloc-5.3.0.tar.bz2 ${INSTALL}/lib/libjemalloc.so
-install_cmake jansson-2.14.1.tar.bz2 ${INSTALL}/lib/libjansson.a
-install_cmake libyang-3.12.2.zip ${INSTALL}/lib/libyang.so
-install_cmake sysrepo-master.zip ${INSTALL}/lib/libsysrepo.so
 
 install_lib \
     LuaJIT-2.1.zip \
