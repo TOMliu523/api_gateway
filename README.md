@@ -2,7 +2,7 @@
  
 SYSTEM ubuntu 22.04   
 OS 5.15.0     
-DPDK 23.11.4    
+DPDK 24.11.2  
 
 # DPDK24.11.2
 
