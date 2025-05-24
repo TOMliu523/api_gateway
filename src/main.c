@@ -9,7 +9,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+
 #include <rte_eal.h>
+#include <rte_cycles.h>
+#include <rte_random.h>
 
 #include "log.h"
 
@@ -28,6 +31,10 @@ int main(int argc, char *argv[])
         LOG_ERROR("");
         return EXIT_FAILURE;
     }
+
+    rte_srand(rte_rdtsc());
+
+
 
     return EXIT_SUCCESS;
 }

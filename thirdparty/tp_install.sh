@@ -109,7 +109,7 @@ install_lib \
     "make install DPREFIX=${INSTALL}"
 
 install_lib \
-    dpdk-stable-23.11.4.tar.xz \
+    dpdk-stable-24.11.2.tar.xz \
     ${INSTALL}/lib/x86_64-linux-gnu/librte_ring.so \
     "meson setup build --prefix=${INSTALL}" \
     "cd build" \
