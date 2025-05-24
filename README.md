@@ -20,6 +20,7 @@ apt -y install zip
 apt -y install libnuma-dev
 apt -y install libpcre2-dev
 apt -y install meson ninja-build
+apt -y install pkgconf
 pip3 install pyelftools
 ```
 
@@ -28,6 +29,6 @@ pip3 install pyelftools
 mkdir build
 cd build
 cmake -DCMAKE_INSTALL_PREFIX=`pwd`/.install ..
-make -j
+make -j 4
 make install
 ```

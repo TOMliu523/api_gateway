@@ -107,7 +107,7 @@ install_lib \
     ${INSTALL}/lib/libdpdk.a \
     "meson --prefix=${INSTALL} build" \
     "cd build" \
-    "ninja" \
+    "ninja -j {PROC}" \
     "ninja install"
 
 # Compilation complete, return
