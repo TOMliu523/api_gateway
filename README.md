@@ -1,8 +1,8 @@
 # api_gateway
  
-SYSTEM ubuntu 22.04  
-OS 5.15.0 
-DPDK 23.11.4 
+SYSTEM ubuntu 22.04   
+OS 5.15.0     
+DPDK 23.11.4    
 
 # DPDK23.11 limits
 
