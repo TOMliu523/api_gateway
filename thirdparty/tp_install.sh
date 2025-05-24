@@ -2,9 +2,6 @@
 
 #1. The name of the compressed file needs to match the name of the directory where it is compressed plus the suffix .zip  (dirname.zip  --> unzip  --> dirname)
 #2. It is best to keep the version number used in the zip name
-#3. dependencies:
-    # cmake make gcc g++ libpcre2-dev meson ninja-build
-    # libnuma-dev pkgconf libpcap-dev
 
 set -ex
 
@@ -50,6 +47,7 @@ function install_lib()
 }
 
 # variable
+PROC=4
 CURDIR=`pwd`/`dirname $0`
 INSTALL=${CURDIR}/../install
 [[ $# -eq 2 ]] && INSTALL="$1"
@@ -69,7 +67,7 @@ function install_cmake()
         "mkdir -p build" \
         "cd build" \
         "cmake -DCMAKE_INSTALL_PREFIX=${INSTALL} .." \
-        "make -j 4" \
+        "make -j ${PROC}" \
         "make install"
 }
 
@@ -82,7 +80,7 @@ function install_make()
         $zip_file \
         $lib \
         "./configure --prefix=${INSTALL}" \
-        "make -j 4" \
+        "make -j ${PROC}" \
         "make install"
 }
 
