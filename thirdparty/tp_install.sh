@@ -104,14 +104,14 @@ install_lib \
 
 install_lib \
     LuaJIT-2.1.zip \
-    ${INSTALL}/usr/local/lib/libluajit-5.1.so \
+    ${INSTALL}/lib/libluajit-5.1.so \
     "make -j ${PROC}" \
-    "make install DESTDIR=${INSTALL}"
+    "make install DPREFIX=${INSTALL}"
 
 install_lib \
     dpdk-stable-23.11.4.tar.xz \
     ${INSTALL}/lib/x86_64-linux-gnu/librte_ring.so \
-    "meson --prefix=${INSTALL} build" \
+    "meson setup build --prefix=${INSTALL}" \
     "cd build" \
     "ninja -j {PROC}" \
     "ninja install"
