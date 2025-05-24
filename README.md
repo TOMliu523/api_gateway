@@ -4,7 +4,7 @@ SYSTEM ubuntu 22.04
 OS 5.15.0     
 DPDK 23.11.4    
 
-# DPDK23.11 limits
+# DPDK24.11.2
 
 C11(GCC 5.0+)  
 Clang(3.6+)   
