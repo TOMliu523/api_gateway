@@ -13,7 +13,7 @@ meson(0.53.2+)
 pyelftools(0.22+)  
 pkg-config or pkgconf  
 
-# Install dependency:
+# Install dependency
 ```
 apt -y install cmake
 apt -y install zip
