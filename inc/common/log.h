@@ -7,6 +7,14 @@
 #ifndef __LOG_H__
 #define __LOG_H__
 
+#define DEBUG 0
+#define INFO 1
+#define ERROR 2
+
+#ifndef LOG_LEVEL
+#define LOG_LEVEL DEBUG
+#endif // LOG_LEVEL
+
 #if (LOG_LEVEL == DEBUG)
 #define LOG_DEBUG(format, ...) log_write("DEBUG: " format, ##__VA_ARGS__)
 #define LOG_INFO(format, ...) log_write("INFO: " format, ##__VA_ARGS__)

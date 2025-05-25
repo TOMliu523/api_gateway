@@ -22,19 +22,19 @@ int main(int argc, char *argv[])
 
     ret = daemon(0, 0);
     if (ret != 0) {
-        fprintf(stderr, "daemon failure: %s\n", strerror(errno));
+        LOG_ERROR("daemon failure: %s\n", strerror(errno));
         return EXIT_FAILURE;
     }
 
     ret = rte_eal_init(argc, argv);
     if (ret != 0) {
-        LOG_ERROR("");
+        LOG_ERROR("rte_eal_init failure.\n");
         return EXIT_FAILURE;
     }
 
     rte_srand(rte_rdtsc());
 
-
+    LOG_INFO("SUCCESS.\n");
 
     return EXIT_SUCCESS;
 }
