@@ -12,7 +12,7 @@
 #endif // CACHE_LINE
 
 #ifndef INLINE
-#define INLINE always_inline inline __attribute__((always_inline))
+#define INLINE inline __attribute__((always_inline))
 #endif // INLINE
 
 #ifndef FALLTHROUGH
