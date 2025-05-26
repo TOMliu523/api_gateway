@@ -27,7 +27,7 @@ static PROC_INIT void log_init(void)
 
     for (;;) {
         if (access(LOG_FILENAME, F_OK) == 0) {
-            fd = open(LOG_FILENAME, O_APPEND);
+            fd = open(LOG_FILENAME, O_WRONLY | O_APPEND);
             if (fd >= 0) {
                 break;
             } else if (fd < 0 && errno != ENOENT) {
@@ -35,7 +35,7 @@ static PROC_INIT void log_init(void)
                 return;
             }
         } else {
-            fd = open(LOG_FILENAME, O_CREAT | O_EXCL | O_APPEND, 0666);
+            fd = open(LOG_FILENAME, O_CREAT | O_EXCL | O_WRONLY | O_APPEND, 0666);
             if (fd >= 0) {
                 break;
             } else if (fd < 0 && errno != EEXIST) {
