@@ -55,14 +55,6 @@ static INLINE void single_instance(void)
         }
     }
 
-    nbytes = snprintf(buffer, sizeof(buffer), "process startup time: %lu\nprocess number: %u\n", time(NULL), getpid());
-    if (nbytes < 0) {
-        LOG_ERROR("snprintf failure: %s\n", strerror(errno));
-        exit(EXIT_FAILURE);
-    }
-
-    write(s_lock_fd, buffer, nbytes);
-
     lock.l_type = F_WRLCK;
     lock.l_whence = SEEK_SET;
     lock.l_start = nbytes;
@@ -73,6 +65,14 @@ static INLINE void single_instance(void)
         LOG_ERROR("lock %s failure: %s\n", RUN_LOCK_FILE, strerror(errno));
         exit(EXIT_FAILURE);
     }
+
+    nbytes = snprintf(buffer, sizeof(buffer), "process startup time: %lu\nprocess number: %u\n", time(NULL), getpid());
+    if (nbytes < 0) {
+        LOG_ERROR("snprintf failure: %s\n", strerror(errno));
+        exit(EXIT_FAILURE);
+    }
+
+    write(s_lock_fd, buffer, nbytes);
 }
 
 int main(int argc, char *argv[])
@@ -96,6 +96,8 @@ int main(int argc, char *argv[])
     rte_srand(rte_rdtsc());
 
     LOG_INFO("SUCCESS.\n");
+
+    // for (;;);
 
     return EXIT_SUCCESS;
 }
