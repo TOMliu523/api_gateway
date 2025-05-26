@@ -13,6 +13,7 @@
 #include <sys/types.h>
 
 #include <rte_eal.h>
+#include <rte_errno.h>
 #include <rte_cycles.h>
 #include <rte_random.h>
 
@@ -88,16 +89,21 @@ int main(int argc, char *argv[])
     }
 
     ret = rte_eal_init(argc, argv);
-    if (ret != 0) {
-        LOG_ERROR("rte_eal_init failure.\n");
+    if (ret < 0) {
+        LOG_ERROR("rte_eal_init failure. %s \n", rte_strerror(rte_errno));
         return EXIT_FAILURE;
     }
+
+    argc -= ret;
+    argv += ret;
 
     rte_srand(rte_rdtsc());
 
     LOG_INFO("SUCCESS.\n");
 
     // for (;;);
+
+
 
     return EXIT_SUCCESS;
 }
