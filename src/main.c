@@ -13,6 +13,7 @@
 #include <sys/types.h>
 
 #include <rte_eal.h>
+#include <rte_lcore.h>
 #include <rte_errno.h>
 #include <rte_cycles.h>
 #include <rte_random.h>
@@ -76,8 +77,19 @@ static INLINE void single_instance(void)
     write(s_lock_fd, buffer, nbytes);
 }
 
+static int worker_task(void *arg)
+{
+    LOG_INFO("thread number: %d\n", rte_lcore_id());
+
+    for (;;) {
+#include <time.h>
+        sleep(1);
+    }
+}
+
 int main(int argc, char *argv[])
 {
+    int i = 0;
     int ret = 0;
 
     single_instance();
@@ -101,9 +113,11 @@ int main(int argc, char *argv[])
 
     LOG_INFO("SUCCESS.\n");
 
-    // for (;;);
+    RTE_LCORE_FOREACH_WORKER(i) {
+        rte_eal_remote_launch(worker_task, NULL, i);
+    }
 
-
+    worker_task(NULL);
 
     return EXIT_SUCCESS;
 }
