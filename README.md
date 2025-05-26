@@ -21,6 +21,7 @@ apt -y install libnuma-dev
 apt -y install libpcre2-dev
 apt -y install meson ninja-build
 apt -y install pkgconf
+apt -y install python3-pip
 pip3 install pyelftools
 ```
 
