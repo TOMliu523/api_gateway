@@ -19,7 +19,7 @@
 
 #define LOG_FILENAME "/var/log/api_gateway.log"
 
-static FILE *s_log_file;
+static int s_log_fd;
 
 static PROC_INIT void log_init(void)
 {
@@ -45,12 +45,12 @@ static PROC_INIT void log_init(void)
         }
     }
 
-    s_log_file = fdopen(fd, "a");
+    s_log_fd = fd;
 }
 
 static PROC_FINI void log_fini(void)
 {
-    fclose(s_log_file);
+    close(s_log_fd);
 }
 
 void log_write(const char *format, ...)
@@ -58,6 +58,6 @@ void log_write(const char *format, ...)
     va_list ap;
 
     va_start(ap, format);
-    vfprintf(s_log_file, format, ap);
+    vdprintf(s_log_fd, format, ap);
     va_end(ap);
 }
