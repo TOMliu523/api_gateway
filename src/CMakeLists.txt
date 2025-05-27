@@ -8,6 +8,9 @@ set(COMMON_INC ${INC}/common)
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(DPDK REQUIRED IMPORTED_TARGET libdpdk)
+pkg_check_modules(LIBYANG REQUIRED IMPORTED_TARGET libyang)
+pkg_check_modules(SYSREPO REQUIRED IMPORTED_TARGET sysrepo)
+pkg_check_modules(JANSSON REQUIRED IMPORTED_TARGET jansson)
 pkg_check_modules(JEMALLOC REQUIRED IMPORTED_TARGET jemalloc)
 
 add_subdirectory(${COMMON})
@@ -21,6 +24,10 @@ target_include_directories(${PROJECT_NAME} PRIVATE ${TP_INC})
 target_link_libraries(${PROJECT_NAME} PRIVATE
                       ${API}
                       ${COMMON}
+                      -L${TP_LIB} -lmongoose
+                      PkgConfig::LIBYANG
+                      PkgConfig::SYSREPO
+                      PkgConfig::JANSSON
                       PkgConfig::DPDK
                       PkgConfig::JEMALLOC)
 

@@ -41,7 +41,7 @@ static INLINE void single_instance(void)
             if (s_lock_fd >= 0) {
                 break;
             } else if (s_lock_fd < 0 && errno != EEXIST) {
-                LOG_ERROR("create %s failure: %s\n", RUN_LOCK_FILE, strerror(errno));
+                LOG_ERROR("create %s failure: %s", RUN_LOCK_FILE, strerror(errno));
                 exit(EXIT_FAILURE);
             } else {
                 continue;
@@ -51,12 +51,18 @@ static INLINE void single_instance(void)
             if (s_lock_fd >= 0) {
                 break;
             } else if (s_lock_fd < 0 && errno != ENOENT) {
-                LOG_ERROR("open %s failure: %s.\n", RUN_LOCK_FILE, strerror(errno));
+                LOG_ERROR("open %s failure: %s.", RUN_LOCK_FILE, strerror(errno));
                 exit(EXIT_FAILURE);
             } else {
                 continue;
             }
         }
+    }
+
+    nbytes = snprintf(buffer, sizeof(buffer), "process startup time: %lu\nprocess number: %u", time(NULL), getpid());
+    if (nbytes < 0) {
+        LOG_ERROR("snprintf failure: %s", strerror(errno));
+        exit(EXIT_FAILURE);
     }
 
     lock.l_type = F_WRLCK;
@@ -66,13 +72,7 @@ static INLINE void single_instance(void)
 
     ret = fcntl(s_lock_fd, F_SETLK, &lock);
     if (ret < 0) {
-        LOG_ERROR("lock %s failure: %s\n", RUN_LOCK_FILE, strerror(errno));
-        exit(EXIT_FAILURE);
-    }
-
-    nbytes = snprintf(buffer, sizeof(buffer), "process startup time: %lu\nprocess number: %u\n", time(NULL), getpid());
-    if (nbytes < 0) {
-        LOG_ERROR("snprintf failure: %s\n", strerror(errno));
+        LOG_ERROR("lock %s failure: %s", RUN_LOCK_FILE, strerror(errno));
         exit(EXIT_FAILURE);
     }
 
@@ -81,7 +81,7 @@ static INLINE void single_instance(void)
 
 static int worker_task(void *arg)
 {
-    LOG_INFO("thread number: %d\n", rte_lcore_id());
+    LOG_INFO("thread number: %d", rte_lcore_id());
 
     for (;;) {
 #include <time.h>
@@ -95,17 +95,17 @@ int main(int argc, char *argv[])
     int ret = 0;
     pthread_t tid = {0};
 
-    single_instance();
-
     ret = daemon(0, 0);
     if (ret != 0) {
-        LOG_ERROR("daemon failure: %s\n", strerror(errno));
+        LOG_ERROR("daemon failure: %s", strerror(errno));
         return EXIT_FAILURE;
     }
 
+    single_instance();
+
     ret = rte_eal_init(argc, argv);
     if (ret < 0) {
-        LOG_ERROR("rte_eal_init failure. %s \n", rte_strerror(rte_errno));
+        LOG_ERROR("rte_eal_init failure. %s ", rte_strerror(rte_errno));
         return EXIT_FAILURE;
     }
 
@@ -116,16 +116,15 @@ int main(int argc, char *argv[])
 
     ret = pthread_create(&tid, NULL, api_startup, NULL);
     if (ret != 0) {
-        LOG_ERROR("startup api thread failure: %s\n", strerror(ret));
+        LOG_ERROR("startup api thread failure: %s", strerror(ret));
         return EXIT_FAILURE;
     }
 
-    LOG_INFO("SUCCESS.\n");
+    LOG_INFO("STARTUP DPDK THREAD.");
 
     RTE_LCORE_FOREACH_WORKER(i) {
         rte_eal_remote_launch(worker_task, NULL, i);
     }
-
     worker_task(NULL);
 
     return EXIT_SUCCESS;

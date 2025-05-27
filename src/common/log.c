@@ -31,7 +31,7 @@ static PROC_INIT void log_init(void)
             if (fd >= 0) {
                 break;
             } else if (fd < 0 && errno != ENOENT) {
-                fprintf(stderr, "Open log file(%s) failure.\n", LOG_FILENAME);
+                fprintf(stderr, "Open log file(%s) failure.", LOG_FILENAME);
                 return;
             }
         } else {
@@ -39,7 +39,7 @@ static PROC_INIT void log_init(void)
             if (fd >= 0) {
                 break;
             } else if (fd < 0 && errno != EEXIST) {
-                fprintf(stderr, "create log file(%s) failure.\n", LOG_FILENAME);
+                fprintf(stderr, "create log file(%s) failure.", LOG_FILENAME);
                 return;
             }
         }
