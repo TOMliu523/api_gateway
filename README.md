@@ -25,15 +25,6 @@ apt -y install python3-pip
 pip3 install pyelftools
 ```
 
-# compile command
-```
-mkdir build
-cd build
-cmake -DCMAKE_INSTALL_PREFIX=`pwd`/.install ..
-make -j 4
-make install
-```
-
 # system config
 You only need to update “GRUB_CMDLINE_LINUX_DEFAULT”
 ```
@@ -49,4 +40,13 @@ GRUB_CMDLINE_LINUX=""
 
 # update-grub
 # reboot
+```
+
+# compile command
+```
+mkdir build
+cd build
+cmake -DCMAKE_INSTALL_PREFIX=`pwd`/.install ..
+make -j 4
+make install
 ```
