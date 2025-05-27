@@ -35,6 +35,9 @@ make install
 ```
 
 # system config
+You only need to update “GRUB_CMDLINE_LINUX_DEFAULT”, after editing it,  
+use the “update-grub” command to make sure that the system boots next time with the latest configuration,   
+and finally “reboot” to make it take effect.
 ```
 # cat /etc/default/grub
 
@@ -45,4 +48,7 @@ GRUB_DISTRIBUTOR=`lsb_release -i -s 2> /dev/null || echo Debian`
 GRUB_CMDLINE_LINUX_DEFAULT="default_hugepagesz=1G hugepagesz=1G hugepages=32 isolcpus=11-23 nohz_full=11-23
 rcu_nocbs=11-23 numa=off crashkernel=auto console=tty0 console=ttyS0,115200n8 iommu=off"
 GRUB_CMDLINE_LINUX=""
+
+# update-grub # update-grub2
+# reboot
 ```
