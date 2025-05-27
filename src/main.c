@@ -6,10 +6,11 @@
 
 #include <errno.h>
 #include <stdio.h>
+#include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <fcntl.h>
+#include <pthread.h>
 #include <sys/types.h>
 
 #include <rte_eal.h>
@@ -19,6 +20,7 @@
 #include <rte_random.h>
 
 #include "log.h"
+#include "api.h"
 #include "macro.h"
 
 #define RUN_LOCK_FILE "/run/lock/api_gateway.lock"
@@ -91,6 +93,7 @@ int main(int argc, char *argv[])
 {
     int i = 0;
     int ret = 0;
+    pthread_t tid = {0};
 
     single_instance();
 
@@ -110,6 +113,12 @@ int main(int argc, char *argv[])
     argv += ret;
 
     rte_srand(rte_rdtsc());
+
+    ret = pthread_create(&tid, NULL, api_startup, NULL);
+    if (ret != 0) {
+        LOG_ERROR("startup api thread failure: %s\n", strerror(ret));
+        return EXIT_FAILURE;
+    }
 
     LOG_INFO("SUCCESS.\n");
 

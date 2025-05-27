@@ -12,7 +12,6 @@ set(INSTALL ${PROJECT_SOURCE_DIR}/install)
 
 set(TP_LIB ${INSTALL}/lib)
 set(TP_INC ${INSTALL}/include)
-set(COMMON_INC ${INC}/common)
 set(DPDK_LIB ${INSTALL}/lib/x86_64-linux-gnu)
 
 set(ENV{PKG_CONFIG_PATH} "${DPDK_LIB}/pkgconfig:${TP_LIB}/pkgconfig:$ENV{PKG_CONFIG_PATH}")
