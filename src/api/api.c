@@ -7,8 +7,10 @@
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 #include <unistd.h>
+#include <stdbool.h>
 #include <net/if.h>
 #include <pthread.h>
 #include <arpa/inet.h>
@@ -20,14 +22,59 @@
 
 #include "log.h"
 #include "api.h"
+#include "list.h"
 #include "api_inner.h"
 
+#define API_METHOD_TABLE 128
 #define API_LISTEN_BUF_LEN 32
 #define API_LISTEN_HTTP_PORT 8080
 #define API_LISTEN_HTTPS_PORT 8443
 #define API_LISTEN_IFACE "enp3s0"
 #define API_LISTEN_FORMAT "%s:%d"
 #define API_JSON_FORMAT "Content-Type: application/json\r"
+
+struct api_method_info {
+    const char *url;
+    size_t len;
+    api_action_t action;
+};
+
+struct api_method {
+    struct list_head post[API_METHOD_TABLE];
+    struct list_head delete[API_METHOD_TABLE];
+    struct list_head get[API_METHOD_TABLE];
+    bool init;
+};
+
+static struct api_method s_method;
+
+static uint32_t api_url_hash(const void *data, size_t len)
+{
+    uint32_t sum = 0;
+
+    for (size_t i = 0; i < len; i++) {
+        sum += ((uint8_t *)data)[i];
+    }
+
+    return sum;
+}
+
+static void api_method_init(void)
+{
+    struct api_method *method = &s_method;
+
+    if (method->init) {
+        return;
+    }
+
+    for (int i = 0; i < API_METHOD_TABLE; i++) {
+        INIT_LIST_HEAD(&method->post[i]);
+        INIT_LIST_HEAD(&method->delete[i]);
+        INIT_LIST_HEAD(&method->get[i]);
+    }
+
+    method->init = true;
+}
 
 static void api_listen_get(char *http_url, char *https_url, int len)
 {
@@ -123,19 +170,19 @@ _rep404:
     return;
 }
 
-void api_post_register(const char *url, api_cb_t cb)
+void api_post_register(const char *url, api_action_t action)
 {
-
+    api_method_init();
 }
 
-void api_delete_register(const char *url, api_cb_t cb)
+void api_delete_register(const char *url, api_action_t action)
 {
-
+    api_method_init();
 }
 
-void api_get_register(const char *url, api_cb_t cb)
+void api_get_register(const char *url, api_action_t action)
 {
-
+    api_method_init();
 }
 
 void *api_startup(void *arg)

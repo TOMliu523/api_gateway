@@ -1,5 +1,5 @@
 # api_gateway
-cmake_minimum_required(VERSION 3.9)
+cmake_minimum_required(VERSION 3.20)
 project(api_gateway)
 
 set(CMAKE_C_FLAGS "-std=gnu99 -ggdb -Werror")

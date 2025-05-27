@@ -11,6 +11,14 @@
 #define CACHE_LINE 64
 #endif // CACHE_LINE
 
+#ifndef LIKEYLY
+#define LIKEYLY(x) __builtin_expect(!!(x), 1)
+#endif // LIKELY
+
+#ifndef UNLIKELY
+#define UNLIKELY(x) __builtin_expect(!!(x), 0)
+#endif // UNLIKELY
+
 #ifndef INLINE
 #define INLINE inline __attribute__((always_inline))
 #endif // INLINE

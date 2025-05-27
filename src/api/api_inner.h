@@ -27,10 +27,10 @@
     } \
     static void *func(char *url, void *json)
 
-typedef void (*api_cb_t)(char *, void *);
+typedef void *(*api_action_t)(const char *, void *);
 
-extern void api_post_register(const char *url, api_cb_t cb);
-extern void api_delete_register(const char *url, api_cb_t cb);
-extern void api_get_register(const char *url, api_cb_t cb);
+extern void api_post_register(const char *url, api_action_t cb);
+extern void api_delete_register(const char *url, api_action_t cb);
+extern void api_get_register(const char *url, api_action_t cb);
 
 #endif // __API_INNER_H__
