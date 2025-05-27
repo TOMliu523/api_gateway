@@ -1,24 +1,17 @@
 # api_gateway
 
-SYSTEM ubuntu 22.04
-
-OS 5.15.0
-
-DPDK 24.11.2
+SYSTEM ubuntu 22.04   
+OS 5.15.0  
+DPDK 24.11.2  
 
 # DPDK24.11.2
 
-C11(GCC 5.0+)
-
-Clang(3.6+)
-
-python(3.6+)
-
-meson(0.53.2+)
-
-pyelftools(0.22+)
-
-pkg-config or pkgconf
+C11(GCC 5.0+)  
+Clang(3.6+)  
+python(3.6+)  
+meson(0.53.2+)  
+pyelftools(0.22+)  
+pkg-config or pkgconf  
 
 # Install dependency
 ```
