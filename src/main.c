@@ -97,6 +97,7 @@ static void signal_process(void)
     signal(SIGUSR2, SIG_IGN);
     signal(SIGTTIN, SIG_IGN);
     signal(SIGTTOU, SIG_IGN);
+    signal(SIGCHLD, SIG_IGN);
 }
 
 int main(int argc, char *argv[])
