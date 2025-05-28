@@ -56,6 +56,31 @@ struct api_method {
 };
 
 static struct api_method s_method;
+static const char *s_tls_ca =
+    "-----BEGIN CERTIFICATE-----\n"
+    "MIIBFTCBvAIJAMNTFtpfcq8NMAoGCCqGSM49BAMCMBMxETAPBgNVBAMMCE1vbmdv\n"
+    "b3NlMB4XDTI0MDUwNzE0MzczNloXDTM0MDUwNTE0MzczNlowEzERMA8GA1UEAwwI\n"
+    "TW9uZ29vc2UwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAASuP+86T/rOWnGpEVhl\n"
+    "fxYZ+pjMbCmDZ+vdnP0rjoxudwRMRQCv5slRlDK7Lxue761sdvqxWr0Ma6TFGTNg\n"
+    "epsRMAoGCCqGSM49BAMCA0gAMEUCIQCwb2CxuAKm51s81S6BIoy1IcandXSohnqs\n"
+    "us64BAA7QgIgGGtUrpkgFSS0oPBlCUG6YPHFVw42vTfpTC0ySwAS0M4=\n"
+    "-----END CERTIFICATE-----\n";
+static const char *s_tls_cert =
+    "-----BEGIN CERTIFICATE-----\n"
+    "MIIBMTCB2aADAgECAgkAluqkgeuV/zUwCgYIKoZIzj0EAwIwEzERMA8GA1UEAwwI\n"
+    "TW9uZ29vc2UwHhcNMjQwNTA3MTQzNzM2WhcNMzQwNTA1MTQzNzM2WjARMQ8wDQYD\n"
+    "VQQDDAZzZXJ2ZXIwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAASo3oEiG+BuTt5y\n"
+    "ZRyfwNr0C+SP+4M0RG2pYkb2v+ivbpfi72NHkmXiF/kbHXtgmSrn/PeTqiA8M+mg\n"
+    "BhYjDX+zoxgwFjAUBgNVHREEDTALgglsb2NhbGhvc3QwCgYIKoZIzj0EAwIDRwAw\n"
+    "RAIgTXW9MITQSwzqbNTxUUdt9DcB+8pPUTbWZpiXcA26GMYCIBiYw+DSFMLHmkHF\n"
+    "+5U3NXW3gVCLN9ntD5DAx8LTG8sB\n"
+    "-----END CERTIFICATE-----\n";
+static const char *s_tls_key =
+    "-----BEGIN EC PRIVATE KEY-----\n"
+    "MHcCAQEEIAVdo8UAScxG7jiuNY2UZESNX/KPH8qJ0u0gOMMsAzYWoAoGCCqGSM49\n"
+    "AwEHoUQDQgAEqN6BIhvgbk7ecmUcn8Da9Avkj/uDNERtqWJG9r/or26X4u9jR5Jl\n"
+    "4hf5Gx17YJkq5/z3k6ogPDPpoAYWIw1/sw==\n"
+    "-----END EC PRIVATE KEY-----\n";
 
 static uint32_t _api_url_hash(const void *data, size_t len)
 {
@@ -227,6 +252,7 @@ static void api_listen_get(char *http_url, char *https_url, int len)
 static void _api_http_error(struct mg_connection *c, int errcode, struct mg_str *method, struct mg_str *uri)
 {
     static const char *s_errmsg[] = {
+        [400] = "Bad Request",
         [404] = "Page not found",
         [405] = "Method Not Allowed",
         [500] = "Internal server error",
@@ -291,8 +317,9 @@ _quit:
 
 static void _api_do(struct mg_connection *c, enum API_METHOD type, struct mg_http_message *msg)
 {
+    int ret = 0;
     json_t *reqobj = NULL;
-    json_t *retobj = NULL;
+    json_t *repobj = NULL;
     json_error_t error = {0};
     const struct api_method_node *api = NULL;
 
@@ -302,7 +329,7 @@ static void _api_do(struct mg_connection *c, enum API_METHOD type, struct mg_htt
 
     api = _api_get(type, msg->uri.buf, msg->uri.len);
     if (api == NULL) {
-        _api_http_error(c, 500, &msg->method, &msg->uri);
+        _api_http_error(c, 404, &msg->method, &msg->uri);
         goto _quit;
     }
 
@@ -311,26 +338,26 @@ static void _api_do(struct mg_connection *c, enum API_METHOD type, struct mg_htt
         if (reqobj == NULL) {
             LOG_ERROR("load failure. line: %d, column: %d, position: %d, source: %s, text: %s",
                       error.line, error.column, error.position, error.source, error.text);
-            _api_http_error(c, 500, &msg->method, &msg->uri);
+            _api_http_error(c, 400, &msg->method, &msg->uri);
             goto _quit;
         }
     }
 
     strncpy(url, msg->uri.buf, (msg->uri.len > BUFSIZ ? BUFSIZ : msg->uri.len) - 1);
-    retobj = api->action(url, reqobj);
-    if (retobj == NULL) {
+    repobj = api->action(url, reqobj);
+    if (repobj == NULL) {
         _api_http_error(c, 500, &msg->method, &msg->uri);
         goto _quit;
     }
 
-    _api_http_succ(c, retobj);
+    _api_http_succ(c, repobj);
 
 _quit:
     if (reqobj != NULL) {
         json_decref(reqobj);
     }
-    if (retobj != NULL) {
-        json_decref(retobj);
+    if (repobj != NULL) {
+        json_decref(repobj);
     }
     return;
 }
@@ -341,6 +368,14 @@ static void _api_load_cb(struct mg_connection *c, int event, void *event_data)
 
     switch (event) {
     case MG_EV_ACCEPT:
+        if (c->fn_data != NULL) {
+            struct mg_tls_opts opts = {
+                .ca = mg_str(s_tls_ca),
+                .cert = mg_str(s_tls_cert),
+                .key = mg_str(s_tls_key),
+            };
+            mg_tls_init(c, &opts);
+        }
         break;
 
     case MG_EV_HTTP_MSG:
