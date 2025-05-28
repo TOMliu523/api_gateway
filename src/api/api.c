@@ -13,13 +13,14 @@
 #include <stdbool.h>
 #include <net/if.h>
 #include <pthread.h>
-#include <jansson.h>
 #include <arpa/inet.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 
+#include <sysrepo.h>
 #include <jansson.h>
 #include <mongoose.h>
+#include <libyang/libyang.h>
 
 #include "log.h"
 #include "api.h"

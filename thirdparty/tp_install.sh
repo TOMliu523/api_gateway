@@ -47,7 +47,7 @@ function install_lib()
 }
 
 # variable
-PROC=4
+PROC=8
 CURDIR=`pwd`/`dirname $0`
 INSTALL=${CURDIR}/../install
 [[ $# -eq 2 ]] && INSTALL="$1"
@@ -107,6 +107,13 @@ install_lib \
     ${INSTALL}/lib/libluajit-5.1.so \
     "make -j ${PROC}" \
     "make install DPREFIX=${INSTALL}"
+
+install_lib \
+    openssl-3.5.0.tar.gz \
+    ${INSTALL}/lib64/libcrypto.so \
+    "./config --prefix=${INSTALL}" \
+    "make -j ${PROC}" \
+    "make install"
 
 install_lib \
     dpdk-stable-24.11.2.tar.xz \
