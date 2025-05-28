@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <fcntl.h>
 #include <stdlib.h>
+#include <signal.h>
 #include <string.h>
 #include <unistd.h>
 #include <pthread.h>
@@ -89,6 +90,15 @@ static int worker_task(void *arg)
     }
 }
 
+static void signal_process(void)
+{
+    signal(SIGTERM, SIG_IGN);
+    signal(SIGUSR1, SIG_IGN);
+    signal(SIGUSR2, SIG_IGN);
+    signal(SIGTTIN, SIG_IGN);
+    signal(SIGTTOU, SIG_IGN);
+}
+
 int main(int argc, char *argv[])
 {
     int i = 0;
@@ -102,6 +112,7 @@ int main(int argc, char *argv[])
     }
 
     single_instance();
+    signal_process();
 
     ret = rte_eal_init(argc, argv);
     if (ret < 0) {
