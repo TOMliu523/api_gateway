@@ -309,6 +309,8 @@ static void _api_do(struct mg_connection *c, enum API_METHOD type, struct mg_htt
     if (msg->body.len != 0) {
         reqobj = json_loadb(msg->body.buf, msg->body.len, 0, &error);
         if (reqobj == NULL) {
+            LOG_ERROR("load failure. line: %d, column: %d, position: %d, source: %s, text: %s",
+                      error.line, error.column, error.position, error.source, error.text);
             _api_http_error(c, 500, &msg->method, &msg->uri);
             goto _quit;
         }
