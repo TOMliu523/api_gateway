@@ -7,36 +7,46 @@
 #ifndef __API_INNER_H__
 #define __API_INNER_H__
 
+#include "list.h"
 #include "macro.h"
 
 #define API_POST(url, func) \
     static PROC_INIT void func##_register(func, #url) { \
         api_post_register(#url, func); \
     } \
-    static void *func(char *url, void *json)
+    static void *func(char *url, void *json, void *session)
 
 #define API_DELETE(url, func) \
     static PROC_INIT void func##_register(func, #url) { \
         api_delete_register(#url, func); \
     } \
-    static void *func(char *url, void *json)
+    static void *func(char *url, void *json, void *session)
 
 #define API_GET(url, func) \
     static PROC_INIT void func##_register(func, #url) { \
         api_get_register(#url, func) \
     } \
-    static void *func(char *url, void *json)
+    static void *func(char *url, void *json, void *session)
 
 /*
  * @param1: request url
  * @param2: request body(format: json)
  * @return: json
  */
-typedef void *(*api_action_t)(const char *, void *);
+typedef void *(*api_action_fn_t)(const char *, void *, void *);
 
-extern void api_post_register(const char *url, api_action_t cb);
-extern void api_delete_register(const char *url, api_action_t cb);
-extern void api_get_register(const char *url, api_action_t cb);
+struct api_method_node {
+    struct list_head node;
+    const char *url;
+    size_t len;
+    uint32_t hash;
+    api_action_fn_t action;
+};
+
+extern void api_post_register(const char *url, api_action_fn_t cb);
+extern void api_put_register(const char *url, api_action_fn_t cb);
+extern void api_delete_register(const char *url, api_action_fn_t cb);
+extern void api_get_register(const char *url, api_action_fn_t cb);
 /*
  * {
  *     "code" : 0,
@@ -61,5 +71,10 @@ extern void *api_success(void *obj);
  * @param: json object or NULL
  */
 extern void *api_failure(int errcode, const char *errmsg);
+
+extern int api_store_query(const struct api_method_node *api, const char *buf, size_t len, void **req);
+extern int api_store_update(const struct api_method_node *api, const char *buf, size_t len, void **req);
+extern int api_store_create(const struct api_method_node *api, const char *buf, size_t len, void **req);
+extern int api_store_delete(const struct api_method_node *api, const char *buf, size_t len, void **req);
 
 #endif // __API_INNER_H__

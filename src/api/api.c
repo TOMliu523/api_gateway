@@ -38,17 +38,10 @@
 
 enum API_METHOD {
     API_METHOD_POST = 0,
+    API_METHOD_PUT,
     API_METHOD_DELETE,
     API_METHOD_GET,
     API_METHOD_MAX,
-};
-
-struct api_method_node {
-    struct list_head node;
-    const char *url;
-    size_t len;
-    uint32_t hash;
-    api_action_t action;
 };
 
 struct api_method {
@@ -111,7 +104,7 @@ static void api_method_init(void)
     method->init = true;
 }
 
-static int _api_register(struct list_head *head, const char *url, size_t len, uint32_t hash, api_action_t action)
+static int _api_register(struct list_head *head, const char *url, size_t len, uint32_t hash, api_action_fn_t action)
 {
     int ret = 0;
     struct list_head *prev = head;
@@ -193,7 +186,7 @@ static const struct api_method_node *_api_get(enum API_METHOD type, const char *
     return NULL;
 }
 
-static void _api_set(enum API_METHOD type, const char *url, api_action_t action)
+static void _api_set(enum API_METHOD type, const char *url, api_action_fn_t action)
 {
     int ret = 0;
     uint32_t hash = 0;
@@ -316,56 +309,12 @@ _quit:
     return NULL;
 }
 
-static void _api_do(struct mg_connection *c, enum API_METHOD type, struct mg_http_message *msg)
-{
-    int ret = 0;
-    json_t *reqobj = NULL;
-    json_t *repobj = NULL;
-    json_error_t error = {0};
-    const struct api_method_node *api = NULL;
-
-    static __thread char url[BUFSIZ] = "";
-
-    RUNTIME_ASSERT(type < API_METHOD_MAX);
-
-    api = _api_get(type, msg->uri.buf, msg->uri.len);
-    if (api == NULL) {
-        _api_http_error(c, 404, &msg->method, &msg->uri);
-        goto _quit;
-    }
-
-    if (msg->body.len != 0) {
-        reqobj = json_loadb(msg->body.buf, msg->body.len, 0, &error);
-        if (reqobj == NULL) {
-            LOG_ERROR("load failure. line: %d, column: %d, position: %d, source: %s, text: %s",
-                      error.line, error.column, error.position, error.source, error.text);
-            _api_http_error(c, 400, &msg->method, &msg->uri);
-            goto _quit;
-        }
-    }
-
-    strncpy(url, msg->uri.buf, (msg->uri.len > BUFSIZ ? BUFSIZ : msg->uri.len) - 1);
-    repobj = api->action(url, reqobj);
-    if (repobj == NULL) {
-        _api_http_error(c, 500, &msg->method, &msg->uri);
-        goto _quit;
-    }
-
-    _api_http_succ(c, repobj);
-
-_quit:
-    if (reqobj != NULL) {
-        json_decref(reqobj);
-    }
-    if (repobj != NULL) {
-        json_decref(repobj);
-    }
-    return;
-}
-
 static void _api_load_cb(struct mg_connection *c, int event, void *event_data)
 {
+    int ret = 0;
+    void *req = NULL;
     struct mg_http_message *msg = NULL;
+    const struct api_method_node *api = NULL;
 
     switch (event) {
     case MG_EV_ACCEPT:
@@ -384,35 +333,85 @@ static void _api_load_cb(struct mg_connection *c, int event, void *event_data)
         switch (msg->method.len) {
         case 3:
             if (strncasecmp(msg->method.buf, "GET", 3) == 0) {
-                _api_do(c, API_METHOD_GET, msg);
-                return;
+                api = _api_get(API_METHOD_GET, msg->uri.buf, msg->uri.len);
+                if (api == NULL) {
+                    _api_http_error(c, 404, &msg->method, &msg->uri);
+                    return;
+                }
 
+                ret = api_store_query(api, msg->body.buf, msg->body.len, &req);
+                if (ret != 0) {
+                    _api_http_error(c, 500, &msg->method, &msg->uri);
+                    return;
+                }
+
+                _api_http_succ(c, req);
+                return;
             } else if (strncasecmp(msg->method.buf, "PUT", 3) == 0) {
-                _api_do(c, API_METHOD_POST, msg);
+                api = _api_get(API_METHOD_PUT, msg->uri.buf, msg->uri.len);
+                if (api == NULL) {
+                    _api_http_error(c, 404, &msg->method, &msg->uri);
+                    return;
+                }
+
+                ret = api_store_update(api, msg->body.buf, msg->body.len, &req);
+                if (ret != 0) {
+                    _api_http_error(c, 500, &msg->method, &msg->uri);
+                    return;
+                }
+
+                _api_http_succ(c, req);
+                return;
             } else {
                 _api_http_error(c, 405, &msg->method, &msg->uri);
             }
-            return;
+            break;
 
         case 4:
             if (strncasecmp(msg->method.buf, "POST", 4) == 0) {
-                _api_do(c, API_METHOD_POST, msg);
+                api = _api_get(API_METHOD_POST, msg->uri.buf, msg->uri.len);
+                if (api == NULL) {
+                    _api_http_error(c, 500, &msg->method, &msg->uri);
+                    return;
+                }
+
+                ret = api_store_create(api, msg->body.buf, msg->body.len, &req);
+                if (ret != 0) {
+                    _api_http_error(c, 500, &msg->method, &msg->uri);
+                    return;
+                }
+
+                _api_http_succ(c, req);
+                return;
             } else {
                 _api_http_error(c, 405, &msg->method, &msg->uri);
             }
-            return;
+            break;
 
         case 6:
             if (strncasecmp(msg->method.buf, "DELETE", 6) == 0) {
-                _api_do(c, API_METHOD_DELETE, msg);
+                api = _api_get(API_METHOD_DELETE, msg->uri.buf, msg->uri.len);
+                if (api == NULL) {
+                    _api_http_error(c, 500, &msg->method, &msg->uri);
+                    return;
+                }
+
+                ret = api_store_delete(api, msg->body.buf, msg->body.len, &req);
+                if (ret != 0) {
+                    _api_http_error(c, 500, &msg->method, &msg->uri);
+                    return;
+                }
+
+                _api_http_succ(c, req);
+                return;
             } else {
                 _api_http_error(c, 405, &msg->method, &msg->uri);
             }
-            return;
+            break;
 
         default:
             _api_http_error(c, 405, &msg->method, &msg->uri);
-            return;
+            break;
         }
         break;
 
@@ -421,17 +420,22 @@ static void _api_load_cb(struct mg_connection *c, int event, void *event_data)
     }
 }
 
-void api_post_register(const char *url, api_action_t action)
+void api_post_register(const char *url, api_action_fn_t action)
 {
     _api_set(API_METHOD_POST, url, action);
 }
 
-void api_delete_register(const char *url, api_action_t action)
+void api_put_register(const char *url, api_action_fn_t action)
+{
+    _api_set(API_METHOD_PUT, url, action);
+}
+
+void api_delete_register(const char *url, api_action_fn_t action)
 {
     _api_set(API_METHOD_DELETE, url, action);
 }
 
-void api_get_register(const char *url, api_action_t action)
+void api_get_register(const char *url, api_action_fn_t action)
 {
     _api_set(API_METHOD_GET, url, action);
 }
