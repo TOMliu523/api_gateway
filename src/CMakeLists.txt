@@ -22,9 +22,12 @@ target_include_directories(${PROJECT_NAME} PRIVATE ${API_INC})
 target_include_directories(${PROJECT_NAME} PRIVATE ${TP_INC})
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
+                      -Wl,--whole-archive
+                      -L.
                       ${API}
                       ${COMMON}
                       -L${TP_LIB} -lmongoose
+                      -Wl,--no-whole-archive
                       PkgConfig::LIBYANG
                       PkgConfig::SYSREPO
                       PkgConfig::JANSSON

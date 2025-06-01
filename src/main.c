@@ -19,6 +19,7 @@
 #include <rte_errno.h>
 #include <rte_cycles.h>
 #include <rte_random.h>
+#include <rte_thread.h>
 
 #include "log.h"
 #include "api.h"
@@ -82,6 +83,9 @@ static INLINE void single_instance(void)
 
 static int worker_task(void *arg)
 {
+    char thread_name[64] = "";
+    snprintf(thread_name, sizeof(thread_name), "DPDK_%d", rte_lcore_id());
+    rte_thread_set_name(rte_thread_self(), thread_name);
     LOG_INFO("thread number: %d", rte_lcore_id());
 
     for (;;) {

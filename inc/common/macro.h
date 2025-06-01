@@ -43,4 +43,20 @@
 #define ALIGNED(n) __attribute__((aligned(n)))
 #endif // ALIGNED
 
+#ifndef ARR_NUMS
+#define ARR_NUMS(a) (sizeof(a) / sizeof(a[0]))
+#endif // ARR_NUMS
+
+#ifndef CAT
+#define CAT(v1, v2) v1##v2
+#endif // CAT
+
+#ifndef CAT1
+#define CAT1(v1, v2) CAT(v1, v2)
+#endif
+
+#ifndef CAT2
+#define CAT2(v1, v2, v3) v1##v2##v3
+#endif // CAT2
+
 #endif // __MACRO_H__

@@ -4,6 +4,7 @@
  * description:
  ***********************************************/
 
+#define _GNU_SOURCE
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -33,7 +34,7 @@
 #define API_LISTEN_HTTPS_PORT 8443
 #define API_LISTEN_IFACE "enp3s0"
 #define API_LISTEN_FORMAT "%s:%d"
-#define API_JSON_FORMAT "Content-Type: application/json\r"
+#define API_JSON_FORMAT "Content-Type: application/json\r\n"
 #define API_HASH_TABLE_INDEX(x) ((x) % API_METHOD_TABLE)
 
 enum API_METHOD {
@@ -252,10 +253,10 @@ static void _api_http_error(struct mg_connection *c, int errcode, struct mg_str 
         [500] = "Internal server error",
     };
 
-    RUNTIME_ASSERT(errcode < sizeof(s_errmsg));
+    RUNTIME_ASSERT(errcode < ARR_NUMS(s_errmsg));
 
     if (method != NULL && uri != NULL) {
-        LOG_ERROR("%d! method: %.*s, url: %s", errcode, method->len, method->buf, uri->len, uri->buf);
+        LOG_ERROR("%d! method: %.*s, url: %.*s", errcode, method->len, method->buf, uri->len, uri->buf);
     }
     mg_http_reply(c, errcode, "", s_errmsg[errcode] ? s_errmsg[errcode] : "");
 }
@@ -272,7 +273,9 @@ static void _api_http_succ(struct mg_connection *c, void *json)
     }
 
     mg_http_reply(c, 200, API_JSON_FORMAT, content);
+
     free(content);
+    json_decref(json);
 }
 
 static void *_api_errmsg_to_json(const char *msg)
@@ -539,10 +542,14 @@ void *api_startup(void *arg)
     char http_url[API_LISTEN_BUF_LEN] = "";
     char https_url[API_LISTEN_BUF_LEN] = "";
 
+    pthread_setname_np(pthread_self(), "API_LISTENING");
     api_listen_get(http_url, https_url, API_LISTEN_BUF_LEN);
 
     mg_log_set(MG_LL_INFO);
     mg_mgr_init(&mgr);
+    if (api_store_init() != 0) {
+        exit(EXIT_FAILURE);
+    }
 
     if ((c = mg_http_listen(&mgr, http_url, _api_load_cb, arg)) == NULL) {
         LOG_ERROR("Cannot to listen on %s", http_url);
@@ -559,5 +566,6 @@ void *api_startup(void *arg)
     }
 
     mg_mgr_free(&mgr);
+    api_store_fini();
     pthread_exit(NULL);
 }

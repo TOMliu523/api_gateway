@@ -1,0 +1,43 @@
+submodule network {
+    belongs-to v1 {
+        prefix "v1";
+    }
+
+    import ietf-inet-types {
+        prefix "inet";
+    }
+
+    container arp {
+        list entry {
+            key "ip_address";
+            leaf type {
+                mandatory true;
+                type enumeration {
+                    enum IPv4 {
+                        value 4;
+                    }
+                    enum IPv6 {
+                        value 6;
+                    }
+                }
+            }
+            leaf ip_address {
+                mandatory true;
+                type union {
+                    type inet:ipv4-address;
+                    type inet:ipv6-address;
+                }
+                must "(../type='IPv4' and not(contains(., ':'))) or " +
+                    "(../type='IPv6' and contains(., ':'))" {
+                    error-message "ip address not match address format";
+                }
+            }
+            leaf mac {
+                mandatory true;
+                type string {
+                    pattern '[0-9a-zA-Z](:[0-9a-zA-Z]){5}';
+                }
+            }
+        }
+    }
+}
