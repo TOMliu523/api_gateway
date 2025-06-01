@@ -8,7 +8,7 @@ submodule network {
     }
 
     container arp {
-        list entry {
+        list elements {
             key "ip_address";
             leaf type {
                 mandatory true;
@@ -35,7 +35,7 @@ submodule network {
             leaf mac {
                 mandatory true;
                 type string {
-                    pattern '[0-9a-zA-Z](:[0-9a-zA-Z]){5}';
+                    pattern '[0-9a-zA-Z]{2}(:[0-9a-zA-Z]{2}){5}';
                 }
             }
         }

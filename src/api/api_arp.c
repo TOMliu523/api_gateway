@@ -8,7 +8,7 @@
 
 API_POST(/v1/network/arp, arp)
 {
-    return NULL;
+    return api_success(NULL);
 }
 
 API_PUT(/v1/network/arp, arp)
