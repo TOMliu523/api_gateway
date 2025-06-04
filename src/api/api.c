@@ -315,7 +315,7 @@ _quit:
 static void _api_load_cb(struct mg_connection *c, int event, void *event_data)
 {
     int ret = 0;
-    void *req = NULL;
+    void *rep = NULL;
     struct mg_http_message *msg = NULL;
     const struct api_method_node *api = NULL;
 
@@ -342,13 +342,13 @@ static void _api_load_cb(struct mg_connection *c, int event, void *event_data)
                     return;
                 }
 
-                ret = api_store_query(api, msg->body.buf, msg->body.len, &req);
+                ret = api_store_query(api, msg->body.buf, msg->body.len, &rep);
                 if (ret != 0) {
                     _api_http_error(c, 500, &msg->method, &msg->uri);
                     return;
                 }
 
-                _api_http_succ(c, req);
+                _api_http_succ(c, rep);
                 return;
             } else if (strncasecmp(msg->method.buf, "PUT", 3) == 0) {
                 api = _api_get(API_METHOD_PUT, msg->uri.buf, msg->uri.len);
@@ -357,13 +357,13 @@ static void _api_load_cb(struct mg_connection *c, int event, void *event_data)
                     return;
                 }
 
-                ret = api_store_update(api, msg->body.buf, msg->body.len, &req);
+                ret = api_store_update(api, msg->body.buf, msg->body.len, &rep);
                 if (ret != 0) {
                     _api_http_error(c, 500, &msg->method, &msg->uri);
                     return;
                 }
 
-                _api_http_succ(c, req);
+                _api_http_succ(c, rep);
                 return;
             } else {
                 _api_http_error(c, 405, &msg->method, &msg->uri);
@@ -378,13 +378,13 @@ static void _api_load_cb(struct mg_connection *c, int event, void *event_data)
                     return;
                 }
 
-                ret = api_store_create(api, msg->body.buf, msg->body.len, &req);
+                ret = api_store_create(api, msg->body.buf, msg->body.len, &rep);
                 if (ret != 0) {
                     _api_http_error(c, 500, &msg->method, &msg->uri);
                     return;
                 }
 
-                _api_http_succ(c, req);
+                _api_http_succ(c, rep);
                 return;
             } else {
                 _api_http_error(c, 405, &msg->method, &msg->uri);
@@ -399,13 +399,13 @@ static void _api_load_cb(struct mg_connection *c, int event, void *event_data)
                     return;
                 }
 
-                ret = api_store_delete(api, msg->body.buf, msg->body.len, &req);
+                ret = api_store_delete(api, msg->body.buf, msg->body.len, &rep);
                 if (ret != 0) {
                     _api_http_error(c, 500, &msg->method, &msg->uri);
                     return;
                 }
 
-                _api_http_succ(c, req);
+                _api_http_succ(c, rep);
                 return;
             } else {
                 _api_http_error(c, 405, &msg->method, &msg->uri);

@@ -4,6 +4,11 @@
  * description:
  ***********************************************/
 
+#include <jansson.h>
+#include <sysrepo.h>
+#include <libyang/libyang.h>
+
+#include "log.h"
 #include "api_inner.h"
 
 API_POST(/v1/network/arp, arp)
@@ -13,12 +18,12 @@ API_POST(/v1/network/arp, arp)
 
 API_PUT(/v1/network/arp, arp)
 {
-    return NULL;
+    return api_success(NULL);
 }
 
 API_DELETE(/v1/network/arp, arp)
 {
-    return NULL;
+    return api_success(NULL);
 }
 
 API_GET(/v1/network/arp, arp)

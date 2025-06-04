@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <errno.h>
 #include <stdlib.h>
+#include <stdbool.h>
 #include <pthread.h>
 #include <sys/epoll.h>
 
@@ -39,6 +40,7 @@ struct db {
 };
 
 static struct db s_db;
+static __thread char s_buffer[BUFSIZ * 4];
 
 static int _api_store_update_cb(sr_session_ctx_t *session,
                                 uint32_t sub_id,
@@ -140,9 +142,30 @@ static void _api_store_set(struct private_data *data, const struct api_method_no
 
 static void *_api_store_get(struct private_data *data)
 {
-    void *output = data->output;
-    data->output = NULL;
-    return output;
+    void *output = NULL;
+
+    if (data->output != NULL) {
+        output = data->output;
+        data->output = NULL;
+        return output;
+    } else {
+        return api_success(NULL);
+    }
+}
+
+static int _api_store_apply(struct db *db, const struct api_method_node *api, void *input, void **output)
+{
+    int ret = 0;
+
+    _api_store_set(&db->data, api, input);
+    ret = sr_apply_changes(db->session, API_TIMEOUT);
+    if (ret != SR_ERR_OK) {
+        LOG_ERROR("sr_apply_changes failure: %s", sr_strerror(ret));
+        return -1;
+    }
+
+    *output = _api_store_get(&db->data);
+    return 0;
 }
 
 static int _api_store_to_json(void **obj, const char *buf, size_t len)
@@ -162,15 +185,136 @@ static int _api_store_to_json(void **obj, const char *buf, size_t len)
     return 0;
 }
 
-int api_store_query(const struct api_method_node *api, const char *buf, size_t len, void **req)
+static int _api_store_delete_one(struct db *db, const char *key, void *value)
+{
+    int n = 0;
+    int ret = 0;
+    void *subvalue = NULL;
+    const char *subkey = NULL;
+
+    n = snprintf(s_buffer, sizeof(s_buffer), "%s", key);
+    json_object_foreach(value, subkey, subvalue) {
+        const char *v_str = json_string_value(subvalue);
+        n += snprintf(s_buffer + n, sizeof(s_buffer) - n, "[%s='%s']", subkey, v_str);
+    }
+
+    ret = sr_delete_item(db->session, s_buffer, SR_EDIT_DEFAULT);
+    if (ret != SR_ERR_OK) {
+        LOG_ERROR("sr_delete_item failure: %s", sr_strerror(ret));
+        return -1;
+    }
+
+    return 0;
+}
+
+static int _api_store_add(sr_session_ctx_t *session, const struct lyd_node *node)
 {
     int ret = 0;
-    void *rep = NULL;
+    char tmp[256] = {0};
+    const char *xpath = NULL;
+    const char *value = NULL;
+
+    for (; node != NULL; node = node->next) {
+        if ((node->schema->nodetype & LYD_NODE_TERM) == 0) {
+            ret = _api_store_add(session, lyd_child(node));
+            if (ret != 0) {
+                return ret;
+            }
+        } else {
+            if (lysc_is_key(node->schema)) {
+                continue;
+            }
+
+            xpath = lyd_path(node, LYD_PATH_STD, tmp, sizeof(tmp));
+            if (xpath == NULL) {
+                LOG_ERROR("lyd_path failure: %s", node->schema->name);
+                return -1;
+            }
+
+            value = lyd_get_value(node);
+
+            LOG_DEBUG("sr_set_item_str(session, %s, %s, NULL, SR_EDIT_DEFAULT)", xpath, value);
+            ret = sr_set_item_str(session, xpath, value, NULL, SR_EDIT_DEFAULT);
+            if (ret != 0) {
+                LOG_ERROR("sr_get_item_str failure: xpath(%s), value(%s)", xpath, value);
+                return -1;
+            }
+        }
+    }
+
+    return 0;
+}
+
+static int _api_store_create(struct lyd_node *node, bool create)
+{
+    int n = 0;
+    int ret = 0;
+    struct db *db = &s_db;
+    sr_val_t *value = NULL;
+    const struct lyd_node *next = NULL;
+    const struct lyd_node *child = NULL;
+
+    child = lyd_child(node);
+    if (child->schema->nodetype == LYS_LIST) {
+        for (; child != NULL; child = child->next) {
+            n = 0;
+            n = snprintf(s_buffer, sizeof(s_buffer), "/%s:%s/%s",
+                        lyd_node_module(node)->name, node->schema->name, child->schema->name);
+            next = lyd_child(child);
+            while (next != NULL) {
+                if (lysc_is_key(next->schema)) {
+                    n += snprintf(s_buffer + n, sizeof(s_buffer) - n, "[%s='%s']", next->schema->name, lyd_get_value(next));
+                }
+                next = next->next;
+            }
+
+            if (create) {
+                ret = sr_get_item(db->session, s_buffer, 0, &value);
+                sr_free_val(value);
+                if (ret != SR_ERR_NOT_FOUND) {
+                    LOG_ERROR("update failure: %s.", sr_strerror(errno));
+                    return -1;
+                }
+            } else {
+                ret = sr_get_item(db->session, s_buffer, 0, &value);
+                sr_free_val(value);
+                if (ret == SR_ERR_NOT_FOUND) {
+                    LOG_ERROR("update failure: %s.", sr_strerror(errno));
+                    return -1;
+                }
+
+                ret = sr_delete_item(db->session, s_buffer, SR_EDIT_DEFAULT);
+                if (ret != SR_ERR_OK) {
+                    LOG_ERROR("sr_delete_item failure: %s", sr_strerror(ret));
+                    return -1;
+                }
+            }
+        }
+
+        ret = _api_store_add(db->session, node);
+        if (ret != 0) {
+            return -1;
+        }
+    } else {
+        ret = sr_edit_batch(db->session, node, "replace");
+        if (ret != SR_ERR_OK) {
+            LOG_ERROR("sr_edit_batch failure: %s", sr_strerror(ret));
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
+int api_store_query(const struct api_method_node *api, const char *buf, size_t len, void **output)
+{
+    int ret = 0;
+    void *input = NULL;
     sr_val_t *val = NULL;
     struct db *db = &s_db;
     const char *format = "/v1:query/counter";
 
-    RUNTIME_ASSERT(api != NULL && req != NULL);
+    RUNTIME_ASSERT(api != NULL && output != NULL);
 
     ret = sr_get_item(db->session, format, 0, &val);
     if (ret != SR_ERR_OK) {
@@ -185,12 +329,12 @@ int api_store_query(const struct api_method_node *api, const char *buf, size_t l
         return -1;
     }
 
-    ret = _api_store_to_json(&rep, buf, len);
+    ret = _api_store_to_json(&input, buf, len);
     if (ret != 0) {
         return -1;
     }
 
-    _api_store_set(&db->data, api, rep);
+    _api_store_set(&db->data, api, input);
 
     ret = sr_apply_changes(db->session, API_TIMEOUT);
     if (ret != 0) {
@@ -198,27 +342,70 @@ int api_store_query(const struct api_method_node *api, const char *buf, size_t l
         return -1;
     }
 
-    *req = _api_store_get(&db->data);
+    *output = _api_store_get(&db->data);
     return 0;
 }
 
-int api_store_update(const struct api_method_node *api, const char *buf, size_t len, void **req)
-{
-    RUNTIME_ASSERT(api != NULL && req != NULL);
-
-    return 0;
-}
-
-int api_store_create(const struct api_method_node *api, const char *buf, size_t len, void **req)
+int api_store_update(const struct api_method_node *api, const char *buf, size_t len, void **output)
 {
     int ret = 0;
-    void *rep = NULL;
+    void *input = NULL;
     struct db *db = &s_db;
     LY_ERR err = LY_SUCCESS;
     struct lyd_node *node = NULL;
     const struct ly_ctx *ctx = NULL;
 
-    RUNTIME_ASSERT(api != NULL && req != NULL);
+    RUNTIME_ASSERT(api != NULL && output != NULL);
+
+    ctx = sr_session_acquire_context(db->session);
+    err = lyd_parse_data_mem(ctx, buf, LYD_JSON, LYD_PARSE_ONLY, LYD_VALIDATE_MULTI_ERROR, &node);
+    if (err != LY_SUCCESS) {
+        LOG_ERROR("lyd_parse_data_mem failure: %s", ly_strerr(err));
+        goto _quit;
+    }
+
+    ret = _api_store_create(node, false);
+    if (ret != 0) {
+        goto _quit;
+    }
+
+    ret = _api_store_to_json(&input, buf, len);
+    if (ret != 0) {
+        goto _quit;
+    }
+
+    _api_store_set(&db->data, api, input);
+
+    ret = sr_apply_changes(db->session, API_TIMEOUT);
+    if (ret != SR_ERR_OK) {
+        LOG_ERROR("sr_apply_changes %s", sr_strerror(ret));
+        goto _quit;
+    }
+
+    *output = _api_store_get(&db->data);
+
+_quit:
+    if (node != NULL) {
+        lyd_free_tree(node);
+    }
+    if (input != NULL) {
+        json_decref(input);
+    }
+    sr_discard_changes(db->session);
+    sr_session_release_context(db->session);
+    return (ret == 0) ? 0 : -1;
+}
+
+int api_store_create(const struct api_method_node *api, const char *buf, size_t len, void **output)
+{
+    int ret = 0;
+    void *input = NULL;
+    struct db *db = &s_db;
+    LY_ERR err = LY_SUCCESS;
+    struct lyd_node *node = NULL;
+    const struct ly_ctx *ctx = NULL;
+
+    RUNTIME_ASSERT(api != NULL && output != NULL);
 
     ctx = sr_session_acquire_context(db->session);
     err = lyd_parse_data_mem(ctx, buf, LYD_JSON, LYD_PARSE_ONLY, LYD_VALIDATE_MULTI_ERROR, &node);
@@ -227,45 +414,105 @@ int api_store_create(const struct api_method_node *api, const char *buf, size_t 
         return -1;
     }
 
-    err = lyd_validate_all(&node, ctx, LYD_VALIDATE_NO_STATE, NULL);
-    if (err != LY_SUCCESS) {
-        LOG_ERROR("lyd_validate_all failure: %s", ly_strerr(err));
-        goto _quit;
-    }
-
-    ret = sr_edit_batch(db->session, node, "merge");
-    if (err != SR_ERR_OK) {
-        LOG_ERROR("sr_edit_batch failure: %s", sr_strerror(ret));
-        goto _quit;
-    }
-
-    ret = _api_store_to_json(&rep, buf, len);
+    ret = _api_store_create(node, true);
     if (ret != 0) {
         goto _quit;
     }
 
-    _api_store_set(&db->data, api, rep);
+    ret = _api_store_to_json(&input, buf, len);
+    if (ret != 0) {
+        goto _quit;
+    }
+
+    _api_store_set(&db->data, api, input);
 
     ret = sr_apply_changes(db->session, API_TIMEOUT);
-    if (err != SR_ERR_OK) {
+    if (ret != SR_ERR_OK) {
         LOG_ERROR("sr_apply_changes failure: %s", sr_strerror(ret));
         goto _quit;
     }
 
-    *req = _api_store_get(&db->data);
-
-    lyd_free_tree(node);
-    return 0;
+    *output = _api_store_get(&db->data);
 
 _quit:
-    lyd_free_tree(node);
-    return -1;
+    if (node != NULL) {
+        lyd_free_tree(node);
+    }
+    if (input != NULL) {
+        json_decref(input);
+    }
+    sr_discard_changes(db->session);
+    sr_session_release_context(db->session);
+    return (ret == 0) ? 0 : -1;
 }
 
-int api_store_delete(const struct api_method_node *api, const char *buf, size_t len, void **req)
+int api_store_delete(const struct api_method_node *api, const char *buf, size_t len, void **output)
 {
-    RUNTIME_ASSERT(api != NULL && req != NULL);
-    return 0;
+    int ret = 0;
+    int index = 0;
+    void *one = NULL;
+    void *iter = NULL;
+    void *input = NULL;
+    json_t *value = NULL;
+    struct db *db = &s_db;
+    const char *key = NULL;
+    LY_ERR err = LY_SUCCESS;
+
+    RUNTIME_ASSERT(api != NULL && output != NULL);
+
+    ret = _api_store_to_json(&input, buf, len);
+    if (ret != 0) {
+        goto _quit;
+    }
+
+    iter = json_object_iter(input);
+    if (iter == NULL) {
+        LOG_ERROR("OOM.");
+        goto _quit;
+    }
+
+    key = json_object_iter_key(iter);
+    value = json_object_iter_value(iter);
+    if (json_is_array(value)) {
+        int nums = json_array_size(value);
+        if (nums == 0) {
+            ret = sr_delete_item(db->session, key, SR_EDIT_DEFAULT);
+            if (ret != SR_ERR_OK) {
+                LOG_ERROR("sr_delete_item failure: %s", sr_strerror(ret));
+                goto _quit;
+            }
+        } else {
+            json_array_foreach(value, index, one) {
+                ret = _api_store_delete_one(db, key, one);
+                if (ret != 0) {
+                    goto _quit;
+                }
+            }
+        }
+    } else {
+        if (json_is_null(value)) {
+            ret = sr_delete_item(db->session, key, SR_EDIT_DEFAULT);
+            if (ret != SR_ERR_OK) {
+                LOG_ERROR("sr_delete_item failure: %s", sr_strerror(ret));
+                goto _quit;
+            }
+        } else {
+            ret = _api_store_delete_one(db, key, one);
+            if (ret != 0) {
+                goto _quit;
+            }
+        }
+    }
+
+    ret = _api_store_apply(db, api, input, output);
+
+_quit:
+    if (input != NULL) {
+        json_decref(input);
+    }
+    sr_discard_changes(db->session);
+    sr_session_release_context(db->session);
+    return (ret == 0) ? 0 : -1;
 }
 
 int api_store_init(void)
