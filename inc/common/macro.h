@@ -59,4 +59,8 @@
 #define CAT2(v1, v2, v3) v1##v2##v3
 #endif // CAT2
 
+#ifndef ACCESS_ONCE
+#define ACCESS_ONCE(x) (*(volatile typeof(x) *)&(x))
+#endif // ACCESS_ONCE
+
 #endif // __MACRO_H__

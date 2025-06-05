@@ -26,24 +26,15 @@
 #include "log.h"
 #include "api.h"
 #include "list.h"
+#include "hash.h"
 #include "api_inner.h"
 
-#define API_METHOD_TABLE 128
 #define API_LISTEN_BUF_LEN 32
 #define API_LISTEN_HTTP_PORT 8080
 #define API_LISTEN_HTTPS_PORT 8443
 #define API_LISTEN_IFACE "enp3s0"
 #define API_LISTEN_FORMAT "%s:%d"
 #define API_JSON_FORMAT "Content-Type: application/json\r\n"
-#define API_HASH_TABLE_INDEX(x) ((x) % API_METHOD_TABLE)
-
-enum API_METHOD {
-    API_METHOD_POST = 0,
-    API_METHOD_PUT,
-    API_METHOD_DELETE,
-    API_METHOD_GET,
-    API_METHOD_MAX,
-};
 
 struct api_method {
     bool init;
@@ -77,18 +68,7 @@ static const char *s_tls_key =
     "4hf5Gx17YJkq5/z3k6ogPDPpoAYWIw1/sw==\n"
     "-----END EC PRIVATE KEY-----\n";
 
-static uint32_t _api_url_hash(const void *data, size_t len)
-{
-    uint32_t sum = 0;
-
-    for (size_t i = 0; i < len; i++) {
-        sum += ((uint8_t *)data)[i];
-    }
-
-    return sum;
-}
-
-static void api_method_init(void)
+static void _api_method_init(void)
 {
     struct api_method *method = &s_method;
 
@@ -105,7 +85,8 @@ static void api_method_init(void)
     method->init = true;
 }
 
-static int _api_register(struct list_head *head, const char *url, size_t len, uint32_t hash, api_action_fn_t action)
+static int _api_register(struct list_head *head, const char *container, const char *url,
+                         size_t len, uint32_t hash, api_action_fn_t action)
 {
     int ret = 0;
     struct list_head *prev = head;
@@ -128,7 +109,7 @@ static int _api_register(struct list_head *head, const char *url, size_t len, ui
             } else {
                 break;
             }
-        } else if (curr->hash > hash) {
+        } else {
             break;
         }
     }
@@ -140,6 +121,7 @@ static int _api_register(struct list_head *head, const char *url, size_t len, ui
     }
 
     INIT_LIST_HEAD(&one->node);
+    one->container = container;
     one->url = url;
     one->len = len;
     one->hash = hash;
@@ -160,7 +142,7 @@ static const struct api_method_node *_api_get(enum API_METHOD type, const char *
 
     RUNTIME_ASSERT(type < API_METHOD_MAX);
 
-    hash = _api_url_hash(url, len);
+    hash_32(url, len, 0, &hash);
     head = &method->head[type][API_HASH_TABLE_INDEX(hash)];
 
     list_for_each_entry_safe(curr, next, head, node) {
@@ -197,13 +179,13 @@ static void _api_set(enum API_METHOD type, const char *url, api_action_fn_t acti
 
     RUNTIME_ASSERT(type < API_METHOD_MAX);
 
-    api_method_init();
+    _api_method_init();
 
     url_len = strlen(url);
-    hash = _api_url_hash(url, url_len);
+    hash_32(url, url_len, 0, &hash);
     head = &method->head[type][API_HASH_TABLE_INDEX(hash)];
 
-    ret = _api_register(head, url, url_len, hash, action);
+    ret = _api_register(head, NULL, url, url_len, hash, action);
     if (ret < 0) {
         LOG_ERROR("post(%s) register failure. OOM.", url);
         exit(EXIT_FAILURE);

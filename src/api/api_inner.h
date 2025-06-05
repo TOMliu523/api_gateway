@@ -13,10 +13,14 @@
 #include "list.h"
 #include "macro.h"
 
+#define API_METHOD_TABLE 128
+#define API_HASH_TABLE_INDEX(x) ((x) % API_METHOD_TABLE)
+
 #define API_POST(_url, _func) \
     static void *CAT(_func, _post)(const char *url, void *json, void *session); \
     static PROC_INIT void CAT2(_func, _post, _startup)(void) { \
         api_post_register(#_url, CAT(_func, _post)); \
+        api_container_register(#_url, #_func, CAT(_func, _post)); \
     } \
     static void *CAT(_func, _post)(const char *url, void *json, void *session)
 
@@ -41,6 +45,14 @@
     } \
     static void *_func##_get(const char *url, void *json, void *session)
 
+enum API_METHOD {
+    API_METHOD_POST = 0,
+    API_METHOD_PUT,
+    API_METHOD_DELETE,
+    API_METHOD_GET,
+    API_METHOD_MAX,
+};
+
 /*
  * @param1: request url
  * @param2: request body(format: json)
@@ -50,6 +62,7 @@ typedef void *(*api_action_fn_t)(const char *, void *, void *);
 
 struct api_method_node {
     struct list_head node;
+    const char *container;
     const char *url;
     size_t len;
     uint32_t hash;
@@ -60,6 +73,7 @@ extern void api_post_register(const char *url, api_action_fn_t cb);
 extern void api_put_register(const char *url, api_action_fn_t cb);
 extern void api_delete_register(const char *url, api_action_fn_t cb);
 extern void api_get_register(const char *url, api_action_fn_t cb);
+extern void api_container_register(const char *container, const char *url, api_action_fn_t cb);
 /*
  * {
  *     "code" : 0,
