@@ -11,10 +11,11 @@ set(TP ${PROJECT_SOURCE_DIR}/thirdparty)
 set(INSTALL ${PROJECT_SOURCE_DIR}/install)
 
 set(TP_LIB ${INSTALL}/lib)
+set(TP_LIB64 ${INSTALL}/lib64)
 set(TP_INC ${INSTALL}/include)
 set(DPDK_LIB ${INSTALL}/lib/x86_64-linux-gnu)
 
-set(ENV{PKG_CONFIG_PATH} "${DPDK_LIB}/pkgconfig:${TP_LIB}/pkgconfig:$ENV{PKG_CONFIG_PATH}")
+set(ENV{PKG_CONFIG_PATH} "${DPDK_LIB}/pkgconfig:${TP_LIB}/pkgconfig:${TP_LIB64}//pkgconfig:$ENV{PKG_CONFIG_PATH}")
 
 execute_process(COMMAND ./tp_install.sh WORKING_DIRECTORY ${TP})
 

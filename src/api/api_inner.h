@@ -16,34 +16,72 @@
 #define API_METHOD_TABLE 128
 #define API_HASH_TABLE_INDEX(x) ((x) % API_METHOD_TABLE)
 
-#define API_POST(_url, _func) \
-    static void *CAT(_func, _post)(const char *url, void *json, void *session); \
-    static PROC_INIT void CAT2(_func, _post, _startup)(void) { \
-        api_post_register(#_url, CAT(_func, _post)); \
-        api_container_register(#_url, #_func, CAT(_func, _post)); \
+// Automatically loads configuration at startup
+#define API_POST(uri, container) \
+    static void *CAT(container, _post)(const char *, void *, void *); \
+    static PROC_INIT void CAT2(container, _post, _startup)(void) { \
+        api_post_register(#uri, NULL, CAT(container, _post), NULL); \
+        api_startup_register(#uri, #container, CAT(container, _post), NULL); \
     } \
-    static void *CAT(_func, _post)(const char *url, void *json, void *session)
+    static void *CAT(container, _post)(const char *url, void *json, void *sess)
 
-#define API_PUT(_url, _func) \
-    static void *CAT(_func, _put)(const char *url, void *json, void *session); \
-    static PROC_INIT void _func##_put##_startup(void) { \
-        api_put_register(#_url, CAT(_func, _put)); \
+// Configuration not loaded at startup
+#define API_POST_NO_LOAD(uri, container) \
+    static void *CAT(container, _post)(const char *, void *, void *); \
+    static PROC_INIT void CAT2(container, _post, _startup)(void) { \
+        api_post_register(#uri, NULL, CAT(container, _post), NULL); \
     } \
-    static void *_func##_put(const char *url, void *json, void *session)
+    static void *CAT(container, _post)(const char *url, void *json, void *sess)
 
-#define API_DELETE(_url, _func) \
-    static void *CAT(_func, _delete)(const char *url, void *json, void *session); \
-    static PROC_INIT void _func##_delete##_startup(void) { \
-        api_delete_register(#_url, CAT(_func, _delete)); \
-    } \
-    static void *_func##_delete(const char *url, void *json, void *session)
+/*
+ * Automatically loads configuration at startup
+ *
+ * Description of fn1, fn2, and fn3:
+ * fn1 is executed before the configuration is saved. It can be used to modify the submitted
+ * data (e.g., sanitize or hash passwords).
+ * If it returns an error, the submission will be rejected.
+ * fn2 is used to load existing configuration. It operates in read-only mode, and the configuration
+ * must not be changed.
+ * If it returns an error, the configuration cannot be saved.
+ * fn3 is used to persist the configuration. It is expected to succeed and should not return errors.
+ */
+#define API_POST_REGISTER(uri, container, fn1, fn2, fn3) \
+    static PROC_INIT void CAT2(__, container, _post_register)(void) { \
+        api_post_register(#uri, fn1, fn2, fn3); \
+        api_startup_register(#uri, #container, fn2, fn3); \
+    }
 
-#define API_GET(_url, _func) \
-    static void *CAT(_func, _get)(const char *url, void *json, void *session); \
-    static PROC_INIT void _func##_get##_startup(void) { \
-        api_get_register(#_url, CAT(_func, _get)); \
+// Configuration not loaded at startup
+#define API_POST_NO_LOAD_REGISTER(uri, container, fn1, fn2, fn3) \
+    static PROC_INIT void CAT2(__, container, _post_no_load_register)(void) { \
+        api_post_register(#uri, fn1, fn2, fn3); \
+    }
+
+#define API_PUT(uri, container) \
+    static void *CAT(container, _put)(const char *, void *, void *); \
+    static PROC_INIT void CAT2(container, _put, _startup)(void) { \
+        api_put_register(#uri, NULL, CAT(container, _put), NULL); \
     } \
-    static void *_func##_get(const char *url, void *json, void *session)
+    static void *container##_put(const char *url, void *json, void *sess)
+
+#define API_PUT_REGISTER(uri, container, fn1, fn2, fn3) \
+    static PROC_INIT void CAT2(__, container, _put)(void) { \
+        api_put_register(#uri, fn1, fn2, fn3); \
+    }
+
+#define API_DELETE(uri, container) \
+    static void *CAT(container, _delete)(const char *, void *, void *); \
+    static PROC_INIT void CAT2(container, _delete, _startup)(void) { \
+        api_delete_register(#uri, CAT(container, _delete)); \
+    } \
+    static void *container##_delete(const char *url, void *json, void *sess)
+
+#define API_GET(uri, container) \
+    static void *CAT(container, _get)(const char *, void *, void *); \
+    static PROC_INIT void CAT2(container, _get, _startup)(void) { \
+        api_get_register(#uri, CAT(container, _get)); \
+    } \
+    static void *CAT(container, _get)(const char *url, void *json, void *sess)
 
 enum API_METHOD {
     API_METHOD_POST = 0,
@@ -53,12 +91,45 @@ enum API_METHOD {
     API_METHOD_MAX,
 };
 
+enum API_ERRCODE {
+    API_ERRCODE_SUCCESS = 0,
+    API_ERRCODE_REDIRECT,
+    API_ERRCODE_USER_PWD,
+    API_ERRCODE_EXPIRED,
+    API_ERRCODE_AUTH,
+    API_ERRCODE_INNER,
+
+    API_ERRCODE_SYSTEM = 100,
+    API_ERRCODE_ACCOUNT,
+
+    API_ERRCODE_NETWORK = 200,
+
+    API_ERRCODE_MAX,
+};
+
+enum API_HTTP_CODE {
+    API_HTTP_CODE_SUCCESS,
+    API_HTTP_CODE_BAD_REQUEST,
+    API_HTTP_CODE_SERVER,
+};
+
+struct api_user {
+    const char username[32];
+    const char password[128];
+    enum ROLE_TYPE {
+        SYSTEM_ROOT,
+        SYSTEM_ADMIN,
+        SYSTEM_AUDIT
+    } type;
+};
+
 /*
  * @param1: request url
  * @param2: request body(format: json)
  * @return: json
  */
 typedef void *(*api_action_fn_t)(const char *, void *, void *);
+typedef void (*api_apply_fn_t)(const char *, void *, void *);
 
 struct api_method_node {
     struct list_head node;
@@ -66,14 +137,19 @@ struct api_method_node {
     const char *url;
     size_t len;
     uint32_t hash;
-    api_action_fn_t action;
+    api_action_fn_t update_action;
+    api_action_fn_t change_action;
+    api_apply_fn_t apply_action;
 };
 
-extern void api_post_register(const char *url, api_action_fn_t cb);
-extern void api_put_register(const char *url, api_action_fn_t cb);
-extern void api_delete_register(const char *url, api_action_fn_t cb);
-extern void api_get_register(const char *url, api_action_fn_t cb);
-extern void api_container_register(const char *container, const char *url, api_action_fn_t cb);
+extern enum API_ERRCODE api_login(void *arg);
+extern enum API_ERRCODE api_refresh_login(void *arg);
+
+extern void api_post_register(const char *, api_action_fn_t, api_action_fn_t, api_apply_fn_t);
+extern void api_put_register(const char *, api_action_fn_t, api_action_fn_t, api_apply_fn_t);
+extern void api_delete_register(const char *, api_action_fn_t);
+extern void api_get_register(const char *, api_action_fn_t);
+extern void api_startup_register(const char *, const char *, api_action_fn_t, api_apply_fn_t);
 /*
  * {
  *     "code" : 0,
@@ -101,9 +177,14 @@ extern void *api_failure(int errcode, const char *errmsg);
 
 extern int api_store_init(void);
 extern void api_store_fini(void);
-extern int api_store_query(const struct api_method_node *api, const char *buf, size_t len, void **req);
-extern int api_store_update(const struct api_method_node *api, const char *buf, size_t len, void **req);
-extern int api_store_create(const struct api_method_node *api, const char *buf, size_t len, void **req);
-extern int api_store_delete(const struct api_method_node *api, const char *buf, size_t len, void **req);
+
+extern enum API_HTTP_CODE api_store_query(const struct api_method_node *api, const char *param, const char *buf, size_t len, void **req);
+extern enum API_HTTP_CODE api_store_update(const struct api_method_node *api, const char *buf, size_t len, void **req);
+extern enum API_HTTP_CODE api_store_create(const struct api_method_node *api, const char *buf, size_t len, void **req);
+extern enum API_HTTP_CODE api_store_delete(const struct api_method_node *api, const char *param, const char *buf, size_t len, void **req);
+
+extern void *api_db_query(void *sess, const char *module, const char *container);
+
+extern int api_account_desensitize(unsigned char *dst, size_t max, const char *passwd, size_t len);
 
 #endif // __API_INNER_H__

@@ -33,7 +33,10 @@
 #define API_LISTEN_HTTP_PORT 8080
 #define API_LISTEN_HTTPS_PORT 8443
 #define API_LISTEN_IFACE "enp3s0"
-#define API_LISTEN_FORMAT "%s:%d"
+#define API_HTTP_LISTEN_FORMAT "http://%s:%d"
+#define API_HTTPS_LISTEN_FORMAT "https://%s:%d"
+#define API_HTTP_LOGIN_FORMAT API_HTTP_LISTEN_FORMAT "/login\r\n"
+#define API_HTTPS_LOGIN_FORMAT API_HTTPS_LISTEN_FORMAT "/login\r\n"
 #define API_JSON_FORMAT "Content-Type: application/json\r\n"
 
 struct api_method {
@@ -85,8 +88,8 @@ static void _api_method_init(void)
     method->init = true;
 }
 
-static int _api_register(struct list_head *head, const char *container, const char *url,
-                         size_t len, uint32_t hash, api_action_fn_t action)
+static int _api_register(struct list_head *head, const char *container, const char *url, size_t len, uint32_t hash,
+                         api_action_fn_t update, api_action_fn_t change, api_apply_fn_t apply)
 {
     int ret = 0;
     struct list_head *prev = head;
@@ -125,7 +128,9 @@ static int _api_register(struct list_head *head, const char *container, const ch
     one->url = url;
     one->len = len;
     one->hash = hash;
-    one->action = action;
+    one->update_action = update;
+    one->change_action = change;
+    one->apply_action = apply;
 
     list_add(&one->node, prev);
     return 0;
@@ -169,7 +174,8 @@ static const struct api_method_node *_api_get(enum API_METHOD type, const char *
     return NULL;
 }
 
-static void _api_set(enum API_METHOD type, const char *url, api_action_fn_t action)
+static void _api_set(enum API_METHOD type, const char *url,
+                     api_action_fn_t update, api_action_fn_t change, api_apply_fn_t apply)
 {
     int ret = 0;
     uint32_t hash = 0;
@@ -185,7 +191,7 @@ static void _api_set(enum API_METHOD type, const char *url, api_action_fn_t acti
     hash_32(url, url_len, 0, &hash);
     head = &method->head[type][API_HASH_TABLE_INDEX(hash)];
 
-    ret = _api_register(head, NULL, url, url_len, hash, action);
+    ret = _api_register(head, NULL, url, url_len, hash, update, change, apply);
     if (ret < 0) {
         LOG_ERROR("post(%s) register failure. OOM.", url);
         exit(EXIT_FAILURE);
@@ -220,84 +226,139 @@ static void api_listen_get(char *http_url, char *https_url, int len)
         exit(EXIT_FAILURE);
     }
 
-    snprintf(http_url, len, "http://" API_LISTEN_FORMAT, ip_addr, API_LISTEN_HTTP_PORT);
-    snprintf(https_url, len, "https://" API_LISTEN_FORMAT, ip_addr, API_LISTEN_HTTPS_PORT);
+    snprintf(http_url, len, API_HTTP_LISTEN_FORMAT, ip_addr, API_LISTEN_HTTP_PORT);
+    snprintf(https_url, len, API_HTTPS_LISTEN_FORMAT, ip_addr, API_LISTEN_HTTPS_PORT);
 
     close(fd);
 }
 
 static void _api_http_error(struct mg_connection *c, int errcode, struct mg_str *method, struct mg_str *uri)
 {
-    static const char *s_errmsg[] = {
-        [400] = "Bad Request",
-        [404] = "Page not found",
-        [405] = "Method Not Allowed",
-        [500] = "Internal server error",
-    };
-
-    RUNTIME_ASSERT(errcode < ARR_NUMS(s_errmsg));
-
-    if (method != NULL && uri != NULL) {
-        LOG_ERROR("%d! method: %.*s, url: %.*s", errcode, method->len, method->buf, uri->len, uri->buf);
-    }
-    mg_http_reply(c, errcode, "", s_errmsg[errcode] ? s_errmsg[errcode] : "");
+    LOG_ERROR("%d! method: %.*s, url: %.*s", errcode, method->len, method->buf, uri->len, uri->buf);
+    mg_http_reply(c, errcode, "", "");
 }
 
-static void _api_http_succ(struct mg_connection *c, void *json)
+static void _api_http_succ(struct mg_connection *c, struct mg_http_message *msg, void *json)
 {
     char *content = NULL;
+    struct mg_str *auth = NULL;
+    char header[1024] = API_JSON_FORMAT;
 
     content = json_dumps(json, 0);
     if (content == NULL) {
         LOG_ERROR("OOM");
-        _api_http_error(c, 500, NULL, NULL);
+        mg_http_reply(c, 500, "", "");
         return;
     }
 
-    mg_http_reply(c, 200, API_JSON_FORMAT, content);
+    auth = mg_http_get_header(msg, "Authorization");
+    if (auth->len != 0) {
+        snprintf(header, sizeof(header), "Authorization: %.*s\r\n" API_JSON_FORMAT, (int)auth->len, auth->buf);
+    }
+
+    mg_http_reply(c, 200, header, content);
 
     free(content);
     json_decref(json);
 }
 
-static void *_api_errmsg_to_json(const char *msg)
+static void _api_http_redirect(struct mg_connection *c)
 {
-    int ret = 0;
-    json_t *value = NULL;
-    json_t *retobj = NULL;
+    uint16_t port = 0;
+    char http_buf[128] = "";
+    char buffer[INET_ADDRSTRLEN] = "";
 
-    retobj = json_object();
-    if (retobj == NULL) {
+    port = htons(c->loc.port);
+    inet_ntop(AF_INET, c->loc.ip, buffer, sizeof(buffer));
+
+    if (port == API_LISTEN_HTTPS_PORT) {
+        snprintf(http_buf, sizeof(http_buf), "Location: " API_HTTPS_LOGIN_FORMAT, buffer, port);
+    } else {
+        snprintf(http_buf, sizeof(http_buf), "Location: " API_HTTP_LOGIN_FORMAT, buffer, port);
+    }
+    mg_http_reply(c, 301, http_buf, "");
+}
+
+static void _api_http_user_pwd(struct mg_connection *c)
+{
+    void *json = NULL;
+    char *json_str = NULL;
+
+    json = api_failure(API_ERRCODE_USER_PWD, "Username or password is incorrect");
+    if (json == NULL) {
+        mg_http_reply(c, 500, "", "");
+        return;
+    }
+
+    json_str = json_dumps(json, 0);
+    if (json_str == NULL) {
+        mg_http_reply(c, 500, "", "");
         goto _quit;
     }
 
-    value = json_string(msg);
-    if (value == NULL) {
-        goto _quit;
-    }
-
-    ret = json_object_set_new(retobj, "errmsg", value);
-    if (ret < 0) {
-        goto _quit;
-    }
-
-    return retobj;
+    mg_http_reply(c, 200, API_JSON_FORMAT, json_str);
 
 _quit:
-    LOG_ERROR("OOM.");
-    if (value != NULL) {
-        json_decref(value);
+    if (json != NULL) {
+        json_decref(json);
     }
-    if (retobj != NULL) {
-        json_decref(retobj);
+    if (json_str != NULL) {
+        free(json_str);
     }
-    return NULL;
+}
+
+static void _api_http_auth(struct mg_connection *c)
+{
+    mg_http_reply(c, 401, "", "");
+}
+
+static void _api_response(struct mg_connection *c, struct mg_http_message *msg, enum API_HTTP_CODE code, void *rep)
+{
+    switch (code) {
+    case API_HTTP_CODE_SUCCESS:
+        _api_http_succ(c, msg, rep);
+        break;
+
+    case API_HTTP_CODE_BAD_REQUEST:
+        _api_http_error(c, 400, &msg->method, &msg->uri);
+        break;
+
+    default:
+        _api_http_error(c, 500, &msg->method, &msg->uri);
+        break;
+    }
+}
+
+static enum API_ERRCODE _api_login(struct mg_http_message *msg)
+{
+    int ret = 0;
+    struct api_user user = {0};
+
+    switch (msg->uri.len) {
+    case 1:
+        if (*msg->uri.buf == '/') {
+            return API_ERRCODE_REDIRECT;
+        }
+        break;
+    case 6:
+        if (msg->method.len == 4 && strncasecmp(msg->method.buf, "POST", msg->method.len) == 0) {
+            return api_login(msg);
+        }
+        FALLTHROUGH;
+    default:
+        return api_refresh_login(msg);
+    }
+
+    return API_ERRCODE_SUCCESS;
 }
 
 static void _api_load_cb(struct mg_connection *c, int event, void *event_data)
 {
-    int ret = 0;
+    int nbytes = 0;
     void *rep = NULL;
+    enum API_ERRCODE ret = 0;
+    enum API_HTTP_CODE code = 0;
+    static char s_param[BUFSIZ] = "";
     struct mg_http_message *msg = NULL;
     const struct api_method_node *api = NULL;
 
@@ -315,6 +376,20 @@ static void _api_load_cb(struct mg_connection *c, int event, void *event_data)
 
     case MG_EV_HTTP_MSG:
         msg = event_data;
+
+        ret = _api_login(msg);
+        switch (ret) {
+        case API_ERRCODE_REDIRECT:
+            _api_http_redirect(c);
+            return;
+        case API_ERRCODE_USER_PWD:
+            _api_http_user_pwd(c);
+            return;
+        case API_ERRCODE_AUTH:
+            _api_http_auth(c);
+            return;
+        }
+
         switch (msg->method.len) {
         case 3:
             if (strncasecmp(msg->method.buf, "GET", 3) == 0) {
@@ -324,14 +399,10 @@ static void _api_load_cb(struct mg_connection *c, int event, void *event_data)
                     return;
                 }
 
-                ret = api_store_query(api, msg->body.buf, msg->body.len, &rep);
-                if (ret != 0) {
-                    _api_http_error(c, 500, &msg->method, &msg->uri);
-                    return;
-                }
-
-                _api_http_succ(c, rep);
-                return;
+                strncpy(s_param, msg->query.buf, msg->query.len);
+                code = api_store_query(api, s_param, msg->body.buf, msg->body.len, &rep);
+                _api_response(c, msg, code, rep);
+                break;
             } else if (strncasecmp(msg->method.buf, "PUT", 3) == 0) {
                 api = _api_get(API_METHOD_PUT, msg->uri.buf, msg->uri.len);
                 if (api == NULL) {
@@ -339,14 +410,9 @@ static void _api_load_cb(struct mg_connection *c, int event, void *event_data)
                     return;
                 }
 
-                ret = api_store_update(api, msg->body.buf, msg->body.len, &rep);
-                if (ret != 0) {
-                    _api_http_error(c, 500, &msg->method, &msg->uri);
-                    return;
-                }
-
-                _api_http_succ(c, rep);
-                return;
+                code = api_store_update(api, msg->body.buf, msg->body.len, &rep);
+                _api_response(c, msg, code, rep);
+                break;
             } else {
                 _api_http_error(c, 405, &msg->method, &msg->uri);
             }
@@ -360,14 +426,9 @@ static void _api_load_cb(struct mg_connection *c, int event, void *event_data)
                     return;
                 }
 
-                ret = api_store_create(api, msg->body.buf, msg->body.len, &rep);
-                if (ret != 0) {
-                    _api_http_error(c, 500, &msg->method, &msg->uri);
-                    return;
-                }
-
-                _api_http_succ(c, rep);
-                return;
+                code = api_store_create(api, msg->body.buf, msg->body.len, &rep);
+                _api_response(c, msg, code, rep);
+                break;
             } else {
                 _api_http_error(c, 405, &msg->method, &msg->uri);
             }
@@ -381,14 +442,10 @@ static void _api_load_cb(struct mg_connection *c, int event, void *event_data)
                     return;
                 }
 
-                ret = api_store_delete(api, msg->body.buf, msg->body.len, &rep);
-                if (ret != 0) {
-                    _api_http_error(c, 500, &msg->method, &msg->uri);
-                    return;
-                }
-
-                _api_http_succ(c, rep);
-                return;
+                strncpy(s_param, msg->query.buf, msg->query.len);
+                code = api_store_delete(api, s_param, msg->body.buf, msg->body.len, &rep);
+                _api_response(c, msg, code, rep);
+                break;
             } else {
                 _api_http_error(c, 405, &msg->method, &msg->uri);
             }
@@ -405,116 +462,24 @@ static void _api_load_cb(struct mg_connection *c, int event, void *event_data)
     }
 }
 
-void api_post_register(const char *url, api_action_fn_t action)
+void api_post_register(const char *url, api_action_fn_t update, api_action_fn_t change, api_apply_fn_t apply)
 {
-    _api_set(API_METHOD_POST, url, action);
+    _api_set(API_METHOD_POST, url, update, change, apply);
 }
 
-void api_put_register(const char *url, api_action_fn_t action)
+void api_put_register(const char *url, api_action_fn_t update, api_action_fn_t change, api_apply_fn_t apply)
 {
-    _api_set(API_METHOD_PUT, url, action);
+    _api_set(API_METHOD_PUT, url, update, change, apply);
 }
 
 void api_delete_register(const char *url, api_action_fn_t action)
 {
-    _api_set(API_METHOD_DELETE, url, action);
+    _api_set(API_METHOD_DELETE, url, NULL, action, NULL);
 }
 
 void api_get_register(const char *url, api_action_fn_t action)
 {
-    _api_set(API_METHOD_GET, url, action);
-}
-
-void *api_success(void *obj)
-{
-    int ret = 0;
-    json_t *value = NULL;
-    json_t *retobj = NULL;
-
-    retobj = json_object();
-    if (retobj == NULL) {
-        goto _quit;
-    }
-
-    value = json_integer((json_int_t)0);
-    if (value == NULL) {
-        goto _quit;
-    }
-
-    ret = json_object_set_new(retobj, "code", value);
-    if (ret < 0) {
-        json_decref(value);
-        goto _quit;
-    }
-
-    if (obj != NULL) {
-        ret = json_object_set_new(retobj, "data", obj);
-        if (ret < 0) {
-            goto _quit;
-        }
-    }
-
-    return retobj;
-
-_quit:
-    LOG_ERROR("OOM.");
-    if (retobj != NULL) {
-        json_decref(retobj);
-    }
-    return NULL;
-}
-
-void *api_failure(int errcode, const char *errmsg)
-{
-    int ret = 0;
-    json_t *value = NULL;
-    json_t *retobj = NULL;
-    json_t *errobj = NULL;
-
-    if (errmsg == NULL) {
-        LOG_ERROR("error message is NULL.");
-        return NULL;
-    }
-
-    retobj = json_object();
-    if (retobj == NULL) {
-        goto _quit;
-    }
-
-    value = json_integer((json_int_t) errcode);
-    if (value == NULL) {
-        goto _quit;
-    }
-
-    ret = json_object_set_new(retobj, "code", value);
-    if (ret < 0) {
-        json_decref(value);
-        goto _quit;
-    }
-
-    if (errmsg != NULL) {
-        errobj = _api_errmsg_to_json(errmsg);
-        if (errobj == NULL) {
-            json_decref(value);
-            goto _quit;
-        }
-
-        ret = json_object_set_new(retobj, "data", errobj);
-        if (ret < 0) {
-            json_decref(value);
-            json_decref(errobj);
-            goto _quit;
-        }
-    }
-
-    return retobj;
-
-_quit:
-    LOG_ERROR("OOM.");
-    if (retobj != NULL) {
-        json_decref(retobj);
-    }
-    return NULL;
+    _api_set(API_METHOD_GET, url, NULL, action, NULL);
 }
 
 void *api_startup(void *arg)

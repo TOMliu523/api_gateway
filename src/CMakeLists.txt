@@ -12,6 +12,7 @@ pkg_check_modules(LIBYANG REQUIRED IMPORTED_TARGET libyang)
 pkg_check_modules(SYSREPO REQUIRED IMPORTED_TARGET sysrepo)
 pkg_check_modules(JANSSON REQUIRED IMPORTED_TARGET jansson)
 pkg_check_modules(JEMALLOC REQUIRED IMPORTED_TARGET jemalloc)
+pkg_check_modules(OPENSSL REQUIRED IMPORTED_TARGET openssl)
 
 add_subdirectory(${COMMON})
 add_subdirectory(${API})
@@ -31,6 +32,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
                       PkgConfig::LIBYANG
                       PkgConfig::SYSREPO
                       PkgConfig::JANSSON
+                      PkgConfig::OPENSSL
                       PkgConfig::DPDK
                       PkgConfig::JEMALLOC)
 

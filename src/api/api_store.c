@@ -41,7 +41,9 @@ struct api_startup {
     sr_session_ctx_t *sess;
     sr_subscription_ctx_t *subscript;
     struct private_data {
-        api_action_fn_t action;
+        api_action_fn_t update_action;
+        api_action_fn_t change_action;
+        api_apply_fn_t apply_action;
         const char *url;
         void *input;
         void *output;
@@ -76,6 +78,32 @@ static void _api_store_yang_log(LY_LOG_LEVEL level,
     }
 }
 
+static int _api_store_exec_call(api_action_fn_t action, const char *url, void *input, void *session, void **output)
+{
+    int ret = 0;
+    json_t *req = NULL;
+    json_t *retcode = NULL;
+
+    req = action(url, input, session);
+    if (req == NULL) {
+        return -1;
+    }
+
+    retcode = json_object_get(req, "code");
+    if (retcode == NULL) {
+        LOG_ERROR("return format error.");
+        json_decref(req);
+        return -1;
+    }
+
+    if (*output != NULL) {
+        json_decref(*output);
+    }
+    *output = req;
+
+    return (json_integer_value(retcode)) ? -1 : 0;
+}
+
 static int _api_store_update_cb(sr_session_ctx_t *session,
                                 uint32_t sub_id,
                                 const char *module_name,
@@ -85,19 +113,27 @@ static int _api_store_update_cb(sr_session_ctx_t *session,
                                 void *private_data)
 {
     json_t *req = NULL;
-     struct api_db *db = NULL;
     struct private_data *data = private_data;
 
     switch (event) {
-    case SR_EV_CHANGE:
-        req = data->action(data->url, data->input, session);
-        if (req == NULL) {
-            return -1;
+    case SR_EV_UPDATE:
+        if (data->update_action == NULL) {
+            break;
         }
-        data->output = req;
-        break;
+
+        return _api_store_exec_call(data->update_action, data->url, data->input, session, &data->output);
+    case SR_EV_CHANGE:
+        if (data->change_action == NULL) {
+            break;
+        }
+
+        return _api_store_exec_call(data->change_action, data->url, data->input, session, &data->output);
     case SR_EV_DONE:
-        break;
+        if (data->apply_action == NULL) {
+            break;
+        }
+
+        data->apply_action(data->url, data->input, session);
     default:
         break;
     }
@@ -152,7 +188,7 @@ static const struct api_method_node *_api_method_get(const char *container)
     return NULL;
 }
 
-static int _api_set_container(const char *container, const char *url, api_action_fn_t action)
+static int _api_set_container(const char *container, const char *url, api_action_fn_t change, api_apply_fn_t apply)
 {
     int ret = 0;
     uint32_t hash = 0;
@@ -202,7 +238,9 @@ static int _api_set_container(const char *container, const char *url, api_action
     one->url = url;
     one->len = url_len;
     one->hash = hash;
-    one->action = action;
+    one->update_action = NULL;
+    one->change_action = change;
+    one->apply_action = apply;
 
     list_add(&one->node, prev);
 
@@ -212,85 +250,60 @@ static int _api_set_container(const char *container, const char *url, api_action
     return 0;
 }
 
-void api_container_register(const char *url, const char *container, api_action_fn_t action)
+void api_startup_register(const char *url, const char *container, api_action_fn_t change, api_apply_fn_t apply)
 {
-    _api_set_container(container, url, action);
+    _api_set_container(container, url, change, apply);
 }
 
 static int _api_store_load(sr_session_ctx_t *sess, const char *module_name)
 {
     int ret = 0;
-    LY_ERR err = 0;
-    json_t *code = 0;
     void *json = NULL;
-    void *ret_json = NULL;
-    char *json_str = NULL;
-    json_error_t error = {0};
-    sr_data_t *subtree = NULL;
+    void *output = NULL;
     const char *container = NULL;
     const struct api_method_node *api = NULL;
     const struct api_startup *startup = &s_api_startup;
 
     for (int i = 0; i < startup->nums; i++) {
         container = startup->container[i];
-        snprintf(s_buffer, sizeof(s_buffer), "/%s:%s", module_name, container);
-        ret = sr_get_subtree(sess, s_buffer, 0, &subtree);
-        if (ret != 0) {
-            LOG_ERROR("sr_get_subtree failure: %s", sr_strerror(ret));
-            return -1;
-        }
-
         api = _api_method_get(container);
         if (api == NULL) {
             LOG_ERROR("_api_method_get get container(%s) failure.", container);
             goto _quit;
         }
 
-        err = lyd_print_mem(&json_str, subtree->tree, LYD_JSON, LYD_PRINT_WITHSIBLINGS);
-        if (err != LY_SUCCESS) {
-            LOG_ERROR("lyd_print_mem failure: %s", ly_strerr(err));
-            goto _quit;
-        }
-
-        json = json_loads(json_str, 0, &error);
+        json = api_db_query(sess, module_name, container);
         if (json == NULL) {
-            LOG_ERROR("line: %d, column: %d, position: %d, source: %s, text: %s",
-                      error.line, error.column, error.position, error.source, error.text);
-            goto _quit;
+            continue;
         }
 
-        ret_json = api->action(api->url, json, sess);
-        if (ret_json == NULL) {
-            goto _quit;
+        if (api->change_action != NULL) {
+            ret = _api_store_exec_call(api->change_action, api->url, json, sess, &output);
+            if (ret != 0) {
+                goto _quit;
+            }
         }
 
-        code = json_object_get(ret_json, "code");
-        if (code == NULL) {
-            LOG_ERROR("json not exist code.");
-            goto _quit;
+        if (output != NULL) {
+            json_decref(output);
+            output = NULL;
         }
 
-        if (code->type != JSON_INTEGER || json_string_value(code) != 0) {
-            LOG_ERROR("code failure.");
-            goto _quit;
+        if (api->apply_action != NULL) {
+            api->apply_action(api->url, json, sess);
         }
 
-        free(json_str); json_str = NULL;
         json_decref(json); json = NULL;
-        sr_release_data(subtree); subtree = NULL;
     }
 
     return 0;
 
 _quit:
-    if (json_str != NULL) {
-        free(json_str);
+    if (output != NULL) {
+        json_decref(output);
     }
     if (json != NULL) {
         json_decref(json);
-    }
-    if (subtree != NULL) {
-        sr_release_data(subtree);
     }
 
     return -1;
@@ -334,11 +347,13 @@ static void *_api_store_cb(void *arg)
     pthread_exit(NULL);
 }
 
-static void _api_store_set(struct private_data *data, const struct api_method_node *api, void *rep)
+static void _api_store_set(struct private_data *data, const struct api_method_node *api, const char *url, void *rep)
 {
-    data->action = api->action;
+    data->update_action = api->update_action;
+    data->change_action = api->change_action;
+    data->apply_action = api->apply_action;
     data->input = rep;
-    data->url = api->url;
+    data->url = url;
     data->output = NULL;
 }
 
@@ -355,19 +370,19 @@ static void *_api_store_get(struct private_data *data)
     }
 }
 
-static int _api_store_apply( struct api_db *db, const struct api_method_node *api, void *input, void **output)
+static enum API_HTTP_CODE _api_store_apply( struct api_db *db, const struct api_method_node *api, const char *url, void *input, void **output)
 {
     int ret = 0;
 
-    _api_store_set(&db->data, api, input);
+    _api_store_set(&db->data, api, url, input);
     ret = sr_apply_changes(db->sess, API_TIMEOUT);
     if (ret != SR_ERR_OK) {
         LOG_ERROR("sr_apply_changes failure: %s", sr_strerror(ret));
-        return -1;
+        return API_HTTP_CODE_SERVER;
     }
 
     *output = _api_store_get(&db->data);
-    return 0;
+    return API_HTTP_CODE_SUCCESS;
 }
 
 static int _api_store_to_json(void **obj, const char *buf, size_t len)
@@ -508,44 +523,14 @@ static int _api_store_create(struct lyd_node *node, bool create)
     return 0;
 }
 
-int api_store_query(const struct api_method_node *api, const char *buf, size_t len, void **output)
+enum API_HTTP_CODE api_store_create(const struct api_method_node *api, const char *buf, size_t len, void **output)
 {
     int ret = 0;
     void *input = NULL;
-    sr_val_t *val = NULL;
-     struct api_db *db = &s_api_db;
-    const char *format = "/v1:query/counter";
-
-    RUNTIME_ASSERT(api != NULL && output != NULL);
-
-    ret = sr_get_item(db->sess, format, 0, &val);
-    if (ret != SR_ERR_OK) {
-        LOG_ERROR("sr_get_item failure: %s", sr_strerror(ret));
-        return -1;
-    }
-
-    val->data.uint64_val += 1;
-    ret = sr_set_item(db->sess, format, val, SR_EDIT_DEFAULT);
-    if (ret != SR_ERR_OK) {
-        LOG_ERROR("sr_set_item failure: %s", sr_strerror(ret));
-        return -1;
-    }
-
-    ret = _api_store_to_json(&input, buf, len);
-    if (ret != 0) {
-        return -1;
-    }
-
-    return _api_store_apply(db, api, input, output);
-}
-
-int api_store_update(const struct api_method_node *api, const char *buf, size_t len, void **output)
-{
-    int ret = 0;
-    void *input = NULL;
-     struct api_db *db = &s_api_db;
     LY_ERR err = LY_SUCCESS;
+    enum API_HTTP_CODE code = 0;
     struct lyd_node *node = NULL;
+    struct api_db *db = &s_api_db;
     const struct ly_ctx *ctx = NULL;
 
     RUNTIME_ASSERT(api != NULL && output != NULL);
@@ -554,28 +539,68 @@ int api_store_update(const struct api_method_node *api, const char *buf, size_t 
     err = lyd_parse_data_mem(ctx, buf, LYD_JSON, LYD_PARSE_ONLY, LYD_VALIDATE_MULTI_ERROR, &node);
     if (err != LY_SUCCESS) {
         LOG_ERROR("lyd_parse_data_mem failure: %s", ly_strerr(err));
+        return API_HTTP_CODE_BAD_REQUEST;
+    }
+
+    ret = _api_store_create(node, true);
+    if (ret != 0) {
+        code = API_HTTP_CODE_BAD_REQUEST;
+        goto _quit;
+    }
+
+    ret = _api_store_to_json(&input, buf, len);
+    if (ret != 0) {
+        code = API_HTTP_CODE_BAD_REQUEST;
+        goto _quit;
+    }
+
+    code = _api_store_apply(db, api, "", input, output);
+
+_quit:
+    if (node != NULL) {
+        lyd_free_tree(node);
+    }
+    if (input != NULL) {
+        json_decref(input);
+    }
+    sr_discard_changes(db->sess);
+    sr_session_release_context(db->sess);
+    return code;
+}
+
+enum API_HTTP_CODE api_store_update(const struct api_method_node *api, const char *buf, size_t len, void **output)
+{
+    int ret = 0;
+    void *input = NULL;
+    LY_ERR err = LY_SUCCESS;
+    enum API_HTTP_CODE code = 0;
+    struct lyd_node *node = NULL;
+    struct api_db *db = &s_api_db;
+    const struct ly_ctx *ctx = NULL;
+
+    RUNTIME_ASSERT(api != NULL && output != NULL);
+
+    ctx = sr_session_acquire_context(db->sess);
+    err = lyd_parse_data_mem(ctx, buf, LYD_JSON, LYD_PARSE_ONLY, LYD_VALIDATE_MULTI_ERROR, &node);
+    if (err != LY_SUCCESS) {
+        LOG_ERROR("lyd_parse_data_mem failure: %s", ly_strerr(err));
+        code = API_HTTP_CODE_BAD_REQUEST;
         goto _quit;
     }
 
     ret = _api_store_create(node, false);
     if (ret != 0) {
+        code = API_HTTP_CODE_BAD_REQUEST;
         goto _quit;
     }
 
     ret = _api_store_to_json(&input, buf, len);
     if (ret != 0) {
+        code = API_HTTP_CODE_BAD_REQUEST;
         goto _quit;
     }
 
-    _api_store_set(&db->data, api, input);
-
-    ret = sr_apply_changes(db->sess, API_TIMEOUT);
-    if (ret != SR_ERR_OK) {
-        LOG_ERROR("sr_apply_changes %s", sr_strerror(ret));
-        goto _quit;
-    }
-
-    *output = _api_store_get(&db->data);
+    code = _api_store_apply(db, api, "", input, output);
 
 _quit:
     if (node != NULL) {
@@ -586,52 +611,10 @@ _quit:
     }
     sr_discard_changes(db->sess);
     sr_session_release_context(db->sess);
-    return (ret == 0) ? 0 : -1;
+    return code;
 }
 
-int api_store_create(const struct api_method_node *api, const char *buf, size_t len, void **output)
-{
-    int ret = 0;
-    void *input = NULL;
-     struct api_db *db = &s_api_db;
-    LY_ERR err = LY_SUCCESS;
-    struct lyd_node *node = NULL;
-    const struct ly_ctx *ctx = NULL;
-
-    RUNTIME_ASSERT(api != NULL && output != NULL);
-
-    ctx = sr_session_acquire_context(db->sess);
-    err = lyd_parse_data_mem(ctx, buf, LYD_JSON, LYD_PARSE_ONLY, LYD_VALIDATE_MULTI_ERROR, &node);
-    if (err != LY_SUCCESS) {
-        LOG_ERROR("lyd_parse_data_mem failure: %s", ly_strerr(err));
-        return -1;
-    }
-
-    ret = _api_store_create(node, true);
-    if (ret != 0) {
-        goto _quit;
-    }
-
-    ret = _api_store_to_json(&input, buf, len);
-    if (ret != 0) {
-        goto _quit;
-    }
-
-    ret = _api_store_apply(db, api, input, output);
-
-_quit:
-    if (node != NULL) {
-        lyd_free_tree(node);
-    }
-    if (input != NULL) {
-        json_decref(input);
-    }
-    sr_discard_changes(db->sess);
-    sr_session_release_context(db->sess);
-    return (ret == 0) ? 0 : -1;
-}
-
-int api_store_delete(const struct api_method_node *api, const char *buf, size_t len, void **output)
+enum API_HTTP_CODE api_store_delete(const struct api_method_node *api, const char *param, const char *buf, size_t len, void **output)
 {
     int ret = 0;
     int index = 0;
@@ -639,21 +622,23 @@ int api_store_delete(const struct api_method_node *api, const char *buf, size_t 
     void *iter = NULL;
     void *input = NULL;
     json_t *value = NULL;
-     struct api_db *db = &s_api_db;
     const char *key = NULL;
     LY_ERR err = LY_SUCCESS;
+    enum API_HTTP_CODE code = 0;
+    struct api_db *db = &s_api_db;
 
     RUNTIME_ASSERT(api != NULL && output != NULL);
 
     ret = _api_store_to_json(&input, buf, len);
     if (ret != 0) {
-        goto _quit;
+        return API_HTTP_CODE_BAD_REQUEST;
     }
 
     iter = json_object_iter(input);
     if (iter == NULL) {
         LOG_ERROR("OOM.");
-        goto _quit;
+        json_decref(input);
+        return API_HTTP_CODE_SERVER;
     }
 
     key = json_object_iter_key(iter);
@@ -664,12 +649,14 @@ int api_store_delete(const struct api_method_node *api, const char *buf, size_t 
             ret = sr_delete_item(db->sess, key, SR_EDIT_DEFAULT);
             if (ret != SR_ERR_OK) {
                 LOG_ERROR("sr_delete_item failure: %s", sr_strerror(ret));
+                code = API_HTTP_CODE_BAD_REQUEST;
                 goto _quit;
             }
         } else {
             json_array_foreach(value, index, one) {
                 ret = _api_store_delete_one(db, key, one);
                 if (ret != 0) {
+                    code = API_HTTP_CODE_BAD_REQUEST;
                     goto _quit;
                 }
             }
@@ -679,25 +666,93 @@ int api_store_delete(const struct api_method_node *api, const char *buf, size_t 
             ret = sr_delete_item(db->sess, key, SR_EDIT_DEFAULT);
             if (ret != SR_ERR_OK) {
                 LOG_ERROR("sr_delete_item failure: %s", sr_strerror(ret));
+                code = API_HTTP_CODE_BAD_REQUEST;
                 goto _quit;
             }
         } else {
             ret = _api_store_delete_one(db, key, one);
             if (ret != 0) {
+                code = API_HTTP_CODE_BAD_REQUEST;
                 goto _quit;
             }
         }
     }
 
-    ret = _api_store_apply(db, api, input, output);
+    code = _api_store_apply(db, api, param, input, output);
 
 _quit:
     if (input != NULL) {
         json_decref(input);
     }
     sr_discard_changes(db->sess);
-    sr_session_release_context(db->sess);
-    return (ret == 0) ? 0 : -1;
+    return code;
+}
+
+enum API_HTTP_CODE api_store_query(const struct api_method_node *api, const char *param, const char *buf, size_t len, void **output)
+{
+    int ret = 0;
+    void *input = NULL;
+    sr_val_t *val = NULL;
+    struct api_db *db = &s_api_db;
+    const char *format = "/v1:query/counter";
+
+    RUNTIME_ASSERT(api != NULL && output != NULL);
+
+    ret = sr_get_item(db->sess, format, 0, &val);
+    if (ret != SR_ERR_OK) {
+        LOG_ERROR("sr_get_item failure: %s", sr_strerror(ret));
+        return API_HTTP_CODE_SERVER;
+    }
+
+    val->data.uint64_val += 1;
+    ret = sr_set_item(db->sess, format, val, SR_EDIT_DEFAULT);
+    if (ret != SR_ERR_OK) {
+        LOG_ERROR("sr_set_item failure: %s", sr_strerror(ret));
+        return API_HTTP_CODE_SERVER;
+    }
+
+    ret = _api_store_to_json(&input, buf, len);
+    if (ret != 0) {
+        return API_HTTP_CODE_BAD_REQUEST;
+    }
+
+    return _api_store_apply(db, api, param, input, output);
+}
+
+void *api_db_query(void *sess, const char *module, const char *container)
+{
+    int ret = 0;
+    LY_ERR err = 0;
+    json_t *json = NULL;
+    char *json_str = NULL;
+    json_error_t error = {0};
+    sr_data_t *subtree = NULL;
+    static __thread char s_str[BUFSIZ] = "";
+
+    snprintf(s_str, sizeof(s_str), "/%s:%s", module, container);
+    ret = sr_get_subtree(sess, s_str, 0, &subtree);
+    if (ret != 0) {
+        LOG_ERROR("sr_get_subtree failure: %s", sr_strerror(ret));
+        return NULL;
+    }
+
+    err = lyd_print_mem(&json_str, subtree->tree, LYD_JSON, LYD_PRINT_WITHSIBLINGS);
+    if (err != LY_SUCCESS) {
+        LOG_ERROR("lyd_print_mem failure: %s", ly_strerr(err));
+        return NULL;
+    }
+
+    json = json_loads(json_str, 0, &error);
+    if (json == NULL) {
+        LOG_ERROR("line: %d, column: %d, position: %d, source: %s, text: %s",
+                  error.line, error.column, error.position, error.source, error.text);
+        free(json_str);
+        return NULL;
+    }
+
+    free(json_str);
+    sr_release_data(subtree);
+    return json;
 }
 
 int api_store_init(void)
@@ -731,11 +786,6 @@ int api_store_init(void)
         goto _quit;
     }
 
-    ret = _api_store_load(db->sess, API_YANG_MODULE);
-    if (ret != 0) {
-        goto _quit;
-    }
-
     ret = sr_install_modules(db->conn, schema_paths, search_dir, NULL);
     if (ret != SR_ERR_OK) {
         LOG_ERROR("Session install error: %s", sr_strerror(ret));
@@ -745,11 +795,11 @@ int api_store_init(void)
     ret = sr_module_change_subscribe(db->sess,
                                      API_YANG_MODULE,
                                      NULL,
-                                    _api_store_update_cb,
-                                    &db->data,
-                                    0,
-                                    SR_SUBSCR_NO_THREAD,
-                                    &db->subscript);
+                                     _api_store_update_cb,
+                                     &db->data,
+                                     0,
+                                     SR_SUBSCR_NO_THREAD | SR_SUBSCR_UPDATE,
+                                     &db->subscript);
     if (ret != SR_ERR_OK) {
         LOG_ERROR("sr_module_change_subscribe failure: %s", sr_strerror(ret));
         goto _quit;
@@ -761,7 +811,12 @@ int api_store_init(void)
         goto _quit;
     }
 
-    LOG_DEBUG("module load success !!!!!!.");
+    ret = _api_store_load(db->sess, API_YANG_MODULE);
+    if (ret != 0) {
+        goto _quit;
+    }
+
+    LOG_DEBUG("module config load success !!!!!!.");
 
     return 0;
 

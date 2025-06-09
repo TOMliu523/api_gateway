@@ -9,7 +9,7 @@ submodule network {
 
     container arp {
          list elements {
-            key "ip_address mac";
+            key "ip_address";
             leaf type {
                 mandatory true;
                 type enumeration {

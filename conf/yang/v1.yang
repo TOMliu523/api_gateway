@@ -3,6 +3,7 @@ module v1 {
     prefix "v1";
 
     include network;
+    include account;
 
     revision "2025-05-31" {
         description "Init version";
