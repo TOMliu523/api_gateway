@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdbool.h>
 
 #include <sysrepo.h>
 #include <jansson.h>
@@ -14,7 +15,7 @@
 #include "log.h"
 #include "api_inner.h"
 
-static void *api_account_post_update(const char *url, void *json, void *sess)
+static void *_api_account(const char *url, void *json, void *sess, bool update_id)
 {
     int i = 0;
     int ret = 0;
@@ -24,6 +25,7 @@ static void *api_account_post_update(const char *url, void *json, void *sess)
     void *user_obj = NULL;
     size_t passwd_len = 0;
     const char *passwd = NULL;
+    sr_val_t *modify_id = NULL;
 
     char path[256] = "";
     unsigned char dst[128] = "";
@@ -36,7 +38,7 @@ static void *api_account_post_update(const char *url, void *json, void *sess)
         passwd_len = json_string_length(value);
 
         ret = api_account_desensitize(dst, sizeof(dst), passwd, passwd_len);
-        if (ret != 0) {
+        if (ret < 0) {
             LOG_ERROR("account desensitize failure.");
             return api_failure(API_ERRCODE_ACCOUNT, "Account exception");
         }
@@ -49,14 +51,36 @@ static void *api_account_post_update(const char *url, void *json, void *sess)
             LOG_ERROR("sr_set_item_str failure: %s", sr_strerror(ret));
             return api_failure(API_ERRCODE_ACCOUNT, "Account exception");
         }
+
+        if (!update_id) {
+            continue;
+        }
+
+        ret = sr_get_item(sess, path, 0, &modify_id);
+        if (ret != 0) {
+            LOG_ERROR("sr_get_item_str failure: %s", sr_strerror(ret));
+            return api_failure(API_ERRCODE_ACCOUNT, "Account exception");
+        }
+
+        modify_id->data.uint64_val += 1;
+        ret = sr_set_item(sess, path, modify_id, SR_EDIT_DEFAULT);
+        if (ret != 0) {
+            LOG_ERROR("sr_set_item_str modify_id failure: %s", sr_strerror(ret));
+            return api_failure(API_ERRCODE_ACCOUNT, "Account exception");
+        }
     }
 
     return api_success(NULL);
 }
 
+static void *api_account_post_update(const char *url, void *json, void *sess)
+{
+    return _api_account(url, json, sess, false);
+}
+
 static void *api_account_put_update(const char *url, void *json, void *sess)
 {
-    return api_success(NULL);
+    return _api_account(url, json, sess, true);
 }
 
 API_DELETE(/v1/system/account, account)
@@ -71,8 +95,9 @@ API_GET(/v1/system/account, account)
     void *subobj = NULL;
     void *users_obj = NULL;
     void *username_obj = NULL;
+    const char *path = "/v1:account";
 
-    obj = api_db_query(sess, "v1", "account");
+    obj = api_db_query(path);
     if (obj == NULL) {
         return api_failure(API_ERRCODE_INNER, "Internal server error");
     }

@@ -260,6 +260,7 @@ static int _api_store_load(sr_session_ctx_t *sess, const char *module_name)
     int ret = 0;
     void *json = NULL;
     void *output = NULL;
+    char path[128] = "";
     const char *container = NULL;
     const struct api_method_node *api = NULL;
     const struct api_startup *startup = &s_api_startup;
@@ -272,7 +273,8 @@ static int _api_store_load(sr_session_ctx_t *sess, const char *module_name)
             goto _quit;
         }
 
-        json = api_db_query(sess, module_name, container);
+        snprintf(path, sizeof(path), "/%s:%s", module_name, container);
+        json = api_db_query(path);
         if (json == NULL) {
             continue;
         }
@@ -370,7 +372,7 @@ static void *_api_store_get(struct private_data *data)
     }
 }
 
-static enum API_HTTP_CODE _api_store_apply( struct api_db *db, const struct api_method_node *api, const char *url, void *input, void **output)
+static enum API_STATUS _api_store_apply( struct api_db *db, const struct api_method_node *api, const char *url, void *input, void **output)
 {
     int ret = 0;
 
@@ -378,11 +380,11 @@ static enum API_HTTP_CODE _api_store_apply( struct api_db *db, const struct api_
     ret = sr_apply_changes(db->sess, API_TIMEOUT);
     if (ret != SR_ERR_OK) {
         LOG_ERROR("sr_apply_changes failure: %s", sr_strerror(ret));
-        return API_HTTP_CODE_SERVER;
+        return API_STATUS_SERVER;
     }
 
     *output = _api_store_get(&db->data);
-    return API_HTTP_CODE_SUCCESS;
+    return API_STATUS_OK;
 }
 
 static int _api_store_to_json(void **obj, const char *buf, size_t len)
@@ -523,12 +525,12 @@ static int _api_store_create(struct lyd_node *node, bool create)
     return 0;
 }
 
-enum API_HTTP_CODE api_store_create(const struct api_method_node *api, const char *buf, size_t len, void **output)
+enum API_STATUS api_store_create(const struct api_method_node *api, const char *buf, size_t len, void **output)
 {
     int ret = 0;
     void *input = NULL;
     LY_ERR err = LY_SUCCESS;
-    enum API_HTTP_CODE code = 0;
+    enum API_STATUS code = 0;
     struct lyd_node *node = NULL;
     struct api_db *db = &s_api_db;
     const struct ly_ctx *ctx = NULL;
@@ -539,18 +541,18 @@ enum API_HTTP_CODE api_store_create(const struct api_method_node *api, const cha
     err = lyd_parse_data_mem(ctx, buf, LYD_JSON, LYD_PARSE_ONLY, LYD_VALIDATE_MULTI_ERROR, &node);
     if (err != LY_SUCCESS) {
         LOG_ERROR("lyd_parse_data_mem failure: %s", ly_strerr(err));
-        return API_HTTP_CODE_BAD_REQUEST;
+        return API_STATUS_BAD_REQUEST;
     }
 
     ret = _api_store_create(node, true);
     if (ret != 0) {
-        code = API_HTTP_CODE_BAD_REQUEST;
+        code = API_STATUS_BAD_REQUEST;
         goto _quit;
     }
 
     ret = _api_store_to_json(&input, buf, len);
     if (ret != 0) {
-        code = API_HTTP_CODE_BAD_REQUEST;
+        code = API_STATUS_BAD_REQUEST;
         goto _quit;
     }
 
@@ -568,12 +570,12 @@ _quit:
     return code;
 }
 
-enum API_HTTP_CODE api_store_update(const struct api_method_node *api, const char *buf, size_t len, void **output)
+enum API_STATUS api_store_update(const struct api_method_node *api, const char *buf, size_t len, void **output)
 {
     int ret = 0;
     void *input = NULL;
     LY_ERR err = LY_SUCCESS;
-    enum API_HTTP_CODE code = 0;
+    enum API_STATUS code = 0;
     struct lyd_node *node = NULL;
     struct api_db *db = &s_api_db;
     const struct ly_ctx *ctx = NULL;
@@ -584,19 +586,19 @@ enum API_HTTP_CODE api_store_update(const struct api_method_node *api, const cha
     err = lyd_parse_data_mem(ctx, buf, LYD_JSON, LYD_PARSE_ONLY, LYD_VALIDATE_MULTI_ERROR, &node);
     if (err != LY_SUCCESS) {
         LOG_ERROR("lyd_parse_data_mem failure: %s", ly_strerr(err));
-        code = API_HTTP_CODE_BAD_REQUEST;
+        code = API_STATUS_BAD_REQUEST;
         goto _quit;
     }
 
     ret = _api_store_create(node, false);
     if (ret != 0) {
-        code = API_HTTP_CODE_BAD_REQUEST;
+        code = API_STATUS_BAD_REQUEST;
         goto _quit;
     }
 
     ret = _api_store_to_json(&input, buf, len);
     if (ret != 0) {
-        code = API_HTTP_CODE_BAD_REQUEST;
+        code = API_STATUS_BAD_REQUEST;
         goto _quit;
     }
 
@@ -614,7 +616,7 @@ _quit:
     return code;
 }
 
-enum API_HTTP_CODE api_store_delete(const struct api_method_node *api, const char *param, const char *buf, size_t len, void **output)
+enum API_STATUS api_store_delete(const struct api_method_node *api, const char *param, const char *buf, size_t len, void **output)
 {
     int ret = 0;
     int index = 0;
@@ -624,21 +626,21 @@ enum API_HTTP_CODE api_store_delete(const struct api_method_node *api, const cha
     json_t *value = NULL;
     const char *key = NULL;
     LY_ERR err = LY_SUCCESS;
-    enum API_HTTP_CODE code = 0;
+    enum API_STATUS code = 0;
     struct api_db *db = &s_api_db;
 
     RUNTIME_ASSERT(api != NULL && output != NULL);
 
     ret = _api_store_to_json(&input, buf, len);
     if (ret != 0) {
-        return API_HTTP_CODE_BAD_REQUEST;
+        return API_STATUS_BAD_REQUEST;
     }
 
     iter = json_object_iter(input);
     if (iter == NULL) {
         LOG_ERROR("OOM.");
         json_decref(input);
-        return API_HTTP_CODE_SERVER;
+        return API_STATUS_SERVER;
     }
 
     key = json_object_iter_key(iter);
@@ -649,14 +651,14 @@ enum API_HTTP_CODE api_store_delete(const struct api_method_node *api, const cha
             ret = sr_delete_item(db->sess, key, SR_EDIT_DEFAULT);
             if (ret != SR_ERR_OK) {
                 LOG_ERROR("sr_delete_item failure: %s", sr_strerror(ret));
-                code = API_HTTP_CODE_BAD_REQUEST;
+                code = API_STATUS_BAD_REQUEST;
                 goto _quit;
             }
         } else {
             json_array_foreach(value, index, one) {
                 ret = _api_store_delete_one(db, key, one);
                 if (ret != 0) {
-                    code = API_HTTP_CODE_BAD_REQUEST;
+                    code = API_STATUS_BAD_REQUEST;
                     goto _quit;
                 }
             }
@@ -666,13 +668,13 @@ enum API_HTTP_CODE api_store_delete(const struct api_method_node *api, const cha
             ret = sr_delete_item(db->sess, key, SR_EDIT_DEFAULT);
             if (ret != SR_ERR_OK) {
                 LOG_ERROR("sr_delete_item failure: %s", sr_strerror(ret));
-                code = API_HTTP_CODE_BAD_REQUEST;
+                code = API_STATUS_BAD_REQUEST;
                 goto _quit;
             }
         } else {
             ret = _api_store_delete_one(db, key, one);
             if (ret != 0) {
-                code = API_HTTP_CODE_BAD_REQUEST;
+                code = API_STATUS_BAD_REQUEST;
                 goto _quit;
             }
         }
@@ -688,7 +690,7 @@ _quit:
     return code;
 }
 
-enum API_HTTP_CODE api_store_query(const struct api_method_node *api, const char *param, const char *buf, size_t len, void **output)
+enum API_STATUS api_store_query(const struct api_method_node *api, const char *param, const char *buf, size_t len, void **output)
 {
     int ret = 0;
     void *input = NULL;
@@ -701,25 +703,25 @@ enum API_HTTP_CODE api_store_query(const struct api_method_node *api, const char
     ret = sr_get_item(db->sess, format, 0, &val);
     if (ret != SR_ERR_OK) {
         LOG_ERROR("sr_get_item failure: %s", sr_strerror(ret));
-        return API_HTTP_CODE_SERVER;
+        return API_STATUS_SERVER;
     }
 
     val->data.uint64_val += 1;
     ret = sr_set_item(db->sess, format, val, SR_EDIT_DEFAULT);
     if (ret != SR_ERR_OK) {
         LOG_ERROR("sr_set_item failure: %s", sr_strerror(ret));
-        return API_HTTP_CODE_SERVER;
+        return API_STATUS_SERVER;
     }
 
     ret = _api_store_to_json(&input, buf, len);
     if (ret != 0) {
-        return API_HTTP_CODE_BAD_REQUEST;
+        return API_STATUS_BAD_REQUEST;
     }
 
     return _api_store_apply(db, api, param, input, output);
 }
 
-void *api_db_query(void *sess, const char *module, const char *container)
+void *api_db_query(const char *path)
 {
     int ret = 0;
     LY_ERR err = 0;
@@ -727,12 +729,15 @@ void *api_db_query(void *sess, const char *module, const char *container)
     char *json_str = NULL;
     json_error_t error = {0};
     sr_data_t *subtree = NULL;
-    static __thread char s_str[BUFSIZ] = "";
+    struct api_db *db = &s_api_db;
 
-    snprintf(s_str, sizeof(s_str), "/%s:%s", module, container);
-    ret = sr_get_subtree(sess, s_str, 0, &subtree);
+    ret = sr_get_subtree(db->sess, path, 0, &subtree);
     if (ret != 0) {
         LOG_ERROR("sr_get_subtree failure: %s", sr_strerror(ret));
+        return NULL;
+    }
+
+    if (subtree == NULL) {
         return NULL;
     }
 
@@ -759,7 +764,7 @@ int api_store_init(void)
 {
     int ret = 0;
     pthread_t thid = {0};
-     struct api_db *db = &s_api_db;
+    struct api_db *db = &s_api_db;
     LY_ERR err = LY_SUCCESS;
     struct lys_module *module = NULL;
     const char *schema_paths[] = {

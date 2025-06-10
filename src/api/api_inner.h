@@ -14,6 +14,7 @@
 #include "macro.h"
 
 #define API_METHOD_TABLE 128
+#define API_AUTH "Authorization"
 #define API_HASH_TABLE_INDEX(x) ((x) % API_METHOD_TABLE)
 
 // Automatically loads configuration at startup
@@ -83,12 +84,13 @@
     } \
     static void *CAT(container, _get)(const char *url, void *json, void *sess)
 
-enum API_METHOD {
-    API_METHOD_POST = 0,
-    API_METHOD_PUT,
-    API_METHOD_DELETE,
-    API_METHOD_GET,
-    API_METHOD_MAX,
+enum API_STATUS {
+    API_STATUS_OK = 200,
+    API_STATUS_REDIRECT = 300,
+    API_STATUS_BAD_REQUEST = 400,
+    API_STATUS_AUTH = 401,
+    API_STATUS_NOT_FOUND = 404,
+    API_STATUS_SERVER = 500,
 };
 
 enum API_ERRCODE {
@@ -107,10 +109,12 @@ enum API_ERRCODE {
     API_ERRCODE_MAX,
 };
 
-enum API_HTTP_CODE {
-    API_HTTP_CODE_SUCCESS,
-    API_HTTP_CODE_BAD_REQUEST,
-    API_HTTP_CODE_SERVER,
+enum API_METHOD {
+    API_METHOD_POST = 0,
+    API_METHOD_PUT,
+    API_METHOD_DELETE,
+    API_METHOD_GET,
+    API_METHOD_MAX,
 };
 
 struct api_user {
@@ -178,12 +182,12 @@ extern void *api_failure(int errcode, const char *errmsg);
 extern int api_store_init(void);
 extern void api_store_fini(void);
 
-extern enum API_HTTP_CODE api_store_query(const struct api_method_node *api, const char *param, const char *buf, size_t len, void **req);
-extern enum API_HTTP_CODE api_store_update(const struct api_method_node *api, const char *buf, size_t len, void **req);
-extern enum API_HTTP_CODE api_store_create(const struct api_method_node *api, const char *buf, size_t len, void **req);
-extern enum API_HTTP_CODE api_store_delete(const struct api_method_node *api, const char *param, const char *buf, size_t len, void **req);
+extern enum API_STATUS api_store_query(const struct api_method_node *api, const char *param, const char *buf, size_t len, void **req);
+extern enum API_STATUS api_store_update(const struct api_method_node *api, const char *buf, size_t len, void **req);
+extern enum API_STATUS api_store_create(const struct api_method_node *api, const char *buf, size_t len, void **req);
+extern enum API_STATUS api_store_delete(const struct api_method_node *api, const char *param, const char *buf, size_t len, void **req);
 
-extern void *api_db_query(void *sess, const char *module, const char *container);
+extern void *api_db_query(const char *path);
 
 extern int api_account_desensitize(unsigned char *dst, size_t max, const char *passwd, size_t len);
 

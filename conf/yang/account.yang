@@ -29,6 +29,10 @@ submodule account {
                     }
                 }
             }
+            leaf modify_id {
+                type uint32;
+                default 1;
+            }
         }
     }
 }

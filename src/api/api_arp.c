@@ -29,9 +29,10 @@ API_DELETE(/v1/network/arp, arp)
 API_GET(/v1/network/arp, arp)
 {
     void *obj = NULL;
+    const char *path = "/v1:arp";
 
     if (*url == 0) {
-        obj = api_db_query(sess, "v1", "arp");
+        obj = api_db_query(path);
         if (obj == NULL) {
             return api_failure(API_ERRCODE_INNER, "Internal server error");
         }

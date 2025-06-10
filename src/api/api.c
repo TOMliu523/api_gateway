@@ -244,6 +244,11 @@ static void _api_http_succ(struct mg_connection *c, struct mg_http_message *msg,
     struct mg_str *auth = NULL;
     char header[1024] = API_JSON_FORMAT;
 
+    if (json == NULL) {
+        _api_http_error(c, 500, &msg->method, &msg->uri);
+        return;
+    }
+
     content = json_dumps(json, 0);
     if (content == NULL) {
         LOG_ERROR("OOM");
@@ -312,15 +317,19 @@ static void _api_http_auth(struct mg_connection *c)
     mg_http_reply(c, 401, "", "");
 }
 
-static void _api_response(struct mg_connection *c, struct mg_http_message *msg, enum API_HTTP_CODE code, void *rep)
+static void _api_response(struct mg_connection *c, struct mg_http_message *msg, enum API_STATUS code, void *rep)
 {
     switch (code) {
-    case API_HTTP_CODE_SUCCESS:
+    case API_STATUS_OK:
         _api_http_succ(c, msg, rep);
         break;
 
-    case API_HTTP_CODE_BAD_REQUEST:
+    case API_STATUS_BAD_REQUEST:
         _api_http_error(c, 400, &msg->method, &msg->uri);
+        break;
+
+    case API_STATUS_AUTH:
+        _api_http_error(c, 401, &msg->method, &msg->uri);
         break;
 
     default:
@@ -329,35 +338,49 @@ static void _api_response(struct mg_connection *c, struct mg_http_message *msg, 
     }
 }
 
-static enum API_ERRCODE _api_login(struct mg_http_message *msg)
+static int _api_login(struct mg_connection *c, struct mg_http_message *msg)
 {
     int ret = 0;
+    enum API_ERRCODE code = 0;
     struct api_user user = {0};
 
     switch (msg->uri.len) {
     case 1:
         if (*msg->uri.buf == '/') {
-            return API_ERRCODE_REDIRECT;
+            _api_http_redirect(c);
+            return -1;
         }
         break;
     case 6:
         if (msg->method.len == 4 && strncasecmp(msg->method.buf, "POST", msg->method.len) == 0) {
-            return api_login(msg);
+            code = api_login(msg);
+            if (code != API_ERRCODE_SUCCESS) {
+                _api_http_user_pwd(c);
+                return -1;
+            }
+
+            _api_http_succ(c, msg, api_success(NULL));
+            return 1;
         }
         FALLTHROUGH;
     default:
-        return api_refresh_login(msg);
+        code = api_refresh_login(msg);
+        if (code != 0) {
+            _api_http_auth(c);
+            return -1;
+        }
+        return 0;
     }
 
-    return API_ERRCODE_SUCCESS;
+    return 0;
 }
 
 static void _api_load_cb(struct mg_connection *c, int event, void *event_data)
 {
+    int ret = 0;
     int nbytes = 0;
     void *rep = NULL;
-    enum API_ERRCODE ret = 0;
-    enum API_HTTP_CODE code = 0;
+    enum API_STATUS status = 0;
     static char s_param[BUFSIZ] = "";
     struct mg_http_message *msg = NULL;
     const struct api_method_node *api = NULL;
@@ -377,16 +400,8 @@ static void _api_load_cb(struct mg_connection *c, int event, void *event_data)
     case MG_EV_HTTP_MSG:
         msg = event_data;
 
-        ret = _api_login(msg);
-        switch (ret) {
-        case API_ERRCODE_REDIRECT:
-            _api_http_redirect(c);
-            return;
-        case API_ERRCODE_USER_PWD:
-            _api_http_user_pwd(c);
-            return;
-        case API_ERRCODE_AUTH:
-            _api_http_auth(c);
+        ret = _api_login(c, msg);
+        if (ret != 0) {
             return;
         }
 
@@ -400,8 +415,8 @@ static void _api_load_cb(struct mg_connection *c, int event, void *event_data)
                 }
 
                 strncpy(s_param, msg->query.buf, msg->query.len);
-                code = api_store_query(api, s_param, msg->body.buf, msg->body.len, &rep);
-                _api_response(c, msg, code, rep);
+                status = api_store_query(api, s_param, msg->body.buf, msg->body.len, &rep);
+                _api_response(c, msg, status, rep);
                 break;
             } else if (strncasecmp(msg->method.buf, "PUT", 3) == 0) {
                 api = _api_get(API_METHOD_PUT, msg->uri.buf, msg->uri.len);
@@ -410,8 +425,8 @@ static void _api_load_cb(struct mg_connection *c, int event, void *event_data)
                     return;
                 }
 
-                code = api_store_update(api, msg->body.buf, msg->body.len, &rep);
-                _api_response(c, msg, code, rep);
+                status = api_store_update(api, msg->body.buf, msg->body.len, &rep);
+                _api_response(c, msg, status, rep);
                 break;
             } else {
                 _api_http_error(c, 405, &msg->method, &msg->uri);
@@ -426,8 +441,8 @@ static void _api_load_cb(struct mg_connection *c, int event, void *event_data)
                     return;
                 }
 
-                code = api_store_create(api, msg->body.buf, msg->body.len, &rep);
-                _api_response(c, msg, code, rep);
+                status = api_store_create(api, msg->body.buf, msg->body.len, &rep);
+                _api_response(c, msg, status, rep);
                 break;
             } else {
                 _api_http_error(c, 405, &msg->method, &msg->uri);
@@ -443,8 +458,8 @@ static void _api_load_cb(struct mg_connection *c, int event, void *event_data)
                 }
 
                 strncpy(s_param, msg->query.buf, msg->query.len);
-                code = api_store_delete(api, s_param, msg->body.buf, msg->body.len, &rep);
-                _api_response(c, msg, code, rep);
+                status = api_store_delete(api, s_param, msg->body.buf, msg->body.len, &rep);
+                _api_response(c, msg, status, rep);
                 break;
             } else {
                 _api_http_error(c, 405, &msg->method, &msg->uri);

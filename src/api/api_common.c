@@ -156,5 +156,5 @@ int api_account_desensitize(unsigned char *dst, size_t max, const char *passwd, 
     nbytes = mg_base64_encode(binary, sizeof(binary), dst, max);
     dst[nbytes] = 0;
 
-    return 0;
+    return (int)nbytes;
 }
