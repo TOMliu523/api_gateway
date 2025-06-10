@@ -18,7 +18,7 @@
 #define API_AUTH_EXP (20 * 60)
 #define API_AUTH_BEARER "Bearer "
 #define API_AUTH_HEADER "{\"alg\":\"HS256\",\"typ\":\"JWT\"}"
-#define API_AUTH_PAYLOAD "{\"iss\":\"TML\",\"iat\":\"%lu\",\"exp\":\"%lu\",\"jti\":\"%lu\",\"usr\":\"%s\",\"roles\":\"%s\",\"rev\":\"%u\"}"
+#define API_AUTH_PAYLOAD "{\"iss\":\"TML\",\"iat\":%lu,\"exp\":%lu,\"jti\":%lu,\"usr\":\"%s\",\"roles\":\"%s\",\"rev\":%u}"
 
 #define API_USER_PATH "/v1:account/users[username='%s']"
 
@@ -143,6 +143,7 @@ static int _api_jwt(struct mg_http_message *msg, const struct db_login *db)
     int ret = 0;
     size_t t = 0;
     int nbytes = 0;
+    int bearer_len = 0;
     size_t header_len = 0;
     size_t payload_len = 0;
     size_t sign_len = 0;
@@ -153,7 +154,7 @@ static int _api_jwt(struct mg_http_message *msg, const struct db_login *db)
     static __thread char auth[1024] = API_AUTH_BEARER;
 
     id += 1;
-    nbytes = sizeof(API_AUTH_BEARER);
+    bearer_len = nbytes = sizeof(API_AUTH_BEARER) - 1;
     t = time(NULL);
 
     header_len = mg_base64_encode(API_AUTH_HEADER, sizeof(API_AUTH_HEADER), auth + nbytes, sizeof(auth) - nbytes);
@@ -165,7 +166,7 @@ static int _api_jwt(struct mg_http_message *msg, const struct db_login *db)
     nbytes += payload_len;
     auth[nbytes++] = '.';
 
-    ret = api_account_desensitize(auth + nbytes, sizeof(auth) - nbytes, auth + sizeof(API_AUTH_BEARER), nbytes - sizeof(API_AUTH_BEARER));
+    ret = api_account_desensitize(auth + nbytes, sizeof(auth) - nbytes, auth + bearer_len, nbytes - bearer_len);
     if (ret < 0) {
         return -1;
     }
@@ -234,7 +235,7 @@ static int _api_login_exp_and_flush(void *arg, const char *base, size_t len)
     usr = json_string_value(json_object_get(json, "usr"));
     exp = json_integer_value(json_object_get(json, "exp"));
 
-    if (exp > cur) {
+    if (exp <= cur) {
         LOG_WARN("username(%s) login expire", usr);
         ret = -1;
         goto _quit;
@@ -292,27 +293,27 @@ enum API_ERRCODE api_refresh_login(void *arg)
     const char *first = NULL;
     const char *second = NULL;
     struct mg_str *auth = NULL;
+    size_t bearer_len = sizeof(API_AUTH_BEARER) - 1;
 
     auth = mg_http_get_header(arg, API_AUTH);
     if (auth == NULL) {
         return API_ERRCODE_AUTH;
     }
 
-    header = auth->buf + sizeof(API_AUTH_BEARER);
+    header = auth->buf + bearer_len;
     first = strchr(header, '.');
     if (first == NULL) {
         return API_ERRCODE_AUTH;
     }
 
     first += 1;
-
     second = strchr(first, '.');
     if (second == NULL) {
         return API_ERRCODE_AUTH;
     }
 
     second += 1;
-    if (second - header >= auth->len - sizeof(API_AUTH_BEARER)) {
+    if (second - header >= auth->len - bearer_len) {
         return API_ERRCODE_AUTH;
     }
 
@@ -321,7 +322,7 @@ enum API_ERRCODE api_refresh_login(void *arg)
         return API_ERRCODE_AUTH;
     }
 
-    if ((ret != auth->len - sizeof(API_AUTH_HEADER) - (second - header)) || strncmp(buf, second + 1, ret) != 0) {
+    if ((ret != auth->len - bearer_len - (second - header)) || strncmp(buf, second, ret) != 0) {
         return API_ERRCODE_AUTH;
     }
 
