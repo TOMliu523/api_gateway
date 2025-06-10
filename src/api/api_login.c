@@ -73,10 +73,23 @@ static int _api_login_user(struct user_login *user, void *arg)
     return 0;
 }
 
+static void _api_db_get(struct db_login *db, void *json)
+{
+    void *tmp = NULL;
+    json_t *users = NULL;
+
+    users = json_array_get(json_object_get(json, "v1:users"), 0);
+    strcpy(db->username, json_string_value(json_object_get(users, "username")));
+    tmp = json_object_get(users, "password");
+    strcpy(db->encrypt_data, json_string_value(tmp));
+    db->encrypt_len = json_string_length(tmp);
+    strcpy(db->role_type, json_string_value(json_object_get(users, "role_type")));
+    db->modify_id = json_integer_value(json_object_get(users, "modify_id"));
+}
+
 static int _api_check_user(struct db_login *db, struct user_login *user)
 {
     int ret = 0;
-    void *tmp = NULL;
     json_t *json = NULL;
     char path[128] = "";
     char data[192] = "";
@@ -94,22 +107,19 @@ static int _api_check_user(struct db_login *db, struct user_login *user)
         }
     }
 
-    strcpy(db->username, json_string_value(json_object_get(json, "username")));
-    tmp = json_object_get(json, "password");
-    strcpy(db->encrypt_data, json_string_value(tmp));
-    db->encrypt_len = json_string_length(tmp);
-    strcpy(db->role_type, json_string_value(json_object_get(json, "role_type")));
-    db->modify_id = json_integer_value(json_object_get(json, "modify_id"));
+    _api_db_get(db, json);
 
     ret = api_account_desensitize(data, sizeof(data), user->password, user->password_len);
     if (ret < 0) {
         goto _quit;
     }
 
-    if (strcmp(db->encrypt_data, data) != 0) {
+    if (db->encrypt_len != ret || strcmp(db->encrypt_data, data) != 0) {
         LOG_ERROR("username or password error.");
         return -1;
     }
+
+    ret = 0;
 
 _quit:
     json_decref(json);
@@ -182,11 +192,10 @@ static int _api_jwt(struct mg_http_message *msg, const struct db_login *db)
     return 0;
 }
 
-static int _api_login_flush(void *arg, const char *username)
+static int _api_login_db_get(struct db_login *db, const char *username)
 {
     json_t *json = NULL;
     char path[128] = "";
-    struct db_login db = {0};
 
     snprintf(path, sizeof(path), API_USER_PATH, username);
     json = api_db_query(path);
@@ -196,28 +205,28 @@ static int _api_login_flush(void *arg, const char *username)
             return -1;
         }
 
-        strcpy(db.username, username);
-        strcpy(db.role_type, "SYSTEM_ADMIN");
-        db.modify_id = 0;
+        strcpy(db->username, username);
+        strcpy(db->role_type, "SYSTEM_ADMIN");
+        db->modify_id = 0;
     } else {
-        strcpy(db.username, json_string_value(json_object_get(json, "username")));
-        strcpy(db.role_type, json_string_value(json_object_get(json, "role_type")));
-        db.modify_id = (uint32_t)json_integer_value(json_object_get(json, "modify_id"));
-
+        _api_db_get(db, json);
         json_decref(json);
     }
 
-    return _api_jwt(arg, &db);
+    return 0;
 }
 
-static int _api_login_exp_and_flush(void *arg, const char *base, size_t len)
+static enum API_ERRCODE _api_login_exp_and_flush(void *arg, const char *base, size_t len)
 {
-    int ret = 0;
     size_t nbytes = 0;
     char data[192] = "";
     json_t *json = NULL;
     json_error_t error = {0};
     const char *usr = NULL;
+    struct db_login db = {0};
+    uint32_t modify_id = 0;
+    struct mg_http_message *msg = arg;
+    enum API_ERRCODE ret = API_ERRCODE_SUCCESS;
 
     size_t cur = 0;
     json_int_t exp = 0;
@@ -228,7 +237,7 @@ static int _api_login_exp_and_flush(void *arg, const char *base, size_t len)
     if (json == NULL) {
         LOG_ERROR("line: %d, column: %d, position: %d, source: %s, text: %s",
                   error.line, error.column, error.position, error.source, error.text);
-        return -1;
+        return API_ERRCODE_AUTH;
     }
 
     cur = time(NULL);
@@ -237,13 +246,37 @@ static int _api_login_exp_and_flush(void *arg, const char *base, size_t len)
 
     if (exp <= cur) {
         LOG_WARN("username(%s) login expire", usr);
-        ret = -1;
         goto _quit;
+    }
+
+    if (_api_login_db_get(&db, usr) != 0) {
+        ret = API_ERRCODE_AUTH;
+        goto _quit;
+    }
+
+    if (msg->uri.len == 18 && strncmp(msg->uri.buf, "/v1/system/account", 18) == 0) {
+        if (strcmp(db.role_type, "SYSTEM_ADMIN") != 0 && strcmp(db.role_type, "SYSTEM_ROOT") != 0) {
+            ret = API_ERRCODE_FORBIDDEN;
+            goto _quit;
+        }
     }
 
     iat = json_integer_value(json_object_get(json, "iat"));
     if (cur - iat >= API_AUTH_EXP / 2) {
-        ret = _api_login_flush(arg, usr);
+        ret = _api_jwt(arg, &db);
+        if (ret != 0) {
+            ret = API_ERRCODE_AUTH;
+            goto _quit;
+        }
+    } else {
+        modify_id = (uint32_t)json_integer_value(json_object_get(json, "modify_id"));
+        if (modify_id != db.modify_id) {
+            ret = _api_jwt(arg, &db);
+            if (ret != 0) {
+                ret = API_ERRCODE_AUTH;
+                goto _quit;
+            }
+        }
     }
 
 _quit:
@@ -327,8 +360,8 @@ enum API_ERRCODE api_refresh_login(void *arg)
     }
 
     ret = _api_login_exp_and_flush(arg, first, second - 1 - first);
-    if (ret != 0) {
-        return API_ERRCODE_AUTH;
+    if (ret != API_ERRCODE_SUCCESS) {
+        return ret;
     }
 
     return API_ERRCODE_SUCCESS;

@@ -351,25 +351,33 @@ static int _api_login(struct mg_connection *c, struct mg_http_message *msg)
             return -1;
         }
         break;
+
     case 6:
         if (msg->method.len == 4 && strncasecmp(msg->method.buf, "POST", msg->method.len) == 0) {
             code = api_login(msg);
-            if (code != API_ERRCODE_SUCCESS) {
+            switch (code) {
+            case API_ERRCODE_SUCCESS:
+                _api_http_succ(c, msg, api_success(NULL));
+                return 1;
+            default:
                 _api_http_user_pwd(c);
                 return -1;
             }
-
-            _api_http_succ(c, msg, api_success(NULL));
-            return 1;
         }
         FALLTHROUGH;
+
     default:
         code = api_refresh_login(msg);
-        if (code != 0) {
+        switch (code) {
+        case API_ERRCODE_SUCCESS:
+            return 0;
+        case API_ERRCODE_FORBIDDEN:
+            _api_http_error(c, 403, &msg->method, &msg->uri);
+            return -1;
+        default:
             _api_http_auth(c);
             return -1;
         }
-        return 0;
     }
 
     return 0;
