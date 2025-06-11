@@ -270,13 +270,10 @@ static enum API_ERRCODE _api_login_exp_and_flush(void *arg, const char *base, si
             goto _quit;
         }
     } else {
-        modify_id = (uint32_t)json_integer_value(json_object_get(json, "modify_id"));
+        modify_id = (uint32_t)json_integer_value(json_object_get(json, "rev"));
         if (modify_id != db.modify_id) {
-            ret = _api_jwt(arg, &db);
-            if (ret != 0) {
-                ret = API_ERRCODE_AUTH;
-                goto _quit;
-            }
+            ret = API_ERRCODE_AUTH;
+            goto _quit;
         }
     }
 
