@@ -445,7 +445,7 @@ static void _api_load_cb(struct mg_connection *c, int event, void *event_data)
             if (strncasecmp(msg->method.buf, "POST", 4) == 0) {
                 api = _api_get(API_METHOD_POST, msg->uri.buf, msg->uri.len);
                 if (api == NULL) {
-                    _api_http_error(c, 500, &msg->method, &msg->uri);
+                    _api_http_error(c, 404, &msg->method, &msg->uri);
                     return;
                 }
 
@@ -461,7 +461,7 @@ static void _api_load_cb(struct mg_connection *c, int event, void *event_data)
             if (strncasecmp(msg->method.buf, "DELETE", 6) == 0) {
                 api = _api_get(API_METHOD_DELETE, msg->uri.buf, msg->uri.len);
                 if (api == NULL) {
-                    _api_http_error(c, 500, &msg->method, &msg->uri);
+                    _api_http_error(c, 404, &msg->method, &msg->uri);
                     return;
                 }
 

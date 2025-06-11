@@ -246,6 +246,7 @@ static enum API_ERRCODE _api_login_exp_and_flush(void *arg, const char *base, si
 
     if (exp <= cur) {
         LOG_WARN("username(%s) login expire", usr);
+        ret = API_ERRCODE_AUTH;
         goto _quit;
     }
 

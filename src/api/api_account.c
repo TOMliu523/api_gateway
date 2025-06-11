@@ -52,10 +52,11 @@ static void *_api_account(const char *url, void *json, void *sess, bool update_i
             return api_failure(API_ERRCODE_ACCOUNT, "Account exception");
         }
 
-        if (!update_id) {
+        if (update_id) {
             continue;
         }
 
+        snprintf(path, sizeof(path), "/v1:account/users[username='%s']/modify_id", username);
         ret = sr_get_item(sess, path, 0, &modify_id);
         if (ret != 0) {
             LOG_ERROR("sr_get_item_str failure: %s", sr_strerror(ret));
@@ -75,12 +76,12 @@ static void *_api_account(const char *url, void *json, void *sess, bool update_i
 
 static void *api_account_post_update(const char *url, void *json, void *sess)
 {
-    return _api_account(url, json, sess, false);
+    return _api_account(url, json, sess, true);
 }
 
 static void *api_account_put_update(const char *url, void *json, void *sess)
 {
-    return _api_account(url, json, sess, true);
+    return _api_account(url, json, sess, false);
 }
 
 API_DELETE(/v1/system/account, account)

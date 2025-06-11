@@ -13,6 +13,17 @@
 
 API_POST(/v1/network/arp, arp)
 {
+    int ret = 0;
+    char *str = NULL;
+
+    ret = api_json_to_string(json, &str);
+    if (ret < 0) {
+        return api_failure(API_ERRCODE_INNER, "Server Inner error");
+    }
+
+    LOG_DEBUG("Load arp config: %s", str);
+    free(str);
+
     return api_success(NULL);
 }
 

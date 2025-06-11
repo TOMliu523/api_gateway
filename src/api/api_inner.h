@@ -192,5 +192,7 @@ extern enum API_STATUS api_store_delete(const struct api_method_node *api, const
 extern void *api_db_query(const char *path);
 
 extern int api_account_desensitize(unsigned char *dst, size_t max, const char *passwd, size_t len);
+extern int api_string_to_json(const char *string, void **json);
+extern int api_json_to_string(void *json, char **string);
 
 #endif // __API_INNER_H__

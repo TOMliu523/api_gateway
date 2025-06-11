@@ -747,10 +747,8 @@ void *api_db_query(const char *path)
         return NULL;
     }
 
-    json = json_loads(json_str, 0, &error);
-    if (json == NULL) {
-        LOG_ERROR("line: %d, column: %d, position: %d, source: %s, text: %s",
-                  error.line, error.column, error.position, error.source, error.text);
+    ret = api_string_to_json(json_str, (void **)&json);
+    if (ret != 0) {
         free(json_str);
         return NULL;
     }
@@ -778,6 +776,9 @@ int api_store_init(void)
     sr_log_set_cb(_api_store_db_log);
     ly_log_level(LY_LLDBG);
     ly_set_log_clb(_api_store_yang_log);
+
+    LOG_DEBUG("sysrepo memory path: %s", sr_get_shm_path());
+    LOG_DEBUG("sysrepo repo path = %s", sr_get_repo_path());
 
     ret = sr_connect(SR_CONN_CACHE_RUNNING, &db->conn);
     if (ret != SR_ERR_OK) {
