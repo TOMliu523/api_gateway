@@ -32,6 +32,7 @@ install(DIRECTORY ${PROJECT_SOURCE_DIR}/conf DESTINATION .)
 # install bin
 install(PROGRAMS ${TP_BIN}/sysrepoctl DESTINATION bin)
 install(PROGRAMS ${TP_BIN}/sysrepocfg DESTINATION bin)
+install(PROGRAMS ${TP_BIN}/dpdk-devbind.py DESTINATION bin)
 
 #install scripts
 install(PROGRAMS ${SCRPT}/setup.sh DESTINATION .)

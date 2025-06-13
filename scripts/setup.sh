@@ -1,8 +1,11 @@
 #!/bin/bash
 
-TARGET=api_gateway
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BIN=${APP_DIR}/bin/${TARGET}
+
+TARGET=api_gateway
+BIN=${APP_DIR}/bin/
+APP=${BIN}/${TARGET}
+DEVBIND=${BIN}/dpdk-devbind.py
 
 if [[ -z ${API_LIBYANG_PATH} ]]; then
     export API_LIBYANG_PATH=${APP_DIR}/conf/yang
@@ -25,10 +28,26 @@ CHANEL=`dmidecode -t memory | awk '
             print used
         }'`
 
+# use vfio
+sudo modprobe vfio
+sudo modprobe vfio-pci
+
+nic_pci=("0000:04:00.0"
+         "0000:04:00.1"
+         "0000:04:00.2"
+         "0000:04:00.3")
+
+for pci in "${nic_pci[@]}"
+do
+    ${DEVBIND} -b vfio-pci ${pci}
+done
+
+${DEVBIND} --status
+
 echo "starting application ..."
-echo "Executable: ${BIN}"
+echo "Executable: ${APP}"
 echo "Library path: ${LD_LIBRARY_PATH}"
 echo "Repository path: ${SYSREPO_REPOSITORY_PATH}"
-echo "${BIN} -l ${CPU_LIST} -n ${CHANEL}"
+echo "${APP} -l ${CPU_LIST} -n ${CHANEL}"
 
-${BIN} -l ${CPU_LIST} -n ${CHANEL}
+${APP} -l ${CPU_LIST} -n ${CHANEL}
