@@ -44,9 +44,9 @@ GRUB_CMDLINE_LINUX=""
 
 # compile command
 ```
-mkdir build
+mkdir -p build
 cd build
-cmake -DCMAKE_INSTALL_PREFIX=`pwd`/.install ..
+cmake -DCMAKE_INSTALL_PREFIX=`pwd`/../install ..
 make -j 4
 make install
 ```
