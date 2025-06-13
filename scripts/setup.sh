@@ -4,7 +4,14 @@ TARGET=api_gateway
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BIN=${APP_DIR}/bin/${TARGET}
 
-export SYSREPO_REPOSITORY_PATH=${APP_DIR}/data
+if [[ -z ${API_LIBYANG_PATH} ]]; then
+    export API_LIBYANG_PATH=${APP_DIR}/conf/yang
+fi
+
+if [[ -z ${SYSREPO_REPOSITORY_PATH} ]]; then
+    export SYSREPO_REPOSITORY_PATH=${APP_DIR}/data
+fi
+
 export LD_LIBRARY_PATH=${APP_DIR}/lib:${APP_DIR}/lib64:${LD_LIBRARY_PATH}
 
 # cpu list

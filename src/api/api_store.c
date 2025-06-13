@@ -22,12 +22,6 @@
 
 #define API_CONTAINER_NUMS 1024
 #define API_TIMEOUT (30 * 1000)
-#define API_YANG_MODULE "v1"
-#define API_YANG_PATH "conf/yang/"
-#define API_YANG_V1 API_YANG_PATH API_YANG_MODULE".yang"
-#define API_YANG_COMMON API_YANG_PATH "common/"
-
-#define API_DEBUG_DIR "/root/api_gateway/"
 
 struct api_startup {
     bool head_init;
@@ -764,13 +758,12 @@ int api_store_init(void)
     pthread_t thid = {0};
     struct api_db *db = &s_api_db;
     LY_ERR err = LY_SUCCESS;
+    const char *yang_path = NULL;
     struct lys_module *module = NULL;
-    const char *schema_paths[] = {
-        API_DEBUG_DIR API_YANG_V1,
-        NULL,
-    };
-    const char *search_dir = API_DEBUG_DIR API_YANG_COMMON \
-                             ":" API_DEBUG_DIR API_YANG_PATH;
+    const char *module_name = "v1";
+    const char *schema_path[20] = {NULL};
+    char search_dir[1024] = "";
+    char buffer[1024] = "";
 
     sr_log_stderr(SR_LL_DBG);
     sr_log_set_cb(_api_store_db_log);
@@ -779,6 +772,16 @@ int api_store_init(void)
 
     LOG_DEBUG("sysrepo memory path: %s", sr_get_shm_path());
     LOG_DEBUG("sysrepo repo path = %s", sr_get_repo_path());
+
+    yang_path = getenv("API_LIBYANG_PATH");
+    if (yang_path == NULL) {
+        LOG_ERROR("API_LIBYANG_PATH env not exists");
+        return -1;
+    }
+
+    schema_path[0] = buffer;
+    snprintf(buffer, sizeof(buffer), "%s/%s.yang", yang_path, module_name);
+    snprintf(search_dir, sizeof(search_dir), "%s:%s/common/", yang_path, yang_path);
 
     ret = sr_connect(SR_CONN_CACHE_RUNNING, &db->conn);
     if (ret != SR_ERR_OK) {
@@ -792,14 +795,14 @@ int api_store_init(void)
         goto _quit;
     }
 
-    ret = sr_install_modules(db->conn, schema_paths, search_dir, NULL);
+    ret = sr_install_modules(db->conn, schema_path, search_dir, NULL);
     if (ret != SR_ERR_OK) {
         LOG_ERROR("Session install error: %s", sr_strerror(ret));
         goto _quit;
     }
 
     ret = sr_module_change_subscribe(db->sess,
-                                     API_YANG_MODULE,
+                                     module_name,
                                      NULL,
                                      _api_store_update_cb,
                                      &db->data,
@@ -817,7 +820,7 @@ int api_store_init(void)
         goto _quit;
     }
 
-    ret = _api_store_load(db->sess, API_YANG_MODULE);
+    ret = _api_store_load(db->sess, module_name);
     if (ret != 0) {
         goto _quit;
     }
