@@ -20,7 +20,7 @@ add_subdirectory(${API})
 add_executable(${PROJECT_NAME} main.c)
 target_include_directories(${PROJECT_NAME} PRIVATE ${COMMON_INC})
 target_include_directories(${PROJECT_NAME} PRIVATE ${API_INC})
-target_include_directories(${PROJECT_NAME} PRIVATE ${TP_INC})
+target_include_directories(${PROJECT_NAME} PRIVATE ${DPDK_INCLUDE_DIRS})
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
                       -Wl,--whole-archive
@@ -33,7 +33,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
                       PkgConfig::SYSREPO
                       PkgConfig::JANSSON
                       PkgConfig::OPENSSL
-                      PkgConfig::DPDK
+                      ${DPDK_STATIC_LDFLAGS}
                       PkgConfig::JEMALLOC)
 
 install(TARGETS ${PROJECT_NAME} RUNTIME DESTINATION bin)

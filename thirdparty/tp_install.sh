@@ -49,7 +49,7 @@ function install_lib()
 # variable
 PROC=8
 CURDIR=`pwd`/`dirname $0`
-INSTALL=${CURDIR}/../install
+INSTALL=${CURDIR}/install
 [[ $# -eq 2 ]] && INSTALL="$1"
 
 # Dependent apt-get -install -y pkgconf
@@ -118,7 +118,7 @@ install_lib \
 install_lib \
     dpdk-stable-24.11.2.tar.xz \
     ${INSTALL}/lib/x86_64-linux-gnu/librte_ring.so \
-    "meson setup build --prefix=${INSTALL}" \
+    "meson setup build --prefix=${INSTALL} --default-library=static" \
     "cd build" \
     "ninja -j {PROC}" \
     "ninja install"
