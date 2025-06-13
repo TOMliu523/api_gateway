@@ -14,11 +14,14 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 
+#include <rte_log.h>
+
 #include "log.h"
 #include "macro.h"
 
 #define LOG_FILENAME "/var/log/api_gateway.log"
 
+static FILE *s_logfile;
 static int s_log_fd;
 
 static PROC_INIT void log_init(void)
@@ -46,11 +49,18 @@ static PROC_INIT void log_init(void)
     }
 
     s_log_fd = fd;
+
+    s_logfile = fopen(LOG_FILENAME, "a+");
+    if (s_logfile != NULL) {
+        rte_openlog_stream(s_logfile);
+        rte_log_set_level(RTE_LOGTYPE_EAL, LOG_LEVEL);
+    }
 }
 
 static PROC_FINI void log_fini(void)
 {
     close(s_log_fd);
+    fclose(s_logfile);
 }
 
 void log_write(const char *format, ...)

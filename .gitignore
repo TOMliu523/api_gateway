@@ -2,3 +2,5 @@ build/*
 install/*
 .vscode/*
 thirdparty/install/
+release/*
+cmake_build/*
