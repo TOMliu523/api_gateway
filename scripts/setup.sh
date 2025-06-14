@@ -47,6 +47,7 @@ ${DEVBIND} --status
 echo "starting application ..."
 echo "Executable: ${APP}"
 echo "Library path: ${LD_LIBRARY_PATH}"
+echo "Libyang path: ${API_LIBYANG_PATH}"
 echo "Repository path: ${SYSREPO_REPOSITORY_PATH}"
 echo "${APP} -l ${CPU_LIST} -n ${CHANEL}"
 
