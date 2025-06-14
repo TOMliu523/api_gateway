@@ -57,7 +57,6 @@ rcu_nocbs=12-23 numa=off crashkernel=auto console=tty0 console=ttyS0,115200n8 io
 ```
 
 # running
-enter install directory:
 ```
 ./release/setup.sh
 ```
