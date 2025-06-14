@@ -27,9 +27,9 @@ pip3 install pyelftools
 
 # System Config
 
-You only need to update “GRUB_CMDLINE_LINUX”
-Intel CPU: intel_iommu=on
-AMD CPU: amd_iommu=on
+You only need to update “GRUB_CMDLINE_LINUX”  
+Intel CPU: intel_iommu=on  
+AMD CPU: amd_iommu=on  
 ```
 # cat /etc/default/grub
 
