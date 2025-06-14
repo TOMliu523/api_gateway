@@ -1,4 +1,4 @@
-# api_gateway
+# API_GATEWAY
 
 SYSTEM ubuntu 22.04   
 OS 5.15.0  
@@ -25,7 +25,7 @@ apt -y install python3-pip
 pip3 install pyelftools
 ```
 
-# system config
+# System config
 You only need to update “GRUB_CMDLINE_LINUX”   
 Intel CPU: intel_iommu=on   
 AMD CPU: amd_iommu=on   
@@ -44,7 +44,7 @@ rcu_nocbs=12-23 numa=off crashkernel=auto console=tty0 console=ttyS0,115200n8 io
 # reboot
 ```
 
-# compile command
+# Compile command
 ```
 ./build.sh
 
@@ -56,7 +56,7 @@ rcu_nocbs=12-23 numa=off crashkernel=auto console=tty0 console=ttyS0,115200n8 io
 # make install
 ```
 
-# running
+# Running
 ```
 ./release/setup.sh
 ```
