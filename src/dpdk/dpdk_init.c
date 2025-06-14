@@ -34,6 +34,16 @@ static int _dpdk_memory_info(const struct rte_memseg_list *msl, const struct rte
     return 0;
 }
 
+static INLINE void _dpdk_info(void)
+{
+    // Display basic DPDK runtime and hardware details
+    LOG_INFO("DPDK VERSION: %s", rte_version());
+    LOG_INFO("SYSTEM NUMA COUNT: %d", rte_socket_count());
+    LOG_INFO("DPDK CPU COUNT: %d", rte_lcore_count());
+    LOG_INFO("DPDK NIC COUNT: %d", rte_eth_dev_count_avail());
+    rte_memseg_walk(_dpdk_memory_info, NULL);
+}
+
 int dpdk_init(int argc, char *argv[])
 {
     int ret = 0;
@@ -48,20 +58,15 @@ int dpdk_init(int argc, char *argv[])
 
     rte_srand(rte_rdtsc());
 
-    LOG_INFO("DPDK version: %s", rte_version());
-    LOG_INFO("DPDK nic count: %d", rte_eth_dev_count_avail());
-    rte_memseg_walk(_dpdk_memory_info, NULL);
+    _dpdk_info();
 
     return 0;
 }
 
 void dpdk_thread_startup(void *f, void *arg)
 {
-    int i = 0;
+    RUNTIME_ASSERT(f != NULL);
 
     LOG_INFO("STARTUP DPDK THREAD.");
-
-    RTE_LCORE_FOREACH_WORKER(i) {
-        rte_eal_mp_remote_launch(f, arg, CALL_MAIN);
-    }
+    rte_eal_mp_remote_launch(f, arg, CALL_MAIN);
 }
