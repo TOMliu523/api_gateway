@@ -13,7 +13,7 @@ meson(0.53.2+)
 pyelftools(0.22+)  
 pkg-config or pkgconf  
 
-# Install dependency
+# Install Dependency
 ```
 apt -y install cmake
 apt -y install zip
@@ -25,7 +25,7 @@ apt -y install python3-pip
 pip3 install pyelftools
 ```
 
-# System config
+# System Config
 You only need to update “GRUB_CMDLINE_LINUX”   
 Intel CPU: intel_iommu=on   
 AMD CPU: amd_iommu=on   
@@ -44,7 +44,7 @@ rcu_nocbs=12-23 numa=off crashkernel=auto console=tty0 console=ttyS0,115200n8 io
 # reboot
 ```
 
-# Compile command
+# Compile Command
 ```
 ./build.sh
 
