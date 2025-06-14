@@ -1,17 +1,17 @@
 # API_GATEWAY
 
-SYSTEM ubuntu 22.04   
-OS 5.15.0  
-DPDK 24.11.2  
+SYSTEM ubuntu 22.04
+OS 5.15.0
+DPDK 24.11.2
 
 # DPDK24.11.2
 
-C11(GCC 5.0+)  
-Clang(3.6+)  
-python(3.6+)  
-meson(0.53.2+)  
-pyelftools(0.22+)  
-pkg-config or pkgconf  
+C11(GCC 5.0+)
+Clang(3.6+)
+python(3.6+)
+meson(0.53.2+)
+pyelftools(0.22+)
+pkg-config or pkgconf
 
 # Install Dependency
 ```
@@ -26,9 +26,9 @@ pip3 install pyelftools
 ```
 
 # System Config
-You only need to update “GRUB_CMDLINE_LINUX”   
-Intel CPU: intel_iommu=on   
-AMD CPU: amd_iommu=on   
+You only need to update “GRUB_CMDLINE_LINUX”
+Intel CPU: intel_iommu=on
+AMD CPU: amd_iommu=on
 ```
 # cat /etc/default/grub
 
@@ -42,23 +42,6 @@ rcu_nocbs=12-23 numa=off crashkernel=auto console=tty0 console=ttyS0,115200n8 io
 
 # update-grub
 # reboot
-```
-
-# Compile Command
-```
-./build.sh
-
-# or
-# mkdir -p build
-# cd build
-# cmake -DCMAKE_INSTALL_PREFIX=`pwd`/../release ..
-# make -j 4
-# make install
-```
-
-# Running
-```
-./release/setup.sh
 ```
 
 # Codebase Overview
@@ -86,4 +69,21 @@ rcu_nocbs=12-23 numa=off crashkernel=auto console=tty0 console=ttyS0,115200n8 io
 │   │   └── ...       # Extendable to Layer 7 or application protocols
 │   └── main.c      # Main program entry point
 └── thirdparty/     # External dependencies or prebuilt third-party libraries
+```
+
+# Compile Command
+```
+./build.sh
+
+# or
+# mkdir -p build
+# cd build
+# cmake -DCMAKE_INSTALL_PREFIX=`pwd`/../release ..
+# make -j 4
+# make install
+```
+
+# Running
+```
+./release/setup.sh
 ```
