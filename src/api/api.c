@@ -408,7 +408,7 @@ static void _api_load_cb(struct mg_connection *c, int event, void *event_data)
     case MG_EV_HTTP_MSG:
         msg = event_data;
 
-        ret = _api_login(c, msg);
+        // ret = _api_login(c, msg);
         if (ret != 0) {
             return;
         }
