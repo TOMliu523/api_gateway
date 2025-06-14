@@ -26,9 +26,9 @@ pip3 install pyelftools
 ```
 
 # system config
-You only need to update “GRUB_CMDLINE_LINUX”
-Intel CPU: intel_iommu=on
-AMD CPU: amd_iommu=on
+You only need to update “GRUB_CMDLINE_LINUX”   
+Intel CPU: intel_iommu=on   
+AMD CPU: amd_iommu=on   
 ```
 # cat /etc/default/grub
 
@@ -46,9 +46,18 @@ rcu_nocbs=12-23 numa=off crashkernel=auto console=tty0 console=ttyS0,115200n8 io
 
 # compile command
 ```
-mkdir -p build
-cd build
-cmake -DCMAKE_INSTALL_PREFIX=`pwd`/../release ..
-make -j 4
-make install
+./build.sh
+
+# or
+# mkdir -p build
+# cd build
+# cmake -DCMAKE_INSTALL_PREFIX=`pwd`/../release ..
+# make -j 4
+# make install
+```
+
+# running
+enter install directory:
+```
+./release/setup.sh
 ```
