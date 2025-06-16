@@ -30,7 +30,7 @@ struct api_startup {
     int nums;
 };
 
- struct api_db {
+struct api_db {
     sr_conn_ctx_t *conn;
     sr_session_ctx_t *sess;
     sr_subscription_ctx_t *subscript;
@@ -38,6 +38,7 @@ struct api_startup {
         api_action_fn_t update_action;
         api_action_fn_t change_action;
         api_apply_fn_t apply_action;
+        struct numa *cfg;
         const char *url;
         void *input;
         void *output;
@@ -72,13 +73,13 @@ static void _api_store_yang_log(LY_LOG_LEVEL level,
     }
 }
 
-static int _api_store_exec_call(api_action_fn_t action, const char *url, void *input, void *session, void **output)
+static int _api_store_exec_call(api_action_fn_t action, void *cfg, const char *url, void *input, void *session, void **output)
 {
     int ret = 0;
     json_t *req = NULL;
     json_t *retcode = NULL;
 
-    req = action(url, input, session);
+    req = action(cfg, url, input, session);
     if (req == NULL) {
         return -1;
     }
@@ -115,19 +116,19 @@ static int _api_store_update_cb(sr_session_ctx_t *session,
             break;
         }
 
-        return _api_store_exec_call(data->update_action, data->url, data->input, session, &data->output);
+        return _api_store_exec_call(data->update_action, data->cfg, data->url, data->input, session, &data->output);
     case SR_EV_CHANGE:
         if (data->change_action == NULL) {
             break;
         }
 
-        return _api_store_exec_call(data->change_action, data->url, data->input, session, &data->output);
+        return _api_store_exec_call(data->change_action, data->cfg, data->url, data->input, session, &data->output);
     case SR_EV_DONE:
         if (data->apply_action == NULL) {
             break;
         }
 
-        data->apply_action(data->url, data->input, session);
+        data->apply_action(data->cfg, data->url, data->input, session);
     default:
         break;
     }
@@ -249,7 +250,7 @@ void api_startup_register(const char *url, const char *container, api_action_fn_
     _api_set_container(container, url, change, apply);
 }
 
-static int _api_store_load(sr_session_ctx_t *sess, const char *module_name)
+static int _api_store_load(sr_session_ctx_t *sess, struct api_db *db, const char *module_name)
 {
     int ret = 0;
     void *json = NULL;
@@ -274,7 +275,7 @@ static int _api_store_load(sr_session_ctx_t *sess, const char *module_name)
         }
 
         if (api->change_action != NULL) {
-            ret = _api_store_exec_call(api->change_action, api->url, json, sess, &output);
+            ret = _api_store_exec_call(api->change_action, db->data.cfg, api->url, json, sess, &output);
             if (ret != 0) {
                 goto _quit;
             }
@@ -286,7 +287,7 @@ static int _api_store_load(sr_session_ctx_t *sess, const char *module_name)
         }
 
         if (api->apply_action != NULL) {
-            api->apply_action(api->url, json, sess);
+            api->apply_action(db->data.cfg, api->url, json, sess);
         }
 
         json_decref(json); json = NULL;
@@ -462,8 +463,8 @@ static int _api_store_create(struct lyd_node *node, bool create)
 {
     int n = 0;
     int ret = 0;
-     struct api_db *db = &s_api_db;
     sr_val_t *value = NULL;
+    struct api_db *db = &s_api_db;
     const struct lyd_node *next = NULL;
     const struct lyd_node *child = NULL;
 
@@ -747,18 +748,24 @@ void *api_db_query(const char *path)
         return NULL;
     }
 
+    if ((json_is_object(json) && json_object_size(json) == 0)
+        || (json_is_array(json) && json_array_size(json) == 0)) {
+        json_decref(json);
+        json = NULL;
+    }
+
     free(json_str);
     sr_release_data(subtree);
     return json;
 }
 
-int api_store_init(void)
+int api_store_init(void *arg)
 {
     int ret = 0;
     pthread_t thid = {0};
-    struct api_db *db = &s_api_db;
     LY_ERR err = LY_SUCCESS;
     const char *yang_path = NULL;
+    struct api_db *db = &s_api_db;
     struct lys_module *module = NULL;
     const char *module_name = "v1";
     const char *schema_path[20] = {NULL};
@@ -782,6 +789,8 @@ int api_store_init(void)
     schema_path[0] = buffer;
     snprintf(buffer, sizeof(buffer), "%s/%s.yang", yang_path, module_name);
     snprintf(search_dir, sizeof(search_dir), "%s:%s/common/", yang_path, yang_path);
+
+    db->data.cfg = arg;
 
     ret = sr_connect(SR_CONN_CACHE_RUNNING, &db->conn);
     if (ret != SR_ERR_OK) {
@@ -820,7 +829,7 @@ int api_store_init(void)
         goto _quit;
     }
 
-    ret = _api_store_load(db->sess, module_name);
+    ret = _api_store_load(db->sess, db, module_name);
     if (ret != 0) {
         goto _quit;
     }

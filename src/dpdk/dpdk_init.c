@@ -15,36 +15,32 @@
 #include <rte_version.h>
 
 #include "log.h"
+#include "type.h"
 #include "macro.h"
 
 #define DPDK_1M (RTE_PGSIZE_2M / 2)
 
 static int _dpdk_memory_info(const struct rte_memseg_list *msl, const struct rte_memseg *ms, void *arg)
 {
-    if (msl != NULL) {
-        LOG_INFO("socket_id = %d, socket total len = %luMB, hugepage_size = %uMB, version = %d",
-                 msl->socket_id, msl->len/ DPDK_1M, msl->page_sz / DPDK_1M, msl->version);
-    }
+    struct hw_info *info = arg;
 
-    if (ms != NULL) {
-        LOG_INFO("socket_id = %d, socket segment len = %luMB, hugepage_size = %uMB, nchannel = %d, nrank = %d",
-                 ms->socket_id, ms->len / DPDK_1M, ms->hugepage_sz / DPDK_1M, ms->nchannel, ms->nrank);
+    if (msl != NULL) {
+        info->hugepage_size = msl->page_sz;
+        info->total_size += msl->len;
     }
 
     return 0;
 }
 
-static INLINE void _dpdk_info(void)
+static INLINE void _dpdk_info(struct hw_info *info)
 {
-    // Display basic DPDK runtime and hardware details
-    LOG_INFO("DPDK VERSION: %s", rte_version());
-    LOG_INFO("SYSTEM NUMA COUNT: %d", rte_socket_count());
-    LOG_INFO("DPDK CPU COUNT: %d", rte_lcore_count());
-    LOG_INFO("DPDK NIC COUNT: %d", rte_eth_dev_count_avail());
-    rte_memseg_walk(_dpdk_memory_info, NULL);
+    info->numa_nums = rte_socket_count();
+    info->cpu_nums = rte_lcore_count();
+    info->nic_nums = rte_eth_dev_count_avail();
+    rte_memseg_walk(_dpdk_memory_info, info);
 }
 
-int dpdk_init(int argc, char *argv[])
+int dpdk_init(int argc, char *argv[], void *output)
 {
     int ret = 0;
 
@@ -58,7 +54,7 @@ int dpdk_init(int argc, char *argv[])
 
     rte_srand(rte_rdtsc());
 
-    _dpdk_info();
+    _dpdk_info(output);
 
     return 0;
 }
@@ -69,4 +65,9 @@ void dpdk_thread_startup(void *f, void *arg)
 
     LOG_INFO("STARTUP DPDK THREAD.");
     rte_eal_mp_remote_launch(f, arg, CALL_MAIN);
+}
+
+void dpdk_thread_set_name(const char *name)
+{
+    rte_thread_set_name(rte_thread_self(), name);
 }

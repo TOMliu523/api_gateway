@@ -517,7 +517,7 @@ void *api_startup(void *arg)
 
     mg_log_set(MG_LL_INFO);
     mg_mgr_init(&mgr);
-    if (api_store_init() != 0) {
+    if (api_store_init(arg) != 0) {
         exit(EXIT_FAILURE);
     }
 

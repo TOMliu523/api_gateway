@@ -15,7 +15,7 @@
 #include "log.h"
 #include "api_inner.h"
 
-static void *_api_account(const char *url, void *json, void *sess, bool update_id)
+static void *_api_account(void *cfg, const char *url, void *json, void *sess, bool update_id)
 {
     int i = 0;
     int ret = 0;
@@ -74,14 +74,14 @@ static void *_api_account(const char *url, void *json, void *sess, bool update_i
     return api_success(NULL);
 }
 
-static void *api_account_post_update(const char *url, void *json, void *sess)
+static void *api_account_post_update(void *cfg, const char *url, void *json, void *sess)
 {
-    return _api_account(url, json, sess, true);
+    return _api_account(cfg, url, json, sess, true);
 }
 
-static void *api_account_put_update(const char *url, void *json, void *sess)
+static void *api_account_put_update(void *cfg, const char *url, void *json, void *sess)
 {
-    return _api_account(url, json, sess, false);
+    return _api_account(cfg, url, json, sess, false);
 }
 
 API_DELETE(/v1/system/account, account)

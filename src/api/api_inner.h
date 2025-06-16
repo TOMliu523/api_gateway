@@ -19,20 +19,20 @@
 
 // Automatically loads configuration at startup
 #define API_POST(uri, container) \
-    static void *CAT(container, _post)(const char *, void *, void *); \
+    static void *CAT(container, _post)(void *cfg, const char *, void *, void *); \
     static PROC_INIT void CAT2(container, _post, _startup)(void) { \
         api_post_register(#uri, NULL, CAT(container, _post), NULL); \
         api_startup_register(#uri, #container, CAT(container, _post), NULL); \
     } \
-    static void *CAT(container, _post)(const char *url, void *json, void *sess)
+    static void *CAT(container, _post)(void *cfg, const char *url, void *json, void *sess)
 
 // Configuration not loaded at startup
 #define API_POST_NO_LOAD(uri, container) \
-    static void *CAT(container, _post)(const char *, void *, void *); \
+    static void *CAT(container, _post)(void *cfg, const char *, void *, void *); \
     static PROC_INIT void CAT2(container, _post, _startup)(void) { \
         api_post_register(#uri, NULL, CAT(container, _post), NULL); \
     } \
-    static void *CAT(container, _post)(const char *url, void *json, void *sess)
+    static void *CAT(container, _post)(void *cfg, const char *url, void *json, void *sess)
 
 /*
  * Automatically loads configuration at startup
@@ -59,11 +59,11 @@
     }
 
 #define API_PUT(uri, container) \
-    static void *CAT(container, _put)(const char *, void *, void *); \
+    static void *CAT(container, _put)(void *cfg, const char *, void *, void *); \
     static PROC_INIT void CAT2(container, _put, _startup)(void) { \
         api_put_register(#uri, NULL, CAT(container, _put), NULL); \
     } \
-    static void *container##_put(const char *url, void *json, void *sess)
+    static void *container##_put(void *cfg, const char *url, void *json, void *sess)
 
 #define API_PUT_REGISTER(uri, container, fn1, fn2, fn3) \
     static PROC_INIT void CAT2(__, container, _put)(void) { \
@@ -71,18 +71,18 @@
     }
 
 #define API_DELETE(uri, container) \
-    static void *CAT(container, _delete)(const char *, void *, void *); \
+    static void *CAT(container, _delete)(void *cfg, const char *, void *, void *); \
     static PROC_INIT void CAT2(container, _delete, _startup)(void) { \
         api_delete_register(#uri, CAT(container, _delete)); \
     } \
-    static void *container##_delete(const char *url, void *json, void *sess)
+    static void *container##_delete(void *cfg, const char *url, void *json, void *sess)
 
 #define API_GET(uri, container) \
-    static void *CAT(container, _get)(const char *, void *, void *); \
+    static void *CAT(container, _get)(void *cfg, const char *, void *, void *); \
     static PROC_INIT void CAT2(container, _get, _startup)(void) { \
         api_get_register(#uri, CAT(container, _get)); \
     } \
-    static void *CAT(container, _get)(const char *url, void *json, void *sess)
+    static void *CAT(container, _get)(void *cfg, const char *url, void *json, void *sess)
 
 enum API_STATUS {
     API_STATUS_OK = 200,
@@ -134,8 +134,8 @@ struct api_user {
  * @param2: request body(format: json)
  * @return: json
  */
-typedef void *(*api_action_fn_t)(const char *, void *, void *);
-typedef void (*api_apply_fn_t)(const char *, void *, void *);
+typedef void *(*api_action_fn_t)(void *cfg, const char *, void *, void *);
+typedef void (*api_apply_fn_t)(void *cfg, const char *, void *, void *);
 
 struct api_method_node {
     struct list_head node;
@@ -181,7 +181,7 @@ extern void *api_success(void *obj);
  */
 extern void *api_failure(int errcode, const char *errmsg);
 
-extern int api_store_init(void);
+extern int api_store_init(void *arg);
 extern void api_store_fini(void);
 
 extern enum API_STATUS api_store_query(const struct api_method_node *api, const char *param, const char *buf, size_t len, void **req);
