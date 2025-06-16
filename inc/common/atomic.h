@@ -16,7 +16,7 @@
 #endif // ATOMIC_WMB
 
 #ifndef ATOMIC_BARRIER
-#ifndef ATOMIC_BARRIER() __atomic_thread_fence(__ATOMIC_ACQ_REL)
+#define ATOMIC_BARRIER() __atomic_thread_fence(__ATOMIC_ACQ_REL)
 #endif // ATOMIC_BARRIER
 
 #ifndef ATOMIC_ADD_FETCH
@@ -65,6 +65,6 @@
 
 #ifndef ATOMIC_FETCH_NAND
 #define ATOMIC_FETCH_NAND(ptr, val) __atomic_fetch_nand(ptr, val, __ATOMIC_ACQ_REL)
-#endfi // ATOMIC_FETCH_NAND
+#endif // ATOMIC_FETCH_NAND
 
 #endif // __ATOMIC_H__

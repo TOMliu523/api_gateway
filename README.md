@@ -56,14 +56,13 @@ rcu_nocbs=12-23 numa=off crashkernel=auto console=tty0 console=ttyS0,115200n8 io
 ├── inc/            # Header files shared across modules
 ├── plugin/         # Optional plugin modules
 ├── README.md       # Project overview and instructions
-├── release/        # Build outputs or release artifacts
 ├── scripts/        # Utility scripts for running, testing, or deploying
 ├── src/            # Source code directory
 │   ├── api/        # Configuration interface module (e.g., config parsing, command handling)
 │   ├── common/     # Common utilities (e.g., logging, helpers, shared logic)
 │   ├── dpdk/       # DPDK wrapper functions (initialization, port handling, etc.)
 │   ├── dataplane/  # Data plane processing (L2–L7 protocol stack logic)
-│   │   ├── thread.c  # Threading framework and scheduling
+│   │   ├── dataplane.c  # Dataplane threading framework and scheduling
 │   │   ├── l2.c      # Layer 2 protocol handling
 │   │   ├── l3.c      # Layer 3 protocol handling (e.g., IP)
 │   │   ├── l4.c      # Layer 4 protocol handling (e.g., TCP)

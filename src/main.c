@@ -113,7 +113,7 @@ static struct root *root_init(struct hw_info *info, int lock_fd, const char *loc
     size_t total_size = 0;
     struct root *root = NULL;
 
-    numa_size = info->numa_nums * sizeof(struct numa_content);
+    numa_size = info->numa_count * sizeof(struct numa_content);
     total_size = sizeof(struct root) + numa_size;
     ret = posix_memalign((void **)&root, CACHE_LINE, total_size);
     if (ret < 0) {
@@ -126,7 +126,7 @@ static struct root *root_init(struct hw_info *info, int lock_fd, const char *loc
     root->lock_fd = lock_fd;
     root->lock_filename = lock_file;
     memcpy(&root->hw_info, info, sizeof(*info));
-    root->numa.nums = info->numa_nums;
+    root->numa.nums = info->numa_count;
 
     atexit(root_fini);
     return root;
