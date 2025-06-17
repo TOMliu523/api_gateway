@@ -38,8 +38,8 @@ GRUB_TIMEOUT_STYLE=hidden
 GRUB_TIMEOUT=10
 GRUB_DISTRIBUTOR=`lsb_release -i -s 2> /dev/null || echo Debian`
 GRUB_CMDLINE_LINUX_DEFAULT="quiet splash"
-GRUB_CMDLINE_LINUX="default_hugepagesz=1G hugepagesz=1G hugepages=32 isolcpus=12-23 nohz_full=12-23
-rcu_nocbs=12-23 numa=off crashkernel=auto console=tty0 console=ttyS0,115200n8 iommu=pt intel_iommu=on"
+GRUB_CMDLINE_LINUX="default_hugepagesz=1G hugepagesz=1G hugepages=48 isolcpus=8-23 nohz_full=8-23
+rcu_nocbs=8-23 numa=off crashkernel=auto console=tty0 console=ttyS0,115200n8 iommu=pt intel_iommu=on"
 
 # update-grub
 # reboot
