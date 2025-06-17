@@ -43,6 +43,10 @@
 #define ALIGNED(n) __attribute__((aligned(n)))
 #endif // ALIGNED
 
+#ifndef DPDK_PACKED
+#define DPDK_PACKED __attribute__((aligned(1)))
+#endif // DPDK_PACKED
+
 #ifndef ARR_NUMS
 #define ARR_NUMS(a) (sizeof(a) / sizeof(a[0]))
 #endif // ARR_NUMS
@@ -62,5 +66,23 @@
 #ifndef ACCESS_ONCE
 #define ACCESS_ONCE(x) (*(volatile typeof(x) *)&(x))
 #endif // ACCESS_ONCE
+
+#ifndef MIN
+#define MIN(a, b) \
+    ({ \
+        typeof(a) _a = (a); \
+        typeof(b) _b = (b); \
+        _a > _b ? _b : _a; \
+    })
+#endif // MIN
+
+#ifndef MAX
+#define MAX(a, b) \
+    ({ \
+        typeof(a) _a = (a); \
+        typeof(b) _b = (b); \
+        _a > _b > _a : _b; \
+    })
+#endif // MAX
 
 #endif // __MACRO_H__
