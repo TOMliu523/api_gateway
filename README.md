@@ -61,12 +61,14 @@ rcu_nocbs=8-23 numa=off crashkernel=auto console=tty0 console=ttyS0,115200n8 iom
 │   ├── api/        # Configuration interface module (e.g., config parsing, command handling)
 │   ├── common/     # Common utilities (e.g., logging, helpers, shared logic)
 │   ├── dpdk/       # DPDK wrapper functions (initialization, port handling, etc.)
-│   ├── dataplane/  # Data plane processing (L2–L7 protocol stack logic)
-│   │   ├── dataplane.c  # Dataplane threading framework and scheduling
-│   │   ├── l2.c      # Layer 2 protocol handling
-│   │   ├── l3.c      # Layer 3 protocol handling (e.g., IP)
-│   │   ├── l4.c      # Layer 4 protocol handling (e.g., TCP)
-│   │   └── ...       # Extendable to Layer 7 or application protocols
+│   ├── protocol/   # Network protocol logic implementation (L2–L7)
+│   │   ├── l2.c      # Layer 2 protocol logic (e.g., Ethernet, ARP)
+│   │   ├── l3.c      # Layer 3 protocol logic (e.g., IP, ICMP)
+│   │   ├── l4.c      # Layer 4 protocol logic (e.g., TCP, UDP)
+│   │   └── ...       # Extendable to L7 or custom application protocols
+│   ├── dataplane/  # Data plane logic (threads, packet I/O, forwarding)
+│   │   ├── dataplane.c  # Main loop and scheduling logic
+│   │   └── ...       # Invokes protocol and uses configuration data
 │   └── main.c      # Main program entry point
 └── thirdparty/     # External dependencies or prebuilt third-party libraries
 ```
