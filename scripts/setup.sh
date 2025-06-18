@@ -17,6 +17,12 @@ fi
 
 export LD_LIBRARY_PATH=${APP_DIR}/lib:${APP_DIR}/lib64:${LD_LIBRARY_PATH}
 
+# check process exists
+pid=`pidof "${TARGET}"`
+if [[ -n "${pid}" ]]; then
+    kill -9 ${pid}
+fi
+
 # cpu list
 CPU_LIST=`egrep -o isolcpus=[0-9,-]* /etc/default/grub | awk -F= '{print $2}'`
 # memory channel
@@ -31,6 +37,13 @@ CHANEL=`dmidecode -t memory | awk '
 # use vfio
 sudo modprobe vfio
 sudo modprobe vfio-pci
+
+# uninstall nic from dpdk
+for dev in $(./release/bin/dpdk-devbind.py --status \
+    | awk '/drv=(vfio-pci|igb_uio|uio_pci_generic)/ {print $1}')
+do
+    ${DEVBIND} --unbind="${dev}"
+done
 
 nic_pci=("0000:04:00.0"
          "0000:04:00.1"

@@ -15,7 +15,7 @@
 
 extern int dpdk_init(int argc, char *argv[], void *output);
 extern void dpdk_thread_startup(void *f, void *arg);
-extern void dpdk_thread_set_name(uint8_t numa_idx, uint8_t local_idx);
+extern void dpdk_thread_set_name(uint8_t numa_idx, uint16_t dpdk_cpu_id);
 extern void dpdk_thread_info(uint8_t *, uint8_t *, uint16_t *, uint16_t *, uint16_t *);
 
 static INLINE void *dpdk_memcpy(void *dst, const void *src, size_t n)

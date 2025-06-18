@@ -31,7 +31,7 @@ static INLINE void _dp_init(void *arg)
     numa->dpdk_thread[dp->numa_cpu_id] = dp;
     ATOMIC_ADD_FETCH(&numa->nums, 1);
 
-    dpdk_thread_set_name(dp->numa_id, dp->numa_cpu_id);
+    dpdk_thread_set_name(dp->numa_id, dp->dpdk_cpu_id);
 }
 
 int dp_startup(void *arg)

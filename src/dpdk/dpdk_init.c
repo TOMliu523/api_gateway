@@ -393,11 +393,11 @@ void dpdk_thread_startup(void *f, void *arg)
     rte_eal_mp_remote_launch(f, arg, CALL_MAIN);
 }
 
-void dpdk_thread_set_name(uint8_t numa_idx, uint8_t local_idx)
+void dpdk_thread_set_name(uint8_t numa_idx, uint16_t dpdk_cpu_id)
 {
-    char name[64] = "";
+    char name[RTE_THREAD_NAME_SIZE + 1] = "";
 
-    snprintf(name, sizeof(name), "DATAPLANE_%X_%02X", numa_idx, local_idx);
+    snprintf(name, sizeof(name), "DATAPLANE_%X_%03d", numa_idx, dpdk_cpu_id);
     rte_thread_set_name(rte_thread_self(), name);
 }
 
