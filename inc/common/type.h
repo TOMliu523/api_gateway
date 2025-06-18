@@ -28,24 +28,28 @@ struct numa_content {
     };
 };
 
+struct hw_info {
+    int numa_count;
+    int cpu_count;
+    int nic_count;
+    uint64_t total_memory;
+    uint64_t hugepage_size;
+};
+
+struct numa_node {
+    int nums;
+    struct numa_content contents[];
+};
+
 struct root {
     struct {
         int lock_fd;
         const char *lock_filename;
     };
 
-    struct hw_info {
-        int numa_count;
-        int cpu_count;
-        int nic_count;
-        uint64_t total_memory;
-        uint64_t hugepage_size;
-    } hw_info;
-
-    struct numa_node {
-        int nums;
-        struct numa_content contents[];
-    } numa;
+    struct hw_info hw_info;
+    // must last elements
+    struct numa_node numa;
 };
 
 struct mac {
