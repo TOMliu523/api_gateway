@@ -397,7 +397,7 @@ void dpdk_thread_set_name(uint8_t numa_idx, uint16_t dpdk_cpu_id)
 {
     char name[RTE_THREAD_NAME_SIZE + 1] = "";
 
-    snprintf(name, sizeof(name), "DATAPLANE_%X_%03d", numa_idx, dpdk_cpu_id);
+    snprintf(name, sizeof(name), "DATAPLANE_%02d%03d", numa_idx, dpdk_cpu_id);
     rte_thread_set_name(rte_thread_self(), name);
 }
 

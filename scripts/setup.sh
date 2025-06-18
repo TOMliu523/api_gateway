@@ -39,10 +39,9 @@ sudo modprobe vfio
 sudo modprobe vfio-pci
 
 # uninstall nic from dpdk
-for dev in $(./release/bin/dpdk-devbind.py --status \
-    | awk '/drv=(vfio-pci|igb_uio|uio_pci_generic)/ {print $1}')
+for dev in $(./release/bin/dpdk-devbind.py --status | awk '/drv=(vfio-pci|igb_uio|uio_pci_generic)/ {print $1}')
 do
-    ${DEVBIND} --unbind="${dev}"
+    ${DEVBIND} -u ${dev}
 done
 
 nic_pci=("0000:04:00.0"
