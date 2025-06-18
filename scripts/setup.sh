@@ -44,6 +44,7 @@ do
     ${DEVBIND} -u ${dev}
 done
 
+#install nic
 nic_pci=("0000:04:00.0"
          "0000:04:00.1"
          "0000:04:00.2"
