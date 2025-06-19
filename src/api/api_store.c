@@ -269,8 +269,8 @@ static int _api_store_load(sr_session_ctx_t *sess, struct api_db *db, const char
         }
 
         snprintf(path, sizeof(path), "/%s:%s", module_name, container);
-        json = api_db_query(path);
-        if (json == NULL) {
+        ret = api_db_query(path, (void **)&json);
+        if (ret != 0 || json == NULL) {
             continue;
         }
 
@@ -311,7 +311,7 @@ static void *_api_store_cb(void *arg)
     int ret = 0;
     int epoll_fd = -1;
     int event_pipe_fd = -1;
-     struct api_db *db = arg;
+    struct api_db *db = arg;
     struct epoll_event ev = {0};
     struct epoll_event events[1];
 
@@ -505,10 +505,7 @@ static int _api_store_create(struct lyd_node *node, bool create)
             }
         }
 
-        ret = _api_store_add(db->sess, node);
-        if (ret != 0) {
-            return -1;
-        }
+        return _api_store_add(db->sess, node);
     } else {
         ret = sr_edit_batch(db->sess, node, "replace");
         if (ret != SR_ERR_OK) {
@@ -530,12 +527,20 @@ enum API_STATUS api_store_create(const struct api_method_node *api, const char *
     struct api_db *db = &s_api_db;
     const struct ly_ctx *ctx = NULL;
 
-    RUNTIME_ASSERT(api != NULL && output != NULL);
+    if (api == NULL || buf == NULL || len == 0 || output == NULL) {
+        LOG_ERROR("parameter exception.");
+        return API_STATUS_SERVER;
+    }
 
     ctx = sr_session_acquire_context(db->sess);
     err = lyd_parse_data_mem(ctx, buf, LYD_JSON, LYD_PARSE_ONLY, LYD_VALIDATE_MULTI_ERROR, &node);
     if (err != LY_SUCCESS) {
         LOG_ERROR("lyd_parse_data_mem failure: %s", ly_strerr(err));
+        return API_STATUS_BAD_REQUEST;
+    }
+
+    if (node == NULL) {
+        LOG_ERROR("Parameter exception(Apparent success masks a hidden failure caused by schema load issues).");
         return API_STATUS_BAD_REQUEST;
     }
 
@@ -583,6 +588,11 @@ enum API_STATUS api_store_update(const struct api_method_node *api, const char *
         LOG_ERROR("lyd_parse_data_mem failure: %s", ly_strerr(err));
         code = API_STATUS_BAD_REQUEST;
         goto _quit;
+    }
+
+    if (node == NULL) {
+        LOG_ERROR("Parameter exception(Apparent success masks a hidden failure caused by schema load issues).");
+        return API_STATUS_BAD_REQUEST;
     }
 
     ret = _api_store_create(node, false);
@@ -716,7 +726,7 @@ enum API_STATUS api_store_query(const struct api_method_node *api, const char *p
     return _api_store_apply(db, api, param, input, output);
 }
 
-void *api_db_query(const char *path)
+int api_db_query(const char *path, void **obj)
 {
     int ret = 0;
     LY_ERR err = 0;
@@ -726,26 +736,29 @@ void *api_db_query(const char *path)
     sr_data_t *subtree = NULL;
     struct api_db *db = &s_api_db;
 
-    ret = sr_get_subtree(db->sess, path, 0, &subtree);
-    if (ret != 0) {
-        LOG_ERROR("sr_get_subtree failure: %s", sr_strerror(ret));
-        return NULL;
+    if (path == NULL || obj == NULL) {
+        LOG_ERROR("path(%p) or obj(%p) is NULL", path, obj);
+        return -1;
     }
 
-    if (subtree == NULL) {
-        return NULL;
+    ret = sr_get_subtree(db->sess, path, 0, &subtree);
+    if (ret != 0 && ret != SR_ERR_NOT_FOUND) {
+        LOG_ERROR("sr_get_subtree failure: ret = %d: %s", ret, sr_strerror(ret));
+        return -1;
+    } else if (ret == SR_ERR_NOT_FOUND) {
+        return 0;
     }
 
     err = lyd_print_mem(&json_str, subtree->tree, LYD_JSON, LYD_PRINT_WITHSIBLINGS);
     if (err != LY_SUCCESS) {
         LOG_ERROR("lyd_print_mem failure: %s", ly_strerr(err));
-        return NULL;
+        return -1;
     }
 
     ret = api_string_to_json(json_str, (void **)&json);
     if (ret != 0) {
         free(json_str);
-        return NULL;
+        return -1;
     }
 
     if ((json_is_object(json) && json_object_size(json) == 0)
@@ -756,7 +769,9 @@ void *api_db_query(const char *path)
 
     free(json_str);
     sr_release_data(subtree);
-    return json;
+
+    *obj = json;
+    return 0;
 }
 
 int api_store_init(void *arg)

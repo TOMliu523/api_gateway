@@ -95,7 +95,11 @@ static int _api_check_user(struct db_login *db, struct user_login *user)
     char data[192] = "";
 
     snprintf(path, sizeof(path), API_USER_PATH, user->username);
-    json = api_db_query(path);
+    ret = api_db_query(path, (void **)&json);
+    if (ret != 0) {
+        return -1;
+    }
+
     if (json == NULL) {
         if (strcmp(user->username, "admin") != 0 || strcmp(user->password, "Tmlake@2025") != 0) {
             LOG_ERROR("username or password error");
@@ -194,11 +198,16 @@ static int _api_jwt(struct mg_http_message *msg, const struct db_login *db)
 
 static int _api_login_db_get(struct db_login *db, const char *username)
 {
+    int ret = 0;
     json_t *json = NULL;
     char path[128] = "";
 
     snprintf(path, sizeof(path), API_USER_PATH, username);
-    json = api_db_query(path);
+    ret = api_db_query(path, (void **)&json);
+    if (ret != 0) {
+        return -1;
+    }
+
     if (json == NULL) {
         if (strcmp(username, "admin") != 0) {
             LOG_ERROR("user(%s) not exists", username);

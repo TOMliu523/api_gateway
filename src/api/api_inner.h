@@ -21,7 +21,7 @@
 #define API_POST(uri, container) \
     static void *CAT(container, _post)(void *cfg, const char *, void *, void *); \
     static PROC_INIT void CAT2(container, _post, _startup)(void) { \
-        api_post_register(#uri, NULL, CAT(container, _post), NULL); \
+        api_post_register(#uri, #container, NULL, CAT(container, _post), NULL); \
         api_startup_register(#uri, #container, CAT(container, _post), NULL); \
     } \
     static void *CAT(container, _post)(void *cfg, const char *url, void *json, void *sess)
@@ -30,7 +30,7 @@
 #define API_POST_NO_LOAD(uri, container) \
     static void *CAT(container, _post)(void *cfg, const char *, void *, void *); \
     static PROC_INIT void CAT2(container, _post, _startup)(void) { \
-        api_post_register(#uri, NULL, CAT(container, _post), NULL); \
+        api_post_register(#uri, container, NULL, CAT(container, _post), NULL); \
     } \
     static void *CAT(container, _post)(void *cfg, const char *url, void *json, void *sess)
 
@@ -48,39 +48,39 @@
  */
 #define API_POST_REGISTER(uri, container, fn1, fn2, fn3) \
     static PROC_INIT void CAT2(__, container, _post_register)(void) { \
-        api_post_register(#uri, fn1, fn2, fn3); \
+        api_post_register(#uri, #container, fn1, fn2, fn3); \
         api_startup_register(#uri, #container, fn2, fn3); \
     }
 
 // Configuration not loaded at startup
 #define API_POST_NO_LOAD_REGISTER(uri, container, fn1, fn2, fn3) \
     static PROC_INIT void CAT2(__, container, _post_no_load_register)(void) { \
-        api_post_register(#uri, fn1, fn2, fn3); \
+        api_post_register(#uri, #container, fn1, fn2, fn3); \
     }
 
 #define API_PUT(uri, container) \
     static void *CAT(container, _put)(void *cfg, const char *, void *, void *); \
     static PROC_INIT void CAT2(container, _put, _startup)(void) { \
-        api_put_register(#uri, NULL, CAT(container, _put), NULL); \
+        api_put_register(#uri, #container, NULL, CAT(container, _put), NULL); \
     } \
     static void *container##_put(void *cfg, const char *url, void *json, void *sess)
 
 #define API_PUT_REGISTER(uri, container, fn1, fn2, fn3) \
     static PROC_INIT void CAT2(__, container, _put)(void) { \
-        api_put_register(#uri, fn1, fn2, fn3); \
+        api_put_register(#uri, #container, fn1, fn2, fn3); \
     }
 
 #define API_DELETE(uri, container) \
     static void *CAT(container, _delete)(void *cfg, const char *, void *, void *); \
     static PROC_INIT void CAT2(container, _delete, _startup)(void) { \
-        api_delete_register(#uri, CAT(container, _delete)); \
+        api_delete_register(#uri, #container, CAT(container, _delete)); \
     } \
     static void *container##_delete(void *cfg, const char *url, void *json, void *sess)
 
 #define API_GET(uri, container) \
     static void *CAT(container, _get)(void *cfg, const char *, void *, void *); \
     static PROC_INIT void CAT2(container, _get, _startup)(void) { \
-        api_get_register(#uri, CAT(container, _get)); \
+        api_get_register(#uri, #container, CAT(container, _get)); \
     } \
     static void *CAT(container, _get)(void *cfg, const char *url, void *json, void *sess)
 
@@ -151,10 +151,10 @@ struct api_method_node {
 extern enum API_ERRCODE api_login(void *arg);
 extern enum API_ERRCODE api_refresh_login(void *arg);
 
-extern void api_post_register(const char *, api_action_fn_t, api_action_fn_t, api_apply_fn_t);
-extern void api_put_register(const char *, api_action_fn_t, api_action_fn_t, api_apply_fn_t);
-extern void api_delete_register(const char *, api_action_fn_t);
-extern void api_get_register(const char *, api_action_fn_t);
+extern void api_post_register(const char *, const char *, api_action_fn_t, api_action_fn_t, api_apply_fn_t);
+extern void api_put_register(const char *, const char *, api_action_fn_t, api_action_fn_t, api_apply_fn_t);
+extern void api_delete_register(const char *, const char *, api_action_fn_t);
+extern void api_get_register(const char *, const char *, api_action_fn_t);
 extern void api_startup_register(const char *, const char *, api_action_fn_t, api_apply_fn_t);
 /*
  * {
@@ -189,10 +189,11 @@ extern enum API_STATUS api_store_update(const struct api_method_node *api, const
 extern enum API_STATUS api_store_create(const struct api_method_node *api, const char *buf, size_t len, void **req);
 extern enum API_STATUS api_store_delete(const struct api_method_node *api, const char *param, const char *buf, size_t len, void **req);
 
-extern void *api_db_query(const char *path);
+extern int api_db_query(const char *path, void **obj);
 
 extern int api_account_desensitize(unsigned char *dst, size_t max, const char *passwd, size_t len);
 extern int api_string_to_json(const char *string, void **json);
 extern int api_json_to_string(void *json, char **string);
+extern int api_json_add_string(void *json, const char *name, const char *value);
 
 #endif // __API_INNER_H__

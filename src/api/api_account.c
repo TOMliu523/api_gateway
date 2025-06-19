@@ -92,21 +92,24 @@ API_DELETE(/v1/system/account, account)
 API_GET(/v1/system/account, account)
 {
     int i = 0;
+    int ret = 0;
     void *obj = NULL;
     void *subobj = NULL;
     void *users_obj = NULL;
     void *username_obj = NULL;
     const char *path = "/v1:account";
 
-    obj = api_db_query(path);
-    if (obj == NULL) {
+    ret = api_db_query(path, &obj);
+    if (ret != 0) {
         return api_failure(API_ERRCODE_INNER, "Internal server error");
     }
 
-    subobj = json_object_get(obj, "v1:account");
-    users_obj = json_object_get(subobj, "users");
-    json_array_foreach(users_obj, i, username_obj) {
-        json_object_set_new(username_obj, "password", json_string("********"));
+    if (obj != NULL) {
+        subobj = json_object_get(obj, "v1:account");
+        users_obj = json_object_get(subobj, "users");
+        json_array_foreach(users_obj, i, username_obj) {
+            json_object_set_new(username_obj, "password", json_string("********"));
+        }
     }
 
     return api_success(obj);

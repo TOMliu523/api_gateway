@@ -174,7 +174,7 @@ static const struct api_method_node *_api_get(enum API_METHOD type, const char *
     return NULL;
 }
 
-static void _api_set(enum API_METHOD type, const char *url,
+static void _api_set(enum API_METHOD type, const char *module, const char *url,
                      api_action_fn_t update, api_action_fn_t change, api_apply_fn_t apply)
 {
     int ret = 0;
@@ -191,7 +191,7 @@ static void _api_set(enum API_METHOD type, const char *url,
     hash_32(url, url_len, 0, &hash);
     head = &method->head[type][API_HASH_TABLE_INDEX(hash)];
 
-    ret = _api_register(head, NULL, url, url_len, hash, update, change, apply);
+    ret = _api_register(head, module, url, url_len, hash, update, change, apply);
     if (ret < 0) {
         LOG_ERROR("post(%s) register failure. OOM.", url);
         exit(EXIT_FAILURE);
@@ -257,7 +257,7 @@ static void _api_http_succ(struct mg_connection *c, struct mg_http_message *msg,
     }
 
     auth = mg_http_get_header(msg, "Authorization");
-    if (auth->len != 0) {
+    if (auth != NULL && auth->len != 0) {
         snprintf(header, sizeof(header), "Authorization: %.*s\r\n" API_JSON_FORMAT, (int)auth->len, auth->buf);
     }
 
@@ -394,7 +394,7 @@ static void _api_load_cb(struct mg_connection *c, int event, void *event_data)
     const struct api_method_node *api = NULL;
 
     switch (event) {
-    case MG_EV_ACCEPT:
+    /*case MG_EV_ACCEPT:
         if (c->fn_data != NULL) {
             struct mg_tls_opts opts = {
                 .ca = mg_str(s_tls_ca),
@@ -403,7 +403,7 @@ static void _api_load_cb(struct mg_connection *c, int event, void *event_data)
             };
             mg_tls_init(c, &opts);
         }
-        break;
+        break;*/
 
     case MG_EV_HTTP_MSG:
         msg = event_data;
@@ -485,24 +485,24 @@ static void _api_load_cb(struct mg_connection *c, int event, void *event_data)
     }
 }
 
-void api_post_register(const char *url, api_action_fn_t update, api_action_fn_t change, api_apply_fn_t apply)
+void api_post_register(const char *url, const char *module, api_action_fn_t update, api_action_fn_t change, api_apply_fn_t apply)
 {
-    _api_set(API_METHOD_POST, url, update, change, apply);
+    _api_set(API_METHOD_POST, module, url, update, change, apply);
 }
 
-void api_put_register(const char *url, api_action_fn_t update, api_action_fn_t change, api_apply_fn_t apply)
+void api_put_register(const char *url, const char *module, api_action_fn_t update, api_action_fn_t change, api_apply_fn_t apply)
 {
-    _api_set(API_METHOD_PUT, url, update, change, apply);
+    _api_set(API_METHOD_PUT, module, url, update, change, apply);
 }
 
-void api_delete_register(const char *url, api_action_fn_t action)
+void api_delete_register(const char *url, const char *module, api_action_fn_t action)
 {
-    _api_set(API_METHOD_DELETE, url, NULL, action, NULL);
+    _api_set(API_METHOD_DELETE, module, url, NULL, action, NULL);
 }
 
-void api_get_register(const char *url, api_action_fn_t action)
+void api_get_register(const char *url, const char *module, api_action_fn_t action)
 {
-    _api_set(API_METHOD_GET, url, NULL, action, NULL);
+    _api_set(API_METHOD_GET, module, url, NULL, action, NULL);
 }
 
 void *api_startup(void *arg)

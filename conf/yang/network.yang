@@ -8,8 +8,8 @@ submodule network {
     }
 
     container arp {
-         list elements {
-            key "ip_address";
+         list items {
+            key "ip";
             leaf type {
                 mandatory true;
                 type enumeration {
@@ -21,7 +21,8 @@ submodule network {
                     }
                 }
             }
-            leaf ip_address {
+
+            leaf ip {
                 mandatory true;
                 type union {
                     type inet:ipv4-address;
@@ -32,12 +33,31 @@ submodule network {
                     error-message "ip address not match address format";
                 }
             }
+
             leaf mac {
                 mandatory true;
                 type string {
                     pattern '[0-9a-zA-Z]{2}(:[0-9a-zA-Z]{2}){5}';
                 }
-             }
+            }
+        }
+    }
+
+    container interface {
+        list entrys {
+            key "name";
+            leaf name {
+                type string {
+                    pattern '[-0-9a-zA-Z.]{3,63}'
+                }
+            }
+            leaf ip {
+                mandatory true;
+                type union {
+                    type inet:ipv4-address;
+                    type inet:ipv6-address;
+                }
+            }
         }
     }
 }

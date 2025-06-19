@@ -194,3 +194,24 @@ int api_json_to_string(void *json, char **string)
     *string = tmp;
     return 0;
 }
+
+int api_json_add_string(void *json, const char *name, const char *value)
+{
+    int ret = 0;
+    void *obj_value = NULL;
+
+    obj_value = json_string(value);
+    if (obj_value == NULL) {
+        LOG_ERROR("OOM");
+        return -1;
+    }
+
+    ret = json_object_set_new(json, name, obj_value);
+    if (ret != 0) {
+        LOG_ERROR("OOM");
+        json_decref(obj_value);
+        return -1;
+    }
+
+    return 0;
+}
