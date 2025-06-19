@@ -544,6 +544,8 @@ enum API_STATUS api_store_create(const struct api_method_node *api, const char *
         return API_STATUS_BAD_REQUEST;
     }
 
+    // TODO Check whether the URL matches the module
+
     ret = _api_store_create(node, true);
     if (ret != 0) {
         code = API_STATUS_BAD_REQUEST;
@@ -580,7 +582,10 @@ enum API_STATUS api_store_update(const struct api_method_node *api, const char *
     struct api_db *db = &s_api_db;
     const struct ly_ctx *ctx = NULL;
 
-    RUNTIME_ASSERT(api != NULL && output != NULL);
+    if (api != NULL && output != NULL) {
+        LOG_ERROR("Parameter exception.");
+        return API_STATUS_SERVER;
+    }
 
     ctx = sr_session_acquire_context(db->sess);
     err = lyd_parse_data_mem(ctx, buf, LYD_JSON, LYD_PARSE_ONLY, LYD_VALIDATE_MULTI_ERROR, &node);
@@ -594,6 +599,8 @@ enum API_STATUS api_store_update(const struct api_method_node *api, const char *
         LOG_ERROR("Parameter exception(Apparent success masks a hidden failure caused by schema load issues).");
         return API_STATUS_BAD_REQUEST;
     }
+
+    // TODO Check whether the URL matches the module
 
     ret = _api_store_create(node, false);
     if (ret != 0) {
@@ -634,7 +641,10 @@ enum API_STATUS api_store_delete(const struct api_method_node *api, const char *
     enum API_STATUS code = 0;
     struct api_db *db = &s_api_db;
 
-    RUNTIME_ASSERT(api != NULL && output != NULL);
+    if (api == NULL || param == NULL || buf == NULL || output == NULL) {
+        LOG_ERROR("Parameter exception.");
+        return API_STATUS_SERVER;
+    }
 
     ret = _api_store_to_json(&input, buf, len);
     if (ret != 0) {
@@ -703,7 +713,10 @@ enum API_STATUS api_store_query(const struct api_method_node *api, const char *p
     struct api_db *db = &s_api_db;
     const char *format = "/v1:query/counter";
 
-    RUNTIME_ASSERT(api != NULL && output != NULL);
+    if (api != NULL && output != NULL) {
+        LOG_ERROR("Parameter exception.");
+        return API_STATUS_SERVER;
+    }
 
     ret = sr_get_item(db->sess, format, 0, &val);
     if (ret != SR_ERR_OK) {
