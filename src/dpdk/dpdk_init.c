@@ -52,6 +52,39 @@ static INLINE void _dpdk_info(struct hw_info *info)
     rte_memseg_walk(_dpdk_memory_info, info);
 }
 
+void dpdk_thread_startup(void *f, void *arg)
+{
+    RUNTIME_ASSERT(f != NULL);
+
+    LOG_INFO("STARTUP DPDK THREAD.");
+    rte_eal_mp_remote_launch(f, arg, CALL_MAIN);
+}
+
+void dpdk_thread_set_name(uint8_t numa_idx, uint8_t cpu_id)
+{
+    char name[RTE_THREAD_NAME_SIZE + 1] = "";
+
+    snprintf(name, sizeof(name), "DATAPLANE_%02d%03d", numa_idx, cpu_id);
+    rte_thread_set_name(rte_thread_self(), name);
+}
+
+void dpdk_thread_info(uint8_t *numa_idx, uint8_t *local_idx, uint8_t *cpu_lcore, uint8_t *hw_numa_id, uint8_t *hw_cpu_id)
+{
+    struct numa_cpu *nc = dpdk_numa_cpu_get();
+
+    RUNTIME_ASSERT(numa_idx != NULL
+                   && local_idx != NULL
+                   && cpu_lcore != NULL
+                   && hw_numa_id != NULL
+                   && hw_cpu_id != NULL);
+
+    *hw_cpu_id = (uint8_t)rte_lcore_id();
+    *hw_numa_id = (uint8_t)rte_socket_id();
+    *cpu_lcore = (uint8_t)rte_lcore_index(*hw_cpu_id);
+    *local_idx = nc->c2n[*cpu_lcore].numa_cpu_id;
+    *numa_idx = nc->c2n[*cpu_lcore].numa_id;
+}
+
 int dpdk_init(int argc, char *argv[], void *output)
 {
     int ret = 0;
@@ -76,37 +109,4 @@ int dpdk_init(int argc, char *argv[], void *output)
     }
 
     return 0;
-}
-
-void dpdk_thread_startup(void *f, void *arg)
-{
-    RUNTIME_ASSERT(f != NULL);
-
-    LOG_INFO("STARTUP DPDK THREAD.");
-    rte_eal_mp_remote_launch(f, arg, CALL_MAIN);
-}
-
-void dpdk_thread_set_name(uint8_t numa_idx, uint16_t dpdk_cpu_id)
-{
-    char name[RTE_THREAD_NAME_SIZE + 1] = "";
-
-    snprintf(name, sizeof(name), "DATAPLANE_%02d%03d", numa_idx, dpdk_cpu_id);
-    rte_thread_set_name(rte_thread_self(), name);
-}
-
-void dpdk_thread_info(uint8_t *numa_idx, uint8_t *local_idx, uint16_t *cpu_lcore, uint16_t *hw_numa_id, uint16_t *hw_cpu_id)
-{
-    struct numa_cpu *nc = dpdk_numa_cpu_get();
-
-    RUNTIME_ASSERT(numa_idx != NULL
-                   && local_idx != NULL
-                   && cpu_lcore != NULL
-                   && hw_numa_id != NULL
-                   && hw_cpu_id != NULL);
-
-    *hw_cpu_id = rte_lcore_id();
-    *hw_numa_id = rte_socket_id();
-    *cpu_lcore = rte_lcore_index(*hw_cpu_id);
-    *local_idx = nc->c2n[*cpu_lcore].numa_cpu_id;
-    *numa_idx = nc->c2n[*cpu_lcore].dpdk_numa_id;
 }

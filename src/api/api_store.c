@@ -17,6 +17,7 @@
 #include <libyang/libyang.h>
 
 #include "log.h"
+#include "type.h"
 #include "hash.h"
 #include "api_inner.h"
 
@@ -38,7 +39,7 @@ struct api_db {
         api_action_fn_t update_action;
         api_action_fn_t change_action;
         api_apply_fn_t apply_action;
-        struct numa *cfg;
+        struct root *root;
         const char *url;
         void *input;
         void *output;
@@ -73,13 +74,13 @@ static void _api_store_yang_log(LY_LOG_LEVEL level,
     }
 }
 
-static int _api_store_exec_call(api_action_fn_t action, void *cfg, const char *url, void *input, void *session, void **output)
+static int _api_store_exec_call(api_action_fn_t action, void *root, const char *url, void *input, void *session, void **output)
 {
     int ret = 0;
     json_t *req = NULL;
     json_t *retcode = NULL;
 
-    req = action(cfg, url, input, session);
+    req = action(root, url, input, session);
     if (req == NULL) {
         return -1;
     }
@@ -116,19 +117,19 @@ static int _api_store_update_cb(sr_session_ctx_t *session,
             break;
         }
 
-        return _api_store_exec_call(data->update_action, data->cfg, data->url, data->input, session, &data->output);
+        return _api_store_exec_call(data->update_action, data->root, data->url, data->input, session, &data->output);
     case SR_EV_CHANGE:
         if (data->change_action == NULL) {
             break;
         }
 
-        return _api_store_exec_call(data->change_action, data->cfg, data->url, data->input, session, &data->output);
+        return _api_store_exec_call(data->change_action, data->root, data->url, data->input, session, &data->output);
     case SR_EV_DONE:
         if (data->apply_action == NULL) {
             break;
         }
 
-        data->apply_action(data->cfg, data->url, data->input, session);
+        data->apply_action(data->root, data->url, data->input, session);
     default:
         break;
     }
@@ -260,6 +261,8 @@ static int _api_store_load(sr_session_ctx_t *sess, struct api_db *db, const char
     const struct api_method_node *api = NULL;
     const struct api_startup *startup = &s_api_startup;
 
+    LOG_INFO("Loading config.");
+
     for (int i = 0; i < startup->nums; i++) {
         container = startup->container[i];
         api = _api_method_get(container);
@@ -275,7 +278,7 @@ static int _api_store_load(sr_session_ctx_t *sess, struct api_db *db, const char
         }
 
         if (api->change_action != NULL) {
-            ret = _api_store_exec_call(api->change_action, db->data.cfg, api->url, json, sess, &output);
+            ret = _api_store_exec_call(api->change_action, db->data.root, api->url, json, sess, &output);
             if (ret != 0) {
                 goto _quit;
             }
@@ -287,7 +290,7 @@ static int _api_store_load(sr_session_ctx_t *sess, struct api_db *db, const char
         }
 
         if (api->apply_action != NULL) {
-            api->apply_action(db->data.cfg, api->url, json, sess);
+            api->apply_action(db->data.root, api->url, json, sess);
         }
 
         json_decref(json); json = NULL;
@@ -372,7 +375,7 @@ static enum API_STATUS _api_store_apply( struct api_db *db, const struct api_met
     int ret = 0;
 
     _api_store_set(&db->data, api, url, input);
-    ret = sr_apply_changes(db->sess, API_TIMEOUT);
+    ret = sr_apply_changes(db->sess, 0/*API_TIMEOUT*/);
     if (ret != SR_ERR_OK) {
         LOG_ERROR("sr_apply_changes failure: %s", sr_strerror(ret));
         return API_STATUS_SERVER;
@@ -517,6 +520,25 @@ static int _api_store_create(struct lyd_node *node, bool create)
     return 0;
 }
 
+// Waiting for the data plane to complete initialization
+static void _api_store_wait_dataplane(struct root *root)
+{
+    int count = 0;
+
+    for (;;) {
+        count = 0;
+        for (int i = 0; i < root->hw_info.cpu_count; i++) {
+            if (root->dpdk_thread[i] != NULL) {
+                count += 1;
+            }
+        }
+
+        if (root->hw_info.cpu_count == count) {
+            break;
+        }
+    }
+}
+
 enum API_STATUS api_store_create(const struct api_method_node *api, const char *buf, size_t len, void **output)
 {
     int ret = 0;
@@ -582,7 +604,7 @@ enum API_STATUS api_store_update(const struct api_method_node *api, const char *
     struct api_db *db = &s_api_db;
     const struct ly_ctx *ctx = NULL;
 
-    if (api != NULL && output != NULL) {
+    if (api == NULL || output == NULL) {
         LOG_ERROR("Parameter exception.");
         return API_STATUS_SERVER;
     }
@@ -713,7 +735,7 @@ enum API_STATUS api_store_query(const struct api_method_node *api, const char *p
     struct api_db *db = &s_api_db;
     const char *format = "/v1:query/counter";
 
-    if (api != NULL && output != NULL) {
+    if (api == NULL || output == NULL) {
         LOG_ERROR("Parameter exception.");
         return API_STATUS_SERVER;
     }
@@ -818,7 +840,7 @@ int api_store_init(void *arg)
     snprintf(buffer, sizeof(buffer), "%s/%s.yang", yang_path, module_name);
     snprintf(search_dir, sizeof(search_dir), "%s:%s/common/", yang_path, yang_path);
 
-    db->data.cfg = arg;
+    db->data.root = arg;
 
     ret = sr_connect(SR_CONN_CACHE_RUNNING, &db->conn);
     if (ret != SR_ERR_OK) {
@@ -851,14 +873,16 @@ int api_store_init(void *arg)
         goto _quit;
     }
 
-    ret = pthread_create(&thid, NULL, _api_store_cb, db);
-    if (ret != 0) {
-        LOG_ERROR("pthread_create failure: %s", strerror(ret));
-        goto _quit;
-    }
+    _api_store_wait_dataplane(db->data.root);
 
     ret = _api_store_load(db->sess, db, module_name);
     if (ret != 0) {
+        goto _quit;
+    }
+
+    ret = pthread_create(&thid, NULL, _api_store_cb, db);
+    if (ret != 0) {
+        LOG_ERROR("pthread_create failure: %s", strerror(ret));
         goto _quit;
     }
 

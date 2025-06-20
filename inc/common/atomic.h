@@ -7,64 +7,36 @@
 #ifndef __ATOMIC_H__
 #define __ATOMIC_H__
 
-#ifndef ATOMIC_RMB
-#define ATOMIC_RMB() __atomic_thread_fence(__ATOMIC_ACQUIRE)
-#endif // ATOMIC_RMB
+#include <stdatomic.h>
 
-#ifndef ATOMIC_WMB
-#define ATOMIC_WMB() __atomic_thread_fence(__ATOMIC_RELEASE)
-#endif // ATOMIC_WMB
+#ifdef __x86_64
+#ifndef atomic_prevent_compiler_reorder
+#define atomic_prevent_compiler_reorder() __asm__ __volatile__ ("" ::: "memory");
+#endif // atomic_prevent_compiler_reorder
+#elif defined(__aarch64__)
+#define atomic_prevent_compiler_reorder() __asm__ __volatile__ ("dmb ish" ::: "memory")
+#else
+#error "Unsupported architecture"
+#endif
 
-#ifndef ATOMIC_BARRIER
-#define ATOMIC_BARRIER() __atomic_thread_fence(__ATOMIC_ACQ_REL)
-#endif // ATOMIC_BARRIER
+#ifndef atomic_rmb
+#define atomic_rmb() __atomic_thread_fence(memory_order_acquire)
+#endif // atomic_rmb
 
-#ifndef ATOMIC_ADD_FETCH
-#define ATOMIC_ADD_FETCH(ptr, val) __atomic_add_fetch(ptr, val, __ATOMIC_ACQ_REL)
-#endif // ATOMIC_ADD_FETCH
+#ifndef atomic_wmb
+#define atomic_wmb() __atomic_thread_fence(memory_order_release)
+#endif // atomic_wmb
 
-#ifndef ATOMIC_SUB_FETCH
-#define ATOMIC_SUB_FETCH(ptr, val) __atomic_sub_fetch(ptr, val, __ATOMIC_ACQ_REL)
-#endif // ATOMIC_SUB_FETCH
+#ifndef atomic_barrier
+#define atomic_barrier() __atomic_thread_fence(memory_order_acq_rel)
+#endif // atomic_barrier
 
-#ifndef ATOMIC_AND_FETCH
-#define ATOMIC_AND_FETCH(ptr, val) __atomic_and_fetch(ptr, val, __ATOMIC_ACQ_REL)
-#endif // ATOMIC_AND_FETCH
+#ifndef atomic_load_relaxed
+#define atomic_load_relaxed(p) atomic_load_explicit(p, memory_order_relaxed)
+#endif // atomic_load_relaxed
 
-#ifndef ATOMIC_XOR_FETCH
-#define ATOMIC_XOR_FETCH(ptr, val) __atomic_xor_fetch(ptr, val, __ATOMIC_ACQ_REL)
-#endif // ATOMIC_XOR_FETCH
-
-#ifndef ATOMIC_OR_FETCH
-#define ATOMIC_OR_FETCH(ptr, val) __atomic_or_fetch(ptr, val, __ATOMIC_ACQ_REL)
-#endif // ATOMIC_OR_FETCH
-
-#ifndef ATOMIC_NAND_FETCH
-#define ATOMIC_NAND_FETCH(ptr, val) __atomic_nand_fetch(ptr, val, __ATOMIC_ACQ_REL)
-#endif // ATOMIC_NAND_FETCH
-
-#ifndef ATOMIC_FETCH_ADD
-#define ATOMIC_FETCH_ADD(ptr, val) __atomic_fetch_add(ptr, val, __ATOMIC_ACQ_REL)
-#endif // ATOMIC_FETCH_ADD
-
-#ifndef ATOMIC_FETCH_SUB
-#define ATOMIC_FETCH_SUB(ptr, val) __atomic_fetch_sub(ptr, val, __ATOMIC_ACQ_REL)
-#endif // ATOMIC_FETCH_SUB
-
-#ifndef ATOMIC_FETCH_AND
-#define ATOMIC_FETCH_AND(ptr, val) __atomic_fetch_and(ptr, val, __ATOMIC_ACQ_REL)
-#endif // ATOMIC_FETCH_AND
-
-#ifndef ATOMIC_FETCH_XOR
-#define ATOMIC_FETCH_XOR(ptr, val) __atomic_fetch_xor(ptr, val, __ATOMIC_ACQ_REL)
-#endif // ATOMIC_FETCH_XOR
-
-#ifndef ATOMIC_FETCH_OR
-#define ATOMIC_FETCH_OR(ptr, val) __atomic_fetch_or(ptr, val, __ATOMIC_ACQ_REL)
-#endif // ATOMIC_FETCH_OR
-
-#ifndef ATOMIC_FETCH_NAND
-#define ATOMIC_FETCH_NAND(ptr, val) __atomic_fetch_nand(ptr, val, __ATOMIC_ACQ_REL)
-#endif // ATOMIC_FETCH_NAND
+#ifndef atomic_store_relaxed
+#define atomic_store_relaxed(p, v) atomic_store_explicit(p, v, memory_order_relaxed)
+#endif // atomic_store_relaxed
 
 #endif // __ATOMIC_H__

@@ -5,11 +5,13 @@ set(API api)
 set(DATA data)
 set(DPDK dpdk)
 set(COMMON common)
+set(PROTOCOL protocol)
 set(DATAPLANE dataplane)
 
 set(API_INC ${INC}/api)
 set(DPDK_INC ${INC}/dpdk)
 set(COMMON_INC ${INC}/common)
+set(PROTOCOL_INC ${INC}/protocol)
 set(DATAPLANE_INC ${INC}/dataplane)
 
 find_package(PkgConfig REQUIRED)
@@ -23,6 +25,7 @@ pkg_check_modules(OPENSSL REQUIRED IMPORTED_TARGET openssl)
 add_subdirectory(${COMMON})
 add_subdirectory(${API})
 add_subdirectory(${DPDK})
+add_subdirectory(${PROTOCOL})
 add_subdirectory(${DATAPLANE})
 
 add_executable(${PROJECT_NAME} main.c)
@@ -38,6 +41,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
                       ${API}
                       ${COMMON}
                       ${DPDK}
+                      ${PROTOCOL}
                       ${DATAPLANE}
                       -L${TP_LIB} -lmongoose
                       -Wl,--no-whole-archive

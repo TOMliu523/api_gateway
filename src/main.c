@@ -23,8 +23,16 @@
 #define RUN_LOCK_FILE "/run/lock/api_gateway.lock"
 
 static struct root *s_root;
+static int s_fd = -1;
 
-static int single_instance(const char *filename)
+static void _lock_file_free(void)
+{
+    if (s_fd >= 0) {
+        close(s_fd);
+    }
+}
+
+static void single_instance(const char *filename)
 {
     int fd = -1;
     int ret = 0;
@@ -66,7 +74,7 @@ static int single_instance(const char *filename)
     lock.l_type = F_WRLCK;
     lock.l_whence = SEEK_SET;
     lock.l_start = nbytes;
-    lock.l_len = 10;
+    lock.l_len = 1;
 
     ret = fcntl(fd, F_SETLK, &lock);
     if (ret < 0) {
@@ -74,10 +82,15 @@ static int single_instance(const char *filename)
         exit(EXIT_FAILURE);
     }
 
-    write(fd, buffer, nbytes);
-    LOG_INFO("Current process ID = %u", getpid());
+    nbytes = write(fd, buffer, nbytes);
+    if (nbytes < 0) {
+        LOG_ERROR("Failure write: %s.", strerror(errno));
+        exit(EXIT_FAILURE);
+    }
 
-    return fd;
+    LOG_INFO("Current process ID = %u", getpid());
+    s_fd = fd;
+    atexit(_lock_file_free);
 }
 
 static void signal_process(void)
@@ -99,34 +112,26 @@ static void root_fini(void)
     }
 
     root = s_root;
-
-    close(root->lock_fd);
     free(root);
-
     s_root = NULL;
 }
 
-static struct root *root_init(struct hw_info *info, int lock_fd, const char *lock_file)
+static struct root *root_init(struct hw_info *info)
 {
     int ret = 0;
-    size_t numa_size = 0;
     size_t total_size = 0;
     struct root *root = NULL;
 
-    numa_size = info->numa_count * sizeof(struct numa_content);
-    total_size = sizeof(struct root) + numa_size;
+    total_size = sizeof(struct root);
     ret = posix_memalign((void **)&root, CACHE_LINE, total_size);
     if (ret < 0) {
-        LOG_ERROR("OOM");
+        LOG_ERROR("OOM.");
         exit(EXIT_FAILURE);
     }
 
     memset(root, 0, total_size);
 
-    root->lock_fd = lock_fd;
-    root->lock_filename = lock_file;
     memcpy(&root->hw_info, info, sizeof(*info));
-    root->numa.nums = info->numa_count;
 
     atexit(root_fini);
     return root;
@@ -134,7 +139,6 @@ static struct root *root_init(struct hw_info *info, int lock_fd, const char *loc
 
 int main(int argc, char *argv[])
 {
-    int i = 0;
     int ret = 0;
     int fd = -1;
     pthread_t tid = {0};
@@ -147,8 +151,8 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
 
-    fd = single_instance(RUN_LOCK_FILE);
     signal_process();
+    single_instance(RUN_LOCK_FILE);
 
     ret = dpdk_init(argc, argv, &info);
     if (ret < 0) {
@@ -158,8 +162,8 @@ int main(int argc, char *argv[])
     argc -= ret;
     argv += ret;
 
-    s_root = root_init(&info, fd, RUN_LOCK_FILE);
-    ret = pthread_create(&tid, NULL, api_startup, &s_root->numa);
+    s_root = root_init(&info);
+    ret = pthread_create(&tid, NULL, api_startup, s_root);
     if (ret != 0) {
         LOG_ERROR("startup api thread failure: %s", strerror(ret));
         return EXIT_FAILURE;

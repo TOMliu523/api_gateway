@@ -1,11 +1,11 @@
 /************************************************
- * filename: macro.h
+ * filename: base_macro.h
  * function:
  * description:
  ***********************************************/
 
-#ifndef __MACRO_H__
-#define __MACRO_H__
+#ifndef __BASE_MACRO_H__
+#define __BASE_MACRO_H__
 
 #ifndef CACHE_LINE
 #define CACHE_LINE 64
@@ -43,9 +43,13 @@
 #define ALIGNED(n) __attribute__((aligned(n)))
 #endif // ALIGNED
 
-#ifndef DPDK_PACKED
-#define DPDK_PACKED __attribute__((aligned(1)))
-#endif // DPDK_PACKED
+#ifndef ALIGN_PACKED
+#define ALIGN_PACKED __attribute__((aligned(1)))
+#endif // ALIGN_PACKED
+
+#ifndef UNUSED
+#define UNUSED(x) __attribute__((__unused__))
+#endif // UNUSED
 
 #ifndef ARR_NUMS
 #define ARR_NUMS(a) (sizeof(a) / sizeof(a[0]))
@@ -85,4 +89,12 @@
     })
 #endif // MAX
 
-#endif // __MACRO_H__
+#ifdef __x86_64
+#ifndef PAUSE
+#define PAUSE() __asm__ __volatile__("pause" : : : "memory");
+#endif // PAUSE
+#else
+#define PAUSE()
+#endif // __x86_64
+
+#endif // __BASE_MACRO_H__
