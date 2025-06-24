@@ -48,7 +48,7 @@ submodule network {
             key "name";
             leaf name {
                 type string {
-                    pattern '[-0-9a-zA-Z.]{3,63}'
+                    pattern '[-0-9a-zA-Z.]{3,63}';
                 }
             }
             leaf ip {

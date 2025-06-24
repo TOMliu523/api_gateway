@@ -107,6 +107,7 @@ enum API_ERRCODE {
     API_ERRCODE_ACCOUNT,
 
     API_ERRCODE_NETWORK = 200,
+    API_ERRCODE_PORT_TOO_MANY,
 
     API_ERRCODE_MAX,
 };
@@ -134,8 +135,8 @@ struct api_user {
  * @param2: request body(format: json)
  * @return: json
  */
-typedef void *(*api_action_fn_t)(void *cfg, const char *, void *, void *);
-typedef void (*api_apply_fn_t)(void *cfg, const char *, void *, void *);
+typedef void *(*api_action_fn_t)(void *, const char *, void *, void *);
+typedef void (*api_apply_fn_t)(void *, const char *, void *, void *);
 
 struct api_method_node {
     struct list_head node;
@@ -195,5 +196,7 @@ extern int api_account_desensitize(unsigned char *dst, size_t max, const char *p
 extern int api_string_to_json(const char *string, void **json);
 extern int api_json_to_string(void *json, char **string);
 extern int api_json_add_string(void *json, const char *name, const char *value);
+
+extern void api_config_update(void *, void **[], void *[], void (*)(void *));
 
 #endif // __API_INNER_H__

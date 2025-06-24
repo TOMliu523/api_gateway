@@ -11,6 +11,7 @@
 #include <openssl/evp.h>
 
 #include "log.h"
+#include "rcu.h"
 #include "api_inner.h"
 
 #define ACCOUNT_SALT "M8#zY1$pQr!T2xVa"
@@ -214,4 +215,25 @@ int api_json_add_string(void *json, const char *name, const char *value)
     }
 
     return 0;
+}
+
+void api_config_update(void *cfg, void **position[], void *update[], void (*free_post)(void *arg))
+{
+    struct root *root = cfg;
+    void *old[CPU_MAX] = {NULL};
+    int cpu_count = root->hw_info.cpu_count;
+
+    for (int i = 0; i < cpu_count; i++) {
+        old[i] = *position[i];
+    }
+
+    for (int i = 0; i < cpu_count; i++) {
+        rcu_assign_pointer(position[i], update[i]);
+    }
+
+    rcu_synchronize(root->dpdk_thread, cpu_count);
+
+    for (int i = 0; i < cpu_count; i++) {
+        free_post(old[i]);
+    }
 }

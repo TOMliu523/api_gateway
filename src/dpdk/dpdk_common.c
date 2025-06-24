@@ -18,7 +18,7 @@ int dpdk_cpu_count_get(void)
 
 int dpdk_numa_count_get(void)
 {
-    return s_numa_cpu.cpu_count;
+    return s_numa_cpu.numa_count;
 }
 
 void *dpdk_numa_cpu_get(void)
@@ -43,11 +43,9 @@ void dpdk_numa_cpu_init(int numa_count, int cpu_count)
         RTE_LCORE_FOREACH(lcore_id) {
             hw_numa_id = rte_lcore_to_socket_id(lcore_id);
 
-            RUNTIME_ASSERT(hw_numa_id < NUMA_MAX);
-
             if (hw_numa_id == n2c->hw_numa_id) {
                 n2c->hw_cpu_id[count] = lcore_id;
-                n2c->cpu_lcore[count] = rte_lcore_index(lcore_id);
+                n2c->cpu_id[count] = rte_lcore_index(lcore_id);
 
                 count += 1;
             }
@@ -62,11 +60,11 @@ void dpdk_numa_cpu_init(int numa_count, int cpu_count)
         struct cpu_to_numa *c2n = &nc->c2n[cpu_lcore];
 
         c2n->hw_cpu_id = lcore_id;
-        c2n->dpdk_cpu_id = cpu_lcore;
+        c2n->cpu_id = cpu_lcore;
         c2n->hw_numa_id = rte_lcore_to_socket_id(lcore_id);
         for (int i = 0; i < NUMA_MAX; i++) {
             if (c2n->hw_numa_id == rte_socket_id_by_idx(i)) {
-                c2n->dpdk_numa_id = i;
+                c2n->numa_id = i;
                 break;
             }
         }
@@ -74,6 +72,6 @@ void dpdk_numa_cpu_init(int numa_count, int cpu_count)
 
     for (int i = 0; i < cpu_count; i++) {
         struct cpu_to_numa *one = &nc->c2n[i];
-        one->numa_cpu_id = numa[one->hw_numa_id]++;
+        one->numa_cpu_id = numa[one->numa_id]++;
     }
 }

@@ -12,8 +12,8 @@
 #include <jansson.h>
 #include <mongoose.h>
 
-#include "macro.h"
 #include "api_inner.h"
+#include "macro.h"
 
 #define API_AUTH_EXP (20 * 60)
 #define API_AUTH_BEARER "Bearer "

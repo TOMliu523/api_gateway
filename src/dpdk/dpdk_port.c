@@ -5,6 +5,8 @@
  ***********************************************/
 
 #include <errno.h>
+#include <ctype.h>
+#include <stdlib.h>
 #include <net/if.h>
 #include <stdint.h>
 
@@ -14,7 +16,7 @@
 #include "macro.h"
 #include "dpdk_type.h"
 #include "dpdk_port.h"
-#include "dpdk_pool.h"
+#include "dpdk_core.h"
 #include "dpdk_inner.h"
 #include "dpdk_common.h"
 
@@ -40,13 +42,13 @@ struct dpdk_speed {
     } ex[DPDK_SPEED_NUMS_MAX];
 };
 
-struct dpdk_port {
-    struct dpdk_eth_conf eth_conf;
+struct dpdk_port_st {
     struct dpdk_speed speed;
     struct port_name port_name;
+    struct rte_eth_conf eth_conf;
 };
 
-static struct dpdk_port s_dpdk_port = {
+static struct dpdk_port_st s_dpdk_port = {
     .eth_conf = {
         .link_speeds = RTE_ETH_LINK_SPEED_AUTONEG,
         .rxmode = {
@@ -153,21 +155,22 @@ int dpdk_port_startup(int port)
 {
     int ret = 0;
     int retry = 0;
-    void * const *pool = NULL;
     int max_queues = 0;
     int max_rx_desc = 0;
     int max_tx_desc = 0;
+    void * const *pool = NULL;
     struct numa_cpu *nc = NULL;
-    struct dpdk_eth_info dev = {0};
-    struct dpdk_eth_conf conf = {0};
+    struct rte_eth_conf conf = {0};
     struct rte_eth_rxconf rx = {0};
     struct rte_eth_txconf tx = {0};
+    struct rte_eth_dev_info dev = {0};
 
-    pool = dpdk_pool_pktmbuf_get();
     nc = dpdk_numa_cpu_get();
+    pool = dpdk_pool_pktmbuf_get();
+
     ret = rte_eth_dev_info_get(port, &dev);
     if (ret != 0) {
-        LOG_ERROR("port_id(%d) rte_eth_dev_info_get failure.", port);
+        LOG_ERROR("Failure port_id(%d) rte_eth_dev_info_get: %s.", port, strerror(-ret));
         return -1;
     }
 
@@ -198,7 +201,7 @@ int dpdk_port_startup(int port)
     rx.offloads = conf.rxmode.offloads;
 
     for (int i = 0; i < nc->cpu_count; i++) {
-        int numa_id = nc->c2n[i].dpdk_numa_id;
+        int numa_id = nc->c2n[i].numa_id;
         int hw_numa_id = nc->c2n[i].hw_numa_id;
 
         ret = rte_eth_rx_queue_setup(port, i, max_rx_desc, hw_numa_id, &rx, pool[numa_id]);
@@ -212,7 +215,7 @@ int dpdk_port_startup(int port)
     tx.offloads = conf.txmode.offloads;
 
     for (int i = 0; i < nc->cpu_count; i++) {
-        int numa_id = nc->c2n[i].dpdk_numa_id;
+        int numa_id = nc->c2n[i].numa_id;
         int hw_numa_id = nc->c2n[i].hw_numa_id;
 
         ret = rte_eth_tx_queue_setup(port, i, max_tx_desc, hw_numa_id, &tx);
@@ -250,12 +253,59 @@ int dpdk_port_startup(int port)
     return 0;
 }
 
+uint16_t dpdk_port_by_name_get(const char *name)
+{
+    const char *tmp = NULL;
+    const char *anchor = NULL;
+
+    if (UNLIKELY(name == NULL)) {
+        LOG_ERROR("Parameter exception.");
+        return (uint16_t)-1;
+    }
+
+    LOG_INFO("port name: %s", name);
+    anchor = strrchr(name, '.');
+    if (anchor == NULL) {
+        LOG_ERROR("Interface name format error: %s", name);
+        return (uint16_t)-1;
+    }
+
+    anchor += 1;
+    tmp = anchor;
+
+    if (*tmp == 0) {
+        LOG_ERROR("Interface name format error: %s", name);
+        return -1;
+    }
+
+    while (*tmp != 0) {
+        if ((!isdigit(*tmp))) {
+            LOG_ERROR("Interface name format error: %s", name);
+            return -1;
+        }
+
+        tmp += 1;
+    }
+
+    return atoi(anchor);
+}
+
+int dpdk_port_restart(int port)
+{
+    return rte_eth_dev_start(port);
+}
+
+int dpdk_port_stop(int port)
+{
+    return rte_eth_dev_stop(port);
+}
+
 int dpdk_port_init(void)
 {
     int ret = 0;
     int port = 0;
 
-    ret = dpdk_pool_pktmbuf_init();
+    ret = dpdk_pool_pktmbuf_create();
     if (ret != 0) {
         return -1;
     }
@@ -265,12 +315,12 @@ int dpdk_port_init(void)
         return -1;
     }
 
-    RTE_ETH_FOREACH_DEV(port) {
+    /*RTE_ETH_FOREACH_DEV(port) {
         ret = dpdk_port_startup(port);
         if (ret < 0) {
             return -1;
         }
-    }
+    }*/
 
     return 0;
 }
