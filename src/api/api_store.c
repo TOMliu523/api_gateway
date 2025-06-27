@@ -19,10 +19,11 @@
 #include "log.h"
 #include "type.h"
 #include "hash.h"
+#include "atomic.h"
 #include "api_inner.h"
 
+#define API_TIMEOUT (1000 * 60)
 #define API_CONTAINER_NUMS 1024
-#define API_TIMEOUT (30 * 1000)
 
 struct api_startup {
     bool head_init;
@@ -366,7 +367,7 @@ static void *_api_store_get(struct private_data *data)
         data->output = NULL;
         return output;
     } else {
-        return api_success(NULL);
+        return api_succ(NULL);
     }
 }
 
@@ -375,7 +376,7 @@ static enum API_STATUS _api_store_apply( struct api_db *db, const struct api_met
     int ret = 0;
 
     _api_store_set(&db->data, api, url, input);
-    ret = sr_apply_changes(db->sess, 0/*API_TIMEOUT*/);
+    ret = sr_apply_changes(db->sess, API_TIMEOUT);
     if (ret != SR_ERR_OK) {
         LOG_ERROR("sr_apply_changes failure: %s", sr_strerror(ret));
         return API_STATUS_SERVER;
@@ -523,20 +524,7 @@ static int _api_store_create(struct lyd_node *node, bool create)
 // Waiting for the data plane to complete initialization
 static void _api_store_wait_dataplane(struct root *root)
 {
-    int count = 0;
-
-    for (;;) {
-        count = 0;
-        for (int i = 0; i < root->hw_info.cpu_count; i++) {
-            if (root->dpdk_thread[i] != NULL) {
-                count += 1;
-            }
-        }
-
-        if (root->hw_info.cpu_count == count) {
-            break;
-        }
-    }
+    for (; !atomic_load(&root->inited););
 }
 
 enum API_STATUS api_store_create(const struct api_method_node *api, const char *buf, size_t len, void **output)
@@ -813,14 +801,14 @@ int api_store_init(void *arg)
 {
     int ret = 0;
     pthread_t thid = {0};
+    char buffer[1024] = "";
     LY_ERR err = LY_SUCCESS;
+    char search_dir[1024] = "";
     const char *yang_path = NULL;
     struct api_db *db = &s_api_db;
-    struct lys_module *module = NULL;
     const char *module_name = "v1";
+    struct lys_module *module = NULL;
     const char *schema_path[20] = {NULL};
-    char search_dir[1024] = "";
-    char buffer[1024] = "";
 
     sr_log_stderr(SR_LL_DBG);
     sr_log_set_cb(_api_store_db_log);

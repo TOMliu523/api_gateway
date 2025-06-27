@@ -14,14 +14,13 @@
 static INLINE void rcu_read_lock(struct dataplane *dp)
 {
     atomic_prevent_compiler_reorder();
-    uint64_t global_version = atomic_load_relaxed(&dp->nc->version);
+    uint64_t global_version = atomic_load_relaxed(&dp->tc->version);
     atomic_store_relaxed(&dp->version, global_version);
     atomic_barrier();
 }
 
 static INLINE void rcu_read_unlock(struct dataplane *dp)
 {
-    (void) dp;
     atomic_barrier();
 }
 
@@ -49,18 +48,21 @@ static INLINE void rcu_read_unlock(struct dataplane *dp)
 
 static INLINE void rcu_synchronize(struct dataplane *dps[], int nums)
 {
-    if (nums != 0) {
-        uint64_t version = dps[0]->nc->version;
-        atomic_store_relaxed(&dps[0]->nc->version, version + 1);
+    for (int i = 0; i < nums; i++) {
+        uint64_t version = atomic_load_relaxed(&dps[i]->tc->version);
+        atomic_store_relaxed(&dps[i]->tc->version, version + 1);
     }
 
     atomic_barrier();
+
     for (int i = 0; i < nums; i++) {
         struct dataplane *dp = dps[i];
-        while (atomic_load_relaxed(&dp->version) != atomic_load_relaxed(&dp->nc->version)) {
+        while (atomic_load_relaxed(&dp->version) != atomic_load_relaxed(&dp->tc->version)
+               && atomic_load_relaxed(&dp->version) != 0) {
             PAUSE();
         }
     }
+
     atomic_barrier();
 }
 

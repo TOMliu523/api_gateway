@@ -9,7 +9,8 @@
 
 #include <stdint.h>
 
-#include "log.h"
+#include <jansson.h>
+
 #include "list.h"
 #include "macro.h"
 
@@ -17,7 +18,12 @@
 #define API_AUTH "Authorization"
 #define API_HASH_TABLE_INDEX(x) ((x) % API_METHOD_TABLE)
 
-// Automatically loads configuration at startup
+/*
+ * Automatically loads configuration at startup
+ *
+ * The POST interface can only use a JSON object as the source for configuration delivery,
+ * which allows the configuration to be automatically applied during process startup.
+ */
 #define API_POST(uri, container) \
     static void *CAT(container, _post)(void *cfg, const char *, void *, void *); \
     static PROC_INIT void CAT2(container, _post, _startup)(void) { \
@@ -84,6 +90,28 @@
     } \
     static void *CAT(container, _get)(void *cfg, const char *url, void *json, void *sess)
 
+#define API_ERRCODE_EXTEND(XX) \
+    XX(SUCCESS, 0, "OK") \
+    XX(REDIRECT, 1, "Redirect") \
+    XX(USER_PWD, 2, "User password error") \
+    XX(EXPIRED, 3, "Login expired") \
+    XX(AUTH, 4, "Unauthorized") \
+    XX(FORBIDDEN, 5, "Access forbidden") \
+    XX(INNER, 6, "Server inner error") \
+    XX(RESOURCE_BUSY, 7, "Resource busy") \
+    XX(OOM, 8, "OOM") \
+    XX(NOT_SUPPORT, 9, "Not support") \
+    \
+    XX(SYSTEM, 100, "System question") \
+    XX(ACCOUNT, 101, "Account or password error") \
+    \
+    XX(NETWORK, 200, "Network question") \
+    XX(PORT_TOO_MANY, 201, "Port too many") \
+    XX(PORT_NOT_EXIST, 202, "Port not exist") \
+    XX(MIX_IP, 203, "IPv4 and IPv6 mixing") \
+    XX(IP_EXIST, 204, "IP exist") \
+    XX(IP_NOT_EXIST, 205, "IP not exist")
+
 enum API_STATUS {
     API_STATUS_OK = 200,
     API_STATUS_REDIRECT = 300,
@@ -95,21 +123,13 @@ enum API_STATUS {
 };
 
 enum API_ERRCODE {
-    API_ERRCODE_SUCCESS = 0,
-    API_ERRCODE_REDIRECT,
-    API_ERRCODE_USER_PWD,
-    API_ERRCODE_EXPIRED,
-    API_ERRCODE_AUTH,
-    API_ERRCODE_FORBIDDEN,
-    API_ERRCODE_INNER,
+#define ERRCODE(code, value, msg) API_ERRCODE_##code = value,
+    API_ERRCODE_INVALID = -1,
 
-    API_ERRCODE_SYSTEM = 100,
-    API_ERRCODE_ACCOUNT,
+    API_ERRCODE_EXTEND(ERRCODE)
 
-    API_ERRCODE_NETWORK = 200,
-    API_ERRCODE_PORT_TOO_MANY,
-
-    API_ERRCODE_MAX,
+    API_ERRCODE_MAX
+#undef ERRCODE
 };
 
 enum API_METHOD {
@@ -167,7 +187,7 @@ extern void api_startup_register(const char *, const char *, api_action_fn_t, ap
  * @param: obj NULL or json object
  * @return: json object or NULL
  */
-extern void *api_success(void *obj);
+extern void *api_succ(void *obj);
 
 /*
  * {
@@ -180,7 +200,10 @@ extern void *api_success(void *obj);
  * @param: errmsg error message
  * @param: json object or NULL
  */
-extern void *api_failure(int errcode, const char *errmsg);
+extern void *api_fail_msg(int errcode, const char *errmsg);
+
+// Use the default message for errmsg, same as api_fail_msg
+extern void *api_fail(int errcode);
 
 extern int api_store_init(void *arg);
 extern void api_store_fini(void);
@@ -196,7 +219,24 @@ extern int api_account_desensitize(unsigned char *dst, size_t max, const char *p
 extern int api_string_to_json(const char *string, void **json);
 extern int api_json_to_string(void *json, char **string);
 extern int api_json_add_string(void *json, const char *name, const char *value);
+extern int api_json_add_integer(void *json, const char *name, json_int_t value);
 
 extern void api_config_update(void *, void **[], void *[], void (*)(void *));
+
+static INLINE void *api_v1_modify_list(void *json, const char *module_name, const char *list_name)
+{
+    char buffer[256] = "";
+
+    snprintf(buffer, sizeof(buffer), "v1:%s", module_name);
+    return json_object_get(json_object_get(json, buffer), list_name);
+}
+
+static INLINE void *api_v1_delete_list(void *json, const char *module_name, const char *list_name)
+{
+    char buffer[256] = "";
+
+    snprintf(buffer, sizeof(buffer), "/v1:%s/%s", module_name, list_name);
+    return json_object_get(json, buffer);
+}
 
 #endif // __API_INNER_H__

@@ -16,6 +16,12 @@
 
 #define ACCOUNT_SALT "M8#zY1$pQr!T2xVa"
 
+static const char *s_errcode_msg[] = {
+#define ERRMSG(code, value, msg) [API_ERRCODE_##code] = msg,
+API_ERRCODE_EXTEND(ERRMSG)
+#undef ERRMSG
+};
+
 static void *_api_errmsg_to_json(const char *msg)
 {
     int ret = 0;
@@ -50,7 +56,7 @@ _quit:
     return NULL;
 }
 
-void *api_success(void *obj)
+void *api_succ(void *obj)
 {
     int ret = 0;
     json_t *value = NULL;
@@ -89,7 +95,8 @@ _quit:
     return NULL;
 }
 
-void *api_failure(int errcode, const char *errmsg)
+
+void *api_fail_msg(int errcode, const char *errmsg)
 {
     int ret = 0;
     json_t *value = NULL;
@@ -140,6 +147,11 @@ _quit:
         json_decref(retobj);
     }
     return NULL;
+}
+
+void *api_fail(int errcode)
+{
+    return api_fail_msg(errcode, s_errcode_msg[errcode]);
 }
 
 int api_account_desensitize(unsigned char *dst, size_t max, const char *passwd, size_t len)
@@ -210,6 +222,27 @@ int api_json_add_string(void *json, const char *name, const char *value)
     ret = json_object_set_new(json, name, obj_value);
     if (ret != 0) {
         LOG_ERROR("OOM");
+        json_decref(obj_value);
+        return -1;
+    }
+
+    return 0;
+}
+
+int api_json_add_integer(void *json, const char *name, json_int_t value)
+{
+    int ret = 0;
+    void *obj_value = NULL;
+
+    obj_value = json_integer(value);
+    if (obj_value == NULL) {
+        LOG_ERROR("OOM.");
+        return -1;
+    }
+
+    ret = json_object_set_new(json, name, obj_value);
+    if (ret != 0) {
+        LOG_ERROR("OOM.");
         json_decref(obj_value);
         return -1;
     }

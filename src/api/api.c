@@ -289,7 +289,7 @@ static void _api_http_user_pwd(struct mg_connection *c)
     void *json = NULL;
     char *json_str = NULL;
 
-    json = api_failure(API_ERRCODE_USER_PWD, "Username or password is incorrect");
+    json = api_fail(API_ERRCODE_USER_PWD);
     if (json == NULL) {
         mg_http_reply(c, 500, "", "");
         return;
@@ -357,7 +357,7 @@ static int _api_login(struct mg_connection *c, struct mg_http_message *msg)
             code = api_login(msg);
             switch (code) {
             case API_ERRCODE_SUCCESS:
-                _api_http_succ(c, msg, api_success(NULL));
+                _api_http_succ(c, msg, api_succ(NULL));
                 return 1;
             default:
                 _api_http_user_pwd(c);
