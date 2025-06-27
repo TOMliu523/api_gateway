@@ -11,14 +11,16 @@
 #include <openssl/evp.h>
 
 #include "log.h"
-#include "rcu.h"
+#include "type.h"
+#include "errcode.h"
+#include "dpdk_rcu.h"
 #include "api_inner.h"
 
 #define ACCOUNT_SALT "M8#zY1$pQr!T2xVa"
 
 static const char *s_errcode_msg[] = {
-#define ERRMSG(code, value, msg) [API_ERRCODE_##code] = msg,
-API_ERRCODE_EXTEND(ERRMSG)
+#define ERRMSG(code, value, msg) [ERRCODE_##code] = msg,
+ERRCODE_EXTEND(ERRMSG)
 #undef ERRMSG
 };
 
@@ -250,10 +252,13 @@ int api_json_add_integer(void *json, const char *name, json_int_t value)
     return 0;
 }
 
-void api_config_update(void *cfg, void **position[], void *update[], void (*free_post)(void *arg))
+void api_config_update(void *cfg, void **position[], void *update[], void (*free_post)(void *[], int))
 {
     struct root *root = cfg;
+    struct dataplane *dp = NULL;
     void *old[CPU_MAX] = {NULL};
+    void *numa[NUMA_MAX] = {NULL};
+    void *numa_rcu[NUMA_MAX] = {NULL};
     int cpu_count = root->hw_info.cpu_count;
 
     for (int i = 0; i < cpu_count; i++) {
@@ -264,9 +269,17 @@ void api_config_update(void *cfg, void **position[], void *update[], void (*free
         rcu_assign_pointer(position[i], update[i]);
     }
 
-    rcu_synchronize(root->dpdk_thread, cpu_count);
-
-    for (int i = 0; i < cpu_count; i++) {
-        free_post(old[i]);
+    for (int i = 0; i < root->hw_info.cpu_count; i++) {
+        dp = root->dpdk_thread[i];
+        numa_rcu[dp->numa_id] = dp->rcu;
+        numa[dp->numa_id] = old[dp->numa_id];
     }
+
+    for (int i = 0; i < root->hw_info.numa_count; i++) {
+        if (numa_rcu[i] != NULL) {
+            dpdk_rcu_synchronize(numa_rcu[i]);
+        }
+    }
+
+    free_post(numa, root->hw_info.numa_count);
 }

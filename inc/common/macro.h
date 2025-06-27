@@ -60,7 +60,7 @@
 #endif // ALIGN_PACKED_CACHE_LINE
 
 #ifndef UNUSED
-#define UNUSED(x) __attribute__((__unused__))
+#define UNUSED __attribute__((__unused__))
 #endif // UNUSED
 
 #ifndef ARR_NUMS
@@ -83,6 +83,13 @@
 #define ACCESS_ONCE(x) (*(volatile typeof(x) *)&(x))
 #endif // ACCESS_ONCE
 
+#define SWAP(a, b) \
+    do { \
+        typeof(a) _tmp = (a); \
+        (a) = (b); \
+        (b) = _tmp; \
+    } while (0)
+
 #ifndef MIN
 #define MIN(a, b) \
     ({ \
@@ -97,7 +104,7 @@
     ({ \
         typeof(a) _a = (a); \
         typeof(b) _b = (b); \
-        _a > _b > _a : _b; \
+        _a > _b ? _a : _b; \
     })
 #endif // MAX
 

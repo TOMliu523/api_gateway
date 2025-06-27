@@ -21,7 +21,7 @@ int dpdk_numa_count_get(void)
     return s_numa_cpu.numa_count;
 }
 
-void *dpdk_numa_cpu_get(void)
+struct numa_cpu *dpdk_numa_cpu_get(void)
 {
     return &s_numa_cpu;
 }
@@ -31,6 +31,10 @@ void dpdk_numa_cpu_init(int numa_count, int cpu_count)
     int lcore_id = 0;
     int numa[NUMA_MAX] = {0};
     struct numa_cpu *nc = &s_numa_cpu;
+
+    if (nc->inited) {
+        return;
+    }
 
     nc->numa_count = numa_count;
     for (int i = 0; i < numa_count; i++) {
@@ -74,4 +78,6 @@ void dpdk_numa_cpu_init(int numa_count, int cpu_count)
         struct cpu_to_numa *one = &nc->c2n[i];
         one->numa_cpu_id = numa[one->numa_id]++;
     }
+
+    nc->inited = 1;
 }

@@ -40,7 +40,7 @@ function install_lib()
     [[ ! -d ${dirname} ]] && ${exec_cmd}
 
     # Compile
-    pushd ${dirname} && for i in "$@" ;do $i; done && popd
+    pushd ${dirname} && for i in "$@" ;do echo "[DEBUG] Running command: $i";eval "$i"; done && popd
 
     # Delete source code path
     [[ -d ${dirname} ]] && rm -rf ${dirname}

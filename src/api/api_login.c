@@ -14,6 +14,7 @@
 
 #include "log.h"
 #include "macro.h"
+#include "errcode.h"
 #include "api_inner.h"
 
 #define API_AUTH_EXP (20 * 60)
@@ -226,7 +227,7 @@ static int _api_login_db_get(struct db_login *db, const char *username)
     return 0;
 }
 
-static enum API_ERRCODE _api_login_exp_and_flush(void *arg, const char *base, size_t len)
+static enum ERRCODE _api_login_exp_and_flush(void *arg, const char *base, size_t len)
 {
     size_t nbytes = 0;
     char data[192] = "";
@@ -236,7 +237,7 @@ static enum API_ERRCODE _api_login_exp_and_flush(void *arg, const char *base, si
     struct db_login db = {0};
     uint32_t modify_id = 0;
     struct mg_http_message *msg = arg;
-    enum API_ERRCODE ret = API_ERRCODE_SUCCESS;
+    enum ERRCODE ret = ERRCODE_SUCCESS;
 
     size_t cur = 0;
     json_int_t exp = 0;
@@ -247,7 +248,7 @@ static enum API_ERRCODE _api_login_exp_and_flush(void *arg, const char *base, si
     if (json == NULL) {
         LOG_ERROR("line: %d, column: %d, position: %d, source: %s, text: %s",
                   error.line, error.column, error.position, error.source, error.text);
-        return API_ERRCODE_AUTH;
+        return ERRCODE_AUTH;
     }
 
     cur = time(NULL);
@@ -256,18 +257,18 @@ static enum API_ERRCODE _api_login_exp_and_flush(void *arg, const char *base, si
 
     if (exp <= cur) {
         LOG_WARN("username(%s) login expire", usr);
-        ret = API_ERRCODE_AUTH;
+        ret = ERRCODE_AUTH;
         goto _quit;
     }
 
     if (_api_login_db_get(&db, usr) != 0) {
-        ret = API_ERRCODE_AUTH;
+        ret = ERRCODE_AUTH;
         goto _quit;
     }
 
     if (msg->uri.len == 18 && strncmp(msg->uri.buf, "/v1/system/account", 18) == 0) {
         if (strcmp(db.role_type, "SYSTEM_ADMIN") != 0 && strcmp(db.role_type, "SYSTEM_ROOT") != 0) {
-            ret = API_ERRCODE_FORBIDDEN;
+            ret = ERRCODE_FORBIDDEN;
             goto _quit;
         }
     }
@@ -276,13 +277,13 @@ static enum API_ERRCODE _api_login_exp_and_flush(void *arg, const char *base, si
     if (cur - iat >= API_AUTH_EXP / 2) {
         ret = _api_jwt(arg, &db);
         if (ret != 0) {
-            ret = API_ERRCODE_AUTH;
+            ret = ERRCODE_AUTH;
             goto _quit;
         }
     } else {
         modify_id = (uint32_t)json_integer_value(json_object_get(json, "rev"));
         if (modify_id != db.modify_id) {
-            ret = API_ERRCODE_AUTH;
+            ret = ERRCODE_AUTH;
             goto _quit;
         }
     }
@@ -292,7 +293,7 @@ _quit:
     return ret;
 }
 
-enum API_ERRCODE api_login(void *arg)
+enum ERRCODE api_login(void *arg)
 {
     int ret = 0;
     char data[192] = "";
@@ -307,23 +308,23 @@ enum API_ERRCODE api_login(void *arg)
 
     ret = _api_login_user(&user, arg);
     if (ret != 0) {
-        return API_ERRCODE_USER_PWD;
+        return ERRCODE_USER_PWD;
     }
 
     ret = _api_check_user(&db, &user);
     if (ret != 0) {
-        return API_ERRCODE_USER_PWD;
+        return ERRCODE_USER_PWD;
     }
 
     ret = _api_jwt(arg, &db);
     if (ret != 0) {
-        return API_ERRCODE_USER_PWD;
+        return ERRCODE_USER_PWD;
     }
 
-    return API_ERRCODE_SUCCESS;
+    return ERRCODE_SUCCESS;
 }
 
-enum API_ERRCODE api_refresh_login(void *arg)
+enum ERRCODE api_refresh_login(void *arg)
 {
     int ret = 0;
     size_t len = 0;
@@ -338,39 +339,39 @@ enum API_ERRCODE api_refresh_login(void *arg)
 
     auth = mg_http_get_header(arg, API_AUTH);
     if (auth == NULL) {
-        return API_ERRCODE_AUTH;
+        return ERRCODE_AUTH;
     }
 
     header = auth->buf + bearer_len;
     first = strchr(header, '.');
     if (first == NULL) {
-        return API_ERRCODE_AUTH;
+        return ERRCODE_AUTH;
     }
 
     first += 1;
     second = strchr(first, '.');
     if (second == NULL) {
-        return API_ERRCODE_AUTH;
+        return ERRCODE_AUTH;
     }
 
     second += 1;
     if (second - header >= auth->len - bearer_len) {
-        return API_ERRCODE_AUTH;
+        return ERRCODE_AUTH;
     }
 
     ret = api_account_desensitize(buf, sizeof(buf), header, second - header);
     if (ret < 0) {
-        return API_ERRCODE_AUTH;
+        return ERRCODE_AUTH;
     }
 
     if ((ret != auth->len - bearer_len - (second - header)) || strncmp(buf, second, ret) != 0) {
-        return API_ERRCODE_AUTH;
+        return ERRCODE_AUTH;
     }
 
     ret = _api_login_exp_and_flush(arg, first, second - 1 - first);
-    if (ret != API_ERRCODE_SUCCESS) {
+    if (ret != ERRCODE_SUCCESS) {
         return ret;
     }
 
-    return API_ERRCODE_SUCCESS;
+    return ERRCODE_SUCCESS;
 }

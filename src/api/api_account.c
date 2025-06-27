@@ -13,6 +13,7 @@
 #include <jansson.h>
 
 #include "log.h"
+#include "errcode.h"
 #include "api_inner.h"
 
 static void *_api_account(void *cfg, const char *url, void *json, void *sess, bool update_id)
@@ -40,7 +41,7 @@ static void *_api_account(void *cfg, const char *url, void *json, void *sess, bo
         ret = api_account_desensitize(dst, sizeof(dst), passwd, passwd_len);
         if (ret < 0) {
             LOG_ERROR("account desensitize failure.");
-            return api_fail(API_ERRCODE_ACCOUNT);
+            return api_fail(ERRCODE_ACCOUNT);
         }
 
         const char *username = json_string_value(json_object_get(subobj, "username"));
@@ -49,7 +50,7 @@ static void *_api_account(void *cfg, const char *url, void *json, void *sess, bo
         ret = sr_set_item_str(sess, path, dst, NULL, SR_EDIT_DEFAULT);
         if (ret != 0) {
             LOG_ERROR("sr_set_item_str failure: %s", sr_strerror(ret));
-            return api_fail(API_ERRCODE_ACCOUNT);
+            return api_fail(ERRCODE_ACCOUNT);
         }
 
         if (update_id) {
@@ -60,14 +61,14 @@ static void *_api_account(void *cfg, const char *url, void *json, void *sess, bo
         ret = sr_get_item(sess, path, 0, &modify_id);
         if (ret != 0) {
             LOG_ERROR("sr_get_item_str failure: %s", sr_strerror(ret));
-            return api_fail(API_ERRCODE_ACCOUNT);
+            return api_fail(ERRCODE_ACCOUNT);
         }
 
         modify_id->data.uint64_val += 1;
         ret = sr_set_item(sess, path, modify_id, SR_EDIT_DEFAULT);
         if (ret != 0) {
             LOG_ERROR("sr_set_item_str modify_id failure: %s", sr_strerror(ret));
-            return api_fail(API_ERRCODE_ACCOUNT);
+            return api_fail(ERRCODE_ACCOUNT);
         }
     }
 
@@ -101,7 +102,7 @@ API_GET(/v1/system/account, account)
 
     ret = api_db_query(path, &obj);
     if (ret != 0) {
-        return api_fail(API_ERRCODE_INNER);
+        return api_fail(ERRCODE_INNER);
     }
 
     if (obj != NULL) {

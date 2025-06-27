@@ -407,13 +407,21 @@ static int _api_store_delete_one( struct api_db *db, const char *key, void *valu
 {
     int n = 0;
     int ret = 0;
-    void *subvalue = NULL;
+    json_t *subvalue = NULL;
     const char *subkey = NULL;
 
     n = snprintf(s_buffer, sizeof(s_buffer), "%s", key);
     json_object_foreach(value, subkey, subvalue) {
-        const char *v_str = json_string_value(subvalue);
-        n += snprintf(s_buffer + n, sizeof(s_buffer) - n, "[%s='%s']", subkey, v_str);
+        if (json_is_string(subvalue))  {
+            const char *v_str = json_string_value(subvalue);
+            n += snprintf(s_buffer + n, sizeof(s_buffer) - n, "[%s='%s']", subkey, v_str);
+        } else if (json_is_integer(subvalue)) {
+            json_int_t value = json_integer_value(subvalue);
+            n += snprintf(s_buffer + n, sizeof(s_buffer) - n, "[%s=%lld]", subkey, value);
+        } else {
+            LOG_ERROR("Not support json parse type.");
+            return -1;
+        }
     }
 
     ret = sr_delete_item(db->sess, s_buffer, SR_EDIT_DEFAULT);

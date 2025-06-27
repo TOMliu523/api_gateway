@@ -9,6 +9,7 @@
 #include <libyang/libyang.h>
 
 #include "log.h"
+#include "errcode.h"
 #include "api_inner.h"
 
 API_POST(/v1/network/arp, arp)
@@ -18,7 +19,7 @@ API_POST(/v1/network/arp, arp)
 
     ret = api_json_to_string(json, &str);
     if (ret < 0) {
-        return api_fail(API_ERRCODE_INNER);
+        return api_fail(ERRCODE_INNER);
     }
 
     LOG_DEBUG("Load arp config: %s", str);
@@ -46,7 +47,7 @@ API_GET(/v1/network/arp, arp)
     if (*url == 0) {
         ret = api_db_query(path, &obj);
         if (ret != 0) {
-            return api_fail(API_ERRCODE_INNER);
+            return api_fail(ERRCODE_INNER);
         }
     }
 

@@ -26,6 +26,7 @@ struct cpu_to_numa {
 };
 
 struct numa_cpu {
+    int inited;
     int numa_count;
     int cpu_count;
     struct numa_to_cpu n2c[NUMA_MAX];
@@ -33,5 +34,8 @@ struct numa_cpu {
 };
 
 extern void dpdk_numa_cpu_init(int, int);
+extern int dpdk_cpu_count_get(void);
+extern int dpdk_numa_count_get(void);
+extern struct numa_cpu *dpdk_numa_cpu_get(void);
 
 #endif // __DPDK_INNER_H__

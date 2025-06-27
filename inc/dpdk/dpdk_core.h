@@ -16,6 +16,7 @@
 extern int dpdk_pool_pktmbuf_create(void);
 extern void * const *dpdk_pool_pktmbuf_get(void);
 extern void *dpdk_pool_pktmbuf_get_by_numa(int);
+extern void *dpdk_indirect_pool_pktmbuf_get_by_numa(int numa_id);
 
 /**********************************************************************/
 /****************************** POOL **********************************/
@@ -164,6 +165,16 @@ static INLINE int dpdk_pktmbuf_tx(uint16_t port, uint16_t queue, void *mbufs[], 
     return rte_eth_tx_burst(port, queue, (struct dpdk_mbuf **)mbufs, max);
 }
 
+static INLINE char *dpdk_pktmbuf_adj(struct dpdk_mbuf *mbuf, size_t len)
+{
+    return rte_pktmbuf_adj(mbuf, len);
+}
+
+static void *dpdk_pktmbuf_prepend(struct dpdk_mbuf *mbuf, size_t len)
+{
+    return rte_pktmbuf_prepend(mbuf, len);
+}
+
 static INLINE struct dpdk_eth *dpdk_pktmbuf_eth(struct dpdk_mbuf *m)
 {
     return rte_pktmbuf_mtod(m, struct dpdk_eth *);
@@ -174,14 +185,14 @@ static INLINE struct dpdk_arp *dpdk_pktmbuf_arp(struct dpdk_mbuf *m)
     return rte_pktmbuf_mtod_offset(m, struct dpdk_arp *, sizeof(struct dpdk_eth));
 }
 
-static INLINE struct dpdk_ipv4 *dpdk_pktmbuf_ipv4(struct dpdk_mbuf *m)
-{
-    return rte_pktmbuf_mtod_offset(m, struct dpdk_ipv4 *, sizeof(struct dpdk_eth));
-}
-
 static INLINE struct dpdk_ipv6 *dpdk_pktmbuf_ipv6(struct dpdk_mbuf *m)
 {
     return rte_pktmbuf_mtod_offset(m, struct dpdk_ipv6 *, sizeof(struct dpdk_eth));
+}
+
+static INLINE struct dpdk_icmp *dpdk_pktmbuf_icmp(struct dpdk_mbuf *m, uint16_t off)
+{
+    return rte_pktmbuf_mtod_offset(m, struct dpdk_icmp *, off);
 }
 
 #define DPDK_PKTMBUF_TO_TYPE(m, type, offset) rte_pktmbuf_mtod_offset(m, type, offset)

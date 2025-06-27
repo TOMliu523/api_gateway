@@ -27,6 +27,7 @@
 #include "api.h"
 #include "list.h"
 #include "hash.h"
+#include "errcode.h"
 #include "api_inner.h"
 
 #define API_LISTEN_BUF_LEN 32
@@ -289,7 +290,7 @@ static void _api_http_user_pwd(struct mg_connection *c)
     void *json = NULL;
     char *json_str = NULL;
 
-    json = api_fail(API_ERRCODE_USER_PWD);
+    json = api_fail(ERRCODE_USER_PWD);
     if (json == NULL) {
         mg_http_reply(c, 500, "", "");
         return;
@@ -341,7 +342,7 @@ static void _api_response(struct mg_connection *c, struct mg_http_message *msg, 
 static int _api_login(struct mg_connection *c, struct mg_http_message *msg)
 {
     int ret = 0;
-    enum API_ERRCODE code = 0;
+    enum ERRCODE code = 0;
     struct api_user user = {0};
 
     switch (msg->uri.len) {
@@ -356,7 +357,7 @@ static int _api_login(struct mg_connection *c, struct mg_http_message *msg)
         if (msg->method.len == 4 && strncasecmp(msg->method.buf, "POST", msg->method.len) == 0) {
             code = api_login(msg);
             switch (code) {
-            case API_ERRCODE_SUCCESS:
+            case ERRCODE_SUCCESS:
                 _api_http_succ(c, msg, api_succ(NULL));
                 return 1;
             default:
@@ -369,9 +370,9 @@ static int _api_login(struct mg_connection *c, struct mg_http_message *msg)
     default:
         code = api_refresh_login(msg);
         switch (code) {
-        case API_ERRCODE_SUCCESS:
+        case ERRCODE_SUCCESS:
             return 0;
-        case API_ERRCODE_FORBIDDEN:
+        case ERRCODE_FORBIDDEN:
             _api_http_error(c, 403, &msg->method, &msg->uri);
             return -1;
         default:

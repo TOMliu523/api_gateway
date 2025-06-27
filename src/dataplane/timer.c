@@ -8,6 +8,7 @@
 #include "l3.h"
 #include "type.h"
 #include "timer.h"
+#include "dpdk_ip.h"
 
 struct timer_context {
     struct root *root;
@@ -34,8 +35,13 @@ void timer_check(void)
 {
     struct timer_arp *ta = &s_context.ta;
 
-    if (thread_id == ta->arp_cpu_id && dp->off_time > ta->off_time) {
+    if (tls_thread_id == ta->arp_cpu_id && tls_dp->off_time > ta->off_time) {
         l3_refresh();
-        ta->off_time = dp->off_time;
     }
+
+    if (tls_dp->off_time > ta->off_time && dpdk_ip_mbuf_need_recall(tls_dp->frag_handle)) {
+        dpdk_ip_mbuf_recall(tls_dp->frag_handle, tls_dp->timer_cycles);
+    }
+
+    ta->off_time = tls_dp->off_time;
 }

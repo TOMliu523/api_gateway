@@ -90,27 +90,13 @@
     } \
     static void *CAT(container, _get)(void *cfg, const char *url, void *json, void *sess)
 
-#define API_ERRCODE_EXTEND(XX) \
-    XX(SUCCESS, 0, "OK") \
-    XX(REDIRECT, 1, "Redirect") \
-    XX(USER_PWD, 2, "User password error") \
-    XX(EXPIRED, 3, "Login expired") \
-    XX(AUTH, 4, "Unauthorized") \
-    XX(FORBIDDEN, 5, "Access forbidden") \
-    XX(INNER, 6, "Server inner error") \
-    XX(RESOURCE_BUSY, 7, "Resource busy") \
-    XX(OOM, 8, "OOM") \
-    XX(NOT_SUPPORT, 9, "Not support") \
-    \
-    XX(SYSTEM, 100, "System question") \
-    XX(ACCOUNT, 101, "Account or password error") \
-    \
-    XX(NETWORK, 200, "Network question") \
-    XX(PORT_TOO_MANY, 201, "Port too many") \
-    XX(PORT_NOT_EXIST, 202, "Port not exist") \
-    XX(MIX_IP, 203, "IPv4 and IPv6 mixing") \
-    XX(IP_EXIST, 204, "IP exist") \
-    XX(IP_NOT_EXIST, 205, "IP not exist")
+enum API_METHOD {
+    API_METHOD_POST = 0,
+    API_METHOD_PUT,
+    API_METHOD_DELETE,
+    API_METHOD_GET,
+    API_METHOD_MAX,
+};
 
 enum API_STATUS {
     API_STATUS_OK = 200,
@@ -120,24 +106,6 @@ enum API_STATUS {
     API_STATUS_FORBIDDEN = 403,
     API_STATUS_NOT_FOUND = 404,
     API_STATUS_SERVER = 500,
-};
-
-enum API_ERRCODE {
-#define ERRCODE(code, value, msg) API_ERRCODE_##code = value,
-    API_ERRCODE_INVALID = -1,
-
-    API_ERRCODE_EXTEND(ERRCODE)
-
-    API_ERRCODE_MAX
-#undef ERRCODE
-};
-
-enum API_METHOD {
-    API_METHOD_POST = 0,
-    API_METHOD_PUT,
-    API_METHOD_DELETE,
-    API_METHOD_GET,
-    API_METHOD_MAX,
 };
 
 struct api_user {
@@ -169,8 +137,8 @@ struct api_method_node {
     api_apply_fn_t apply_action;
 };
 
-extern enum API_ERRCODE api_login(void *arg);
-extern enum API_ERRCODE api_refresh_login(void *arg);
+extern enum ERRCODE api_login(void *arg);
+extern enum ERRCODE api_refresh_login(void *arg);
 
 extern void api_post_register(const char *, const char *, api_action_fn_t, api_action_fn_t, api_apply_fn_t);
 extern void api_put_register(const char *, const char *, api_action_fn_t, api_action_fn_t, api_apply_fn_t);
@@ -221,7 +189,7 @@ extern int api_json_to_string(void *json, char **string);
 extern int api_json_add_string(void *json, const char *name, const char *value);
 extern int api_json_add_integer(void *json, const char *name, json_int_t value);
 
-extern void api_config_update(void *, void **[], void *[], void (*)(void *));
+extern void api_config_update(void *, void **[], void *[], void (*)(void *[], int));
 
 static INLINE void *api_v1_modify_list(void *json, const char *module_name, const char *list_name)
 {

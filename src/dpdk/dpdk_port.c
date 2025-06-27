@@ -43,6 +43,9 @@ struct dpdk_speed {
 };
 
 struct dpdk_port_st {
+    bool up[DPDK_ETHPORT_MAX];
+    uint64_t nic_rx_offload[DPDK_ETHPORT_MAX];
+    uint64_t nic_tx_offload[DPDK_ETHPORT_MAX];
     struct dpdk_speed speed;
     struct port_name port_name;
     struct rte_eth_conf eth_conf;
@@ -53,18 +56,27 @@ static struct dpdk_port_st s_dpdk_port = {
         .link_speeds = RTE_ETH_LINK_SPEED_AUTONEG,
         .rxmode = {
             .mq_mode = RTE_ETH_MQ_RX_RSS,
-            .offloads = RTE_ETH_RX_OFFLOAD_RSS_HASH,
+            .offloads = RTE_ETH_RX_OFFLOAD_RSS_HASH
+                        | RTE_ETH_RX_OFFLOAD_CHECKSUM
+                        | RTE_ETH_RX_OFFLOAD_VLAN,
         },
         .rx_adv_conf = {
             .rss_conf = {
                 .rss_key = s_rss_key,
                 .rss_key_len = ARR_NUMS(s_rss_key),
-                .rss_hf = (RTE_ETH_RSS_TCP | RTE_ETH_RSS_UDP),
+                .rss_hf = (/*RTE_ETH_RSS_IP |*/ RTE_ETH_RSS_TCP | RTE_ETH_RSS_UDP),
                 .algorithm = RTE_ETH_HASH_FUNCTION_DEFAULT,
             },
         },
         .txmode = {
             .mq_mode = RTE_ETH_MQ_TX_NONE,
+            .offloads = RTE_ETH_TX_OFFLOAD_VLAN_INSERT
+                        | RTE_ETH_TX_OFFLOAD_IPV4_CKSUM
+                        | RTE_ETH_TX_OFFLOAD_UDP_CKSUM
+                        | RTE_ETH_TX_OFFLOAD_TCP_CKSUM
+                        | RTE_ETH_TX_OFFLOAD_TCP_TSO
+                        | RTE_ETH_TX_OFFLOAD_UDP_TSO
+                        | RTE_ETH_TX_OFFLOAD_MULTI_SEGS,
         },
     },
     .speed = {
@@ -87,6 +99,99 @@ static struct dpdk_port_st s_dpdk_port = {
         .ex[15] = { .prefix = "UNKNOWN", },
     },
 };
+
+static uint64_t _dpdk_port_tx_offload_flags(uint64_t eth_tx_offloads)
+{
+	uint64_t offload = 0;
+
+    // L3 checksum
+    if (eth_tx_offloads & RTE_ETH_TX_OFFLOAD_IPV4_CKSUM) {
+        offload |= RTE_MBUF_F_TX_IPV4 | RTE_MBUF_F_TX_IP_CKSUM;
+    }
+
+    // L4 checksums
+    if (eth_tx_offloads & RTE_ETH_TX_OFFLOAD_TCP_CKSUM) {
+        offload |= RTE_MBUF_F_TX_TCP_CKSUM;
+    }
+
+    if (eth_tx_offloads & RTE_ETH_TX_OFFLOAD_UDP_CKSUM) {
+        offload |= RTE_MBUF_F_TX_UDP_CKSUM;
+    }
+
+    if (eth_tx_offloads & RTE_ETH_TX_OFFLOAD_SCTP_CKSUM) {
+        offload |= RTE_MBUF_F_TX_SCTP_CKSUM;
+    }
+
+    // TSO
+    if (eth_tx_offloads & RTE_ETH_TX_OFFLOAD_TCP_TSO) {
+        offload |= RTE_MBUF_F_TX_TCP_SEG;
+    }
+
+    // Outer IP checksum (tunnel)
+    if (eth_tx_offloads & RTE_ETH_TX_OFFLOAD_OUTER_IPV4_CKSUM) {
+        offload |= RTE_MBUF_F_TX_OUTER_IPV4 | RTE_MBUF_F_TX_OUTER_IP_CKSUM;
+    }
+
+    // Outer UDP checksum (tunnel)
+    if (eth_tx_offloads & RTE_ETH_TX_OFFLOAD_OUTER_UDP_CKSUM) {
+        offload |= RTE_MBUF_F_TX_OUTER_UDP_CKSUM | RTE_MBUF_F_TX_OUTER_IPV4;
+    }
+
+    // VLAN
+    if (eth_tx_offloads & RTE_ETH_TX_OFFLOAD_VLAN_INSERT) {
+        offload |= RTE_MBUF_F_TX_VLAN;
+    }
+
+    if (eth_tx_offloads & RTE_ETH_TX_OFFLOAD_QINQ_INSERT) {
+        offload |= RTE_MBUF_F_TX_QINQ;
+    }
+
+    // Tunnel TSO
+    if (eth_tx_offloads & RTE_ETH_TX_OFFLOAD_VXLAN_TNL_TSO) {
+        offload |= RTE_MBUF_F_TX_TUNNEL_VXLAN | RTE_MBUF_F_TX_TCP_SEG;
+    }
+
+    if (eth_tx_offloads & RTE_ETH_TX_OFFLOAD_GRE_TNL_TSO) {
+        offload |= RTE_MBUF_F_TX_TUNNEL_GRE | RTE_MBUF_F_TX_TCP_SEG;
+    }
+
+    if (eth_tx_offloads & RTE_ETH_TX_OFFLOAD_GENEVE_TNL_TSO) {
+        offload |= RTE_MBUF_F_TX_TUNNEL_GENEVE | RTE_MBUF_F_TX_TCP_SEG;
+    }
+
+    if (eth_tx_offloads & RTE_ETH_TX_OFFLOAD_IPIP_TNL_TSO) {
+        offload |= RTE_MBUF_F_TX_TUNNEL_IPIP | RTE_MBUF_F_TX_TCP_SEG;
+    }
+
+    if (eth_tx_offloads & RTE_ETH_TX_OFFLOAD_UDP_TNL_TSO) {
+        offload |= RTE_MBUF_F_TX_TUNNEL_UDP | RTE_MBUF_F_TX_TCP_SEG;
+    }
+
+    if (eth_tx_offloads & RTE_ETH_TX_OFFLOAD_IP_TNL_TSO) {
+        offload |= RTE_MBUF_F_TX_TUNNEL_IP | RTE_MBUF_F_TX_TCP_SEG;
+    }
+
+    // UDP Fragmentation Offload (UFO)
+    if (eth_tx_offloads & RTE_ETH_TX_OFFLOAD_UDP_TSO) {
+        offload |= RTE_MBUF_F_TX_UDP_SEG;
+    }
+
+    // SECURITY offload
+    if (eth_tx_offloads & RTE_ETH_TX_OFFLOAD_SECURITY) {
+        offload |= RTE_MBUF_F_TX_SEC_OFFLOAD;
+    }
+
+    if (eth_tx_offloads & RTE_ETH_TX_OFFLOAD_MACSEC_INSERT) {
+        offload |= RTE_MBUF_F_TX_MACSEC;
+    }
+
+    // TIMESTAMP
+    if (eth_tx_offloads & RTE_ETH_TX_OFFLOAD_SEND_ON_TIMESTAMP) {
+        offload |= RTE_MBUF_F_TX_IEEE1588_TMST;
+    }
+
+    return offload;
+}
 
 static int _dpdk_port_startup(int port)
 {
@@ -153,10 +258,9 @@ static int dpdk_port_name_init(void)
         }
 
         ex = &s_dpdk_port.speed.ex[speed_nums];
-        ex->type_nums += 1;
         ex->nums = port;
 
-        nbytes = snprintf(one->name, sizeof(one->name), "%s.%d", ex->prefix, ex->type_nums);
+        nbytes = snprintf(one->name, sizeof(one->name), "%s.%d", ex->prefix, ex->type_nums++);
         one->name[nbytes] = 0;
 
         pn->count += 1;
@@ -174,6 +278,7 @@ int dpdk_port_startup(int port)
 {
     int ret = 0;
     int retry = 0;
+    uint16_t mtu = 0;
     int max_queues = 0;
     int max_rx_desc = 0;
     int max_tx_desc = 0;
@@ -202,9 +307,13 @@ int dpdk_port_startup(int port)
 
     rte_memcpy(&conf, &s_dpdk_port.eth_conf, sizeof(conf));
     conf.rx_adv_conf.rss_conf.rss_hf &= dev.flow_type_rss_offloads;
-    if ((dev.tx_offload_capa & RTE_ETH_TX_OFFLOAD_MBUF_FAST_FREE) != 0) {
-        // conf.txmode.offloads |= RTE_ETH_TX_OFFLOAD_MBUF_FAST_FREE;
-    }
+    conf.rxmode.offloads &= dev.rx_offload_capa;
+    conf.rxmode.offloads &= ~RTE_ETH_RX_OFFLOAD_KEEP_CRC;
+    conf.txmode.offloads &= dev.tx_offload_capa;
+    conf.txmode.offloads &= ~RTE_ETH_TX_OFFLOAD_MBUF_FAST_FREE;
+
+    s_dpdk_port.nic_rx_offload[port] = conf.rxmode.offloads;
+    s_dpdk_port.nic_tx_offload[port] = _dpdk_port_tx_offload_flags(conf.txmode.offloads);
 
     max_queues = nc->cpu_count;
     max_rx_desc = MIN(DPDK_RX_DESC_DEFAULT, dev.rx_desc_lim.nb_max);
@@ -216,9 +325,16 @@ int dpdk_port_startup(int port)
         return -1;
     }
 
+    mtu = MIN(MAX(DPDK_PORT_MTU, dev.min_mtu), dev.max_mtu);
+    ret = dpdk_port_set_mtu(port, mtu);
+    if (ret != 0) {
+        LOG_ERROR("Failure to configure mtu: %s", strerror(-ret));
+        return -1;
+    }
+
     rx = dev.default_rxconf;
     rx.rx_drop_en = 1;
-    rx.offloads = conf.rxmode.offloads;
+    rx.offloads = 0;
 
     for (int i = 0; i < nc->cpu_count; i++) {
         int numa_id = nc->c2n[i].numa_id;
@@ -232,7 +348,7 @@ int dpdk_port_startup(int port)
     }
 
     tx = dev.default_txconf;
-    tx.offloads = conf.txmode.offloads;
+    tx.offloads = 0;
 
     for (int i = 0; i < nc->cpu_count; i++) {
         int numa_id = nc->c2n[i].numa_id;
@@ -249,6 +365,8 @@ int dpdk_port_startup(int port)
     if (ret != 0) {
         return -1;
     }
+
+    s_dpdk_port.up[port] = !0;
 
     ret = rte_eth_promiscuous_enable(port);
     if (ret != 0) {
@@ -277,7 +395,7 @@ uint16_t dpdk_port_by_name_get(const char *name)
 
     LOG_INFO("port name: %s", name);
     anchor = strrchr(name, '.');
-    if (anchor == NULL) {
+    if (UNLIKELY(anchor == NULL)) {
         LOG_ERROR("Interface name format error: %s", name);
         return (uint16_t)-1;
     }
@@ -285,13 +403,13 @@ uint16_t dpdk_port_by_name_get(const char *name)
     anchor += 1;
     tmp = anchor;
 
-    if (*tmp == 0) {
+    if (UNLIKELY(*tmp == 0)) {
         LOG_ERROR("Interface name format error: %s", name);
         return -1;
     }
 
     while (*tmp != 0) {
-        if ((!isdigit(*tmp))) {
+        if (UNLIKELY(!isdigit(*tmp))) {
             LOG_ERROR("Interface name format error: %s", name);
             return -1;
         }
@@ -302,14 +420,45 @@ uint16_t dpdk_port_by_name_get(const char *name)
     return atoi(anchor);
 }
 
-int dpdk_port_restart(int port)
+const char *dpdk_port_id_to_name(int port)
 {
-    return _dpdk_port_startup(port);
+    struct dpdk_port_st *st = &s_dpdk_port;
+
+    if (port > st->port_name.count) {
+        LOG_ERROR("Invalid port id(%d)", port);
+        return NULL;
+    }
+
+    return st->port_name.entrys[port].name;
+}
+
+uint64_t dpdk_port_rx_offload_get(int nic_number)
+{
+    return s_dpdk_port.nic_rx_offload[nic_number];
+}
+
+uint64_t dpdk_port_tx_offload_get(int nic_number)
+{
+    return s_dpdk_port.nic_tx_offload[nic_number];
+}
+
+bool dpdk_port_is_up(int port)
+{
+    return s_dpdk_port.up[port];
 }
 
 int dpdk_port_stop(int port)
 {
-    return rte_eth_dev_stop(port);
+    int ret = 0;
+
+    ret = rte_eth_dev_stop(port);
+    if (ret == 0) {
+        s_dpdk_port.up[port] = 0;
+    } else {
+        LOG_ERROR("Ethdev port (%d) stop failure", port);
+    }
+
+    return ret;
 }
 
 int dpdk_port_init(void)

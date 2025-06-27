@@ -24,6 +24,7 @@
 #include "log.h"
 #include "type.h"
 #include "macro.h"
+#include "dpdk_rcu.h"
 #include "dpdk_type.h"
 #include "dpdk_init.h"
 #include "dpdk_port.h"
@@ -102,6 +103,7 @@ int dpdk_init(int argc, char *argv[], void *output)
 
     _dpdk_info(info);
     dpdk_numa_cpu_init(info->numa_count, info->cpu_count);
+    dpdk_rcu_create();
 
     ret = dpdk_port_init();
     if (ret < 0) {

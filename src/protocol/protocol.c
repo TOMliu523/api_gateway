@@ -53,6 +53,5 @@ void protocol_destroy(void *arg)
 
     l2_thread_mac_destroy(header->mac);
     l2_thread_arp_table_destroy(header->at);
-    l3_thread_ipv4_destroy(header->ipv4);
     dpdk_free(header);
 }

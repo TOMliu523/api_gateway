@@ -7,43 +7,7 @@ submodule network {
         prefix "inet";
     }
 
-    container arp {
-         list items {
-            key "ip";
-            leaf type {
-                mandatory true;
-                type enumeration {
-                    enum IPv4 {
-                        value 4;
-                    }
-                    enum IPv6 {
-                        value 6;
-                    }
-                }
-            }
-
-            leaf ip {
-                mandatory true;
-                type union {
-                    type inet:ipv4-address;
-                    type inet:ipv6-address;
-                }
-                must "(../type='IPv4' and not(contains(., ':'))) or " +
-                    "(../type='IPv6' and contains(., ':'))" {
-                    error-message "ip address not match address format";
-                }
-            }
-
-            leaf mac {
-                mandatory true;
-                type string {
-                    pattern '[0-9a-zA-Z]{2}(:[0-9a-zA-Z]{2}){5}';
-                }
-            }
-        }
-    }
-
-    container interface {
+    container ipv4 {
         list entrys {
             key "name ip";
             leaf name {
@@ -53,18 +17,14 @@ submodule network {
             }
             leaf ip {
                 mandatory true;
-                type union {
-                    type inet:ipv4-address;
-                    type inet:ipv6-address;
-                }
+                type inet:ipv4-address;
             }
             leaf mask {
                 mandatory true;
-                type uint8;
-                must "(. <= 32 and not(contains(../ip, ':'))) or " +
-                    "(. <= 128 and contains(../ip, ':'))" {
-                        error-message "mask not match";
-                    }
+                type uint8 {
+                    range "0 .. 32";
+                }
+                description "A mask value from 0 to 32 inclusive.";
             }
             leaf type {
                 mandatory true;
@@ -75,6 +35,36 @@ submodule network {
                     enum IP_SECONDARY {
                         value 1;
                     }
+                }
+            }
+        }
+    }
+
+    container route_v4 {
+        list entrys {
+            key "net mask";
+
+            leaf net {
+                mandatory true;
+                type inet:ipv4-address;
+            }
+
+            leaf mask {
+                mandatory true;
+                type uint8 {
+                    range "0 .. 32";
+                }
+                description "A mask value from 0 to 32 inclusive.";
+            }
+
+            leaf nexthop {
+                mandatory true;
+                type inet:ipv4-address;
+            }
+
+            leaf interface_name {
+                type string {
+                    pattern '[-0-9a-zA-Z.]{3,63}';
                 }
             }
         }

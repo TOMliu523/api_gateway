@@ -65,6 +65,9 @@
 #define DPDK_ETHER_VLAN RTE_ETHER_TYPE_VLAN
 #define DPDK_ETHER_LLDP RTE_ETHER_TYPE_LLDP
 
+// IPv4
+#define DPDK_IPv4_ICMP
+
 // Byte order conversion
 #define dpdk_cpu_to_be_16(v) rte_cpu_to_be_16(v)
 #define dpdk_cpu_to_be_32(v) rte_cpu_to_be_32(v)
@@ -72,6 +75,14 @@
 #define dpdk_be_to_cpu_16(v) rte_be_to_cpu_16(v)
 #define dpdk_be_to_cpu_32(v) rte_be_to_cpu_32(v)
 #define dpdk_be_to_cpu_64(v) rte_be_to_cpu_64(v)
+
+#define DPDK_ARP_MBUF_LEN_MIN (sizeof(struct dpdk_eth) + sizeof(struct dpdk_arp))
+#define DPDK_IPV4_MBUF_LEN_MIN (sizeof(struct dpdk_eth) + sizeof(struct dpdk_ipv4))
+#define DPDK_IPV6_MBUF_LEN_MIN (sizeof(struct dpdk_eth) + sizeof(struct dpdk_ipv6))
+#define DPDK_ICMP_MBUF_LEN_MIN (DPDK_IPV4_MBUF_LEN_MIN + sizeof(struct dpdk_icmp))
+#define DPDK_ICMP6_MBUF_LEN_MIN (DPDK_IPV6_MBUF_LEN_MIN + sizeof(struct dpdk_icmp6))
+
+#define DPDK_HEADROOM(m) (&((struct dpdk_data *)(m))->headroom)
 
 union dpdk_ipv6_addr {
     struct rte_ipv6_addr addr;
@@ -102,13 +113,15 @@ struct dpdk_icmp6 {
 };
 
 enum PKT_MBUF_TYPE {
-    PKT_MBUF_INIT = 0,
+    PKT_MBUF_DEFAULT = 0, // data packet
     PKT_MBUF_GARP,
     PKT_MBUF_ARP,
+    PKT_MBUF_FRAG,
 };
 
 struct dpdk_headroom {
-    union {
+    union { // PKT_MBUF_DEFAULT
+        // host byte order
         struct {
             enum PKT_MBUF_TYPE type;
         };
