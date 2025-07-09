@@ -1,5 +1,6 @@
 build/*
 install/*
+.idea/*
 .vscode/*
 thirdparty/install/
 release/*

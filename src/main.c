@@ -4,6 +4,7 @@
  * description:
  ***********************************************/
 
+#include <time.h>
 #include <errno.h>
 #include <stdio.h>
 #include <fcntl.h>
@@ -116,11 +117,12 @@ static void root_fini(void)
     s_root = NULL;
 }
 
-static struct root *root_init(struct hw_info *info)
+static INLINE struct root *root_init(struct hw_info *info)
 {
     int ret = 0;
     size_t total_size = 0;
     struct root *root = NULL;
+    struct timespec ts = {0};
 
     total_size = sizeof(struct root);
     ret = posix_memalign((void **)&root, CACHE_LINE, total_size);
@@ -131,6 +133,8 @@ static struct root *root_init(struct hw_info *info)
 
     memset(root, 0, total_size);
 
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    root->startup_time = ts.tv_sec;
     memcpy(&root->hw_info, info, sizeof(*info));
 
     atexit(root_fini);

@@ -66,4 +66,3 @@ echo "${APP} -l ${CPU_LIST} -n ${CHANEL}"
 
 ${APP} -l ${CPU_LIST} -n ${CHANEL}
 #gdb ${APP}
-

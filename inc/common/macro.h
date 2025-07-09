@@ -24,8 +24,12 @@
 #endif // INLINE
 
 #ifndef FALLTHROUGH
-#define FALLTHROUGH __attribute__((fallthrough))
-#endif // FALLTHROUGH
+# if defined(__GNUC__) && __GNUC__ >= 7
+#  define FALLTHROUGH __attribute__((fallthrough))
+# else
+#  define FALLTHROUGH ((void)0)
+# endif
+#endif
 
 #ifndef PROC_INIT
 #define PROC_INIT __attribute__((constructor))
@@ -46,6 +50,14 @@
 #ifndef ALIGN_PACKED
 #define ALIGN_PACKED __attribute__((aligned(1)))
 #endif // ALIGN_PACKED
+
+#ifndef ALIGN_CACHE_LINE
+#define ALIGN_CACHE_LINE __attribute__((aligned(CACHE_LINE)))
+#endif // ALIGN_CACHE_LINE
+
+#ifndef ALIGN_PACKED_CACHE_LINE
+#define ALIGN_PACKED_CACHE_LINE __attribute__((__packed__, aligned(CACHE_LINE)))
+#endif // ALIGN_PACKED_CACHE_LINE
 
 #ifndef UNUSED
 #define UNUSED(x) __attribute__((__unused__))
@@ -88,6 +100,64 @@
         _a > _b > _a : _b; \
     })
 #endif // MAX
+
+#ifndef UNROLL_LOOP_8
+#define UNROLL_LOOP_8(__idx, _count, _body)                      \
+    do {                                                         \
+        typeof(_count) __idx = 0;                                \
+        typeof(_count) __n = (_count);                           \
+        switch (__n % 8) {                                       \
+        case 0: do { _body; __idx++;                             \
+                    FALLTHROUGH;                                 \
+        case 7: _body; __idx++;                                  \
+                    FALLTHROUGH;                                 \
+        case 6: _body; __idx++;                                  \
+                    FALLTHROUGH;                                 \
+        case 5: _body; __idx++;                                  \
+                    FALLTHROUGH;                                 \
+        case 4: _body; __idx++;                                  \
+                    FALLTHROUGH;                                 \
+        case 3: _body; __idx++;                                  \
+                    FALLTHROUGH;                                 \
+        case 2: _body; __idx++;                                  \
+                    FALLTHROUGH;                                 \
+        case 1: _body; __idx++;                                  \
+            } while (__idx < __n);                               \
+        }                                                        \
+    } while (0)
+#endif // UNROLL_LOOP_8
+
+#ifndef UNROLL_LOOP_4
+#define UNROLL_LOOP_4(__idx, _count, _body)                      \
+    do {                                                         \
+        typeof(_count) __idx = 0;                                \
+        typeof(_count) __n = (_count);                           \
+        switch (__n % 4) {                                       \
+        case 0: do { _body; __idx++;                             \
+                  FALLTHROUGH;                                   \
+        case 3: _body; __idx++;                                  \
+                  FALLTHROUGH;                                   \
+        case 2: _body; __idx++;                                  \
+                  FALLTHROUGH;                                   \
+        case 1: _body; __idx++;                                  \
+            } while (__idx < __n);                               \
+        }                                                        \
+    } while (0)
+#endif // UNROLL_LOOP_4
+
+#define UNROLL_LOOP_N(__i, _count, _factor, _body)                       \
+    do {                                                                 \
+        typeof(_count) __i = 0;                                          \
+        typeof(_count) __n = (_count);                                   \
+        for (; __i + (_factor - 1) < __n; __i += (_factor)) {            \
+            for (int __j = 0; __j < (_factor); ++__j) {                  \
+                do { _body; } while (0);                                 \
+            }                                                            \
+        }                                                                \
+        for (; __i < __n; ++__i) {                                       \
+            do { _body; } while (0);                                     \
+        }                                                                \
+    } while (0)
 
 #ifdef __x86_64
 #ifndef PAUSE

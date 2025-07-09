@@ -88,6 +88,25 @@ static struct dpdk_port_st s_dpdk_port = {
     },
 };
 
+static int _dpdk_port_startup(int port)
+{
+    int ret = 0;
+    int retry = 0;
+
+    for (;;) {
+        ret = rte_eth_dev_start(port);
+        if (ret == 0) {
+            return 0;
+        } else if (ret == -EAGAIN && retry < 3) { // 3 is an estimated number.
+            retry += 1;
+            continue;
+        } else {
+            LOG_ERROR("Failure port(%d) rte_eth_dev_start: %s", port, strerror(-ret));
+            return -1;
+        }
+    }
+}
+
 static int dpdk_port_name_init(void)
 {
     int ret = 0;
@@ -160,6 +179,7 @@ int dpdk_port_startup(int port)
     int max_tx_desc = 0;
     void * const *pool = NULL;
     struct numa_cpu *nc = NULL;
+    struct rte_eth_link link = {0};
     struct rte_eth_conf conf = {0};
     struct rte_eth_rxconf rx = {0};
     struct rte_eth_txconf tx = {0};
@@ -225,17 +245,9 @@ int dpdk_port_startup(int port)
         }
     }
 
-    for (;;) {
-        ret = rte_eth_dev_start(port);
-        if (ret == 0) {
-            break;
-        } else if (ret == -EAGAIN && retry < 3) { // 3 is an estimated number.
-            retry += 1;
-            continue;
-        } else {
-            LOG_ERROR("Failure port(%d) rte_eth_dev_start: %s", port, strerror(-ret));
-            return -1;
-        }
+    ret = _dpdk_port_startup(port);
+    if (ret != 0) {
+        return -1;
     }
 
     ret = rte_eth_promiscuous_enable(port);
@@ -292,7 +304,7 @@ uint16_t dpdk_port_by_name_get(const char *name)
 
 int dpdk_port_restart(int port)
 {
-    return rte_eth_dev_start(port);
+    return _dpdk_port_startup(port);
 }
 
 int dpdk_port_stop(int port)
@@ -315,12 +327,12 @@ int dpdk_port_init(void)
         return -1;
     }
 
-    /*RTE_ETH_FOREACH_DEV(port) {
+    RTE_ETH_FOREACH_DEV(port) {
         ret = dpdk_port_startup(port);
-        if (ret < 0) {
+        if (ret != 0) {
             return -1;
         }
-    }*/
+    }
 
     return 0;
 }

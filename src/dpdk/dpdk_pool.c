@@ -15,7 +15,7 @@
 #include "dpdk_common.h"
 
 #define DPDK_PKTMBUF_CACHE_SIZE 256
-#define DPDK_MAX_DESCRIPTORS_PER_CPU 100000
+#define DPDK_MAX_DESCRIPTORS_PER_CPU 200000
 
 struct dpdk_pool_st {
     void *pktmbuf_pool[NUMA_MAX];
@@ -52,7 +52,7 @@ int dpdk_pool_pktmbuf_create(void)
                                          sizeof(struct dpdk_headroom),
                                          DPDK_DATA_LEN_MAX,
                                          n2c[i].hw_numa_id);
-        if (tmp == NULL) {
+        if (UNLIKELY(tmp == NULL)) {
             LOG_ERROR("Failure NUMA(%d) rte_pktmbuf_pool_create: %s", i, strerror(rte_errno));
             goto _quit;
         }

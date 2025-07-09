@@ -45,7 +45,7 @@ submodule network {
 
     container interface {
         list entrys {
-            key "name";
+            key "name ip";
             leaf name {
                 type string {
                     pattern '[-0-9a-zA-Z.]{3,63}';
@@ -56,6 +56,25 @@ submodule network {
                 type union {
                     type inet:ipv4-address;
                     type inet:ipv6-address;
+                }
+            }
+            leaf mask {
+                mandatory true;
+                type uint8;
+                must "(. <= 32 and not(contains(../ip, ':'))) or " +
+                    "(. <= 128 and contains(../ip, ':'))" {
+                        error-message "mask not match";
+                    }
+            }
+            leaf type {
+                mandatory true;
+                type enumeration {
+                    enum IP_MASTER {
+                        value 0;
+                    }
+                    enum IP_SECONDARY {
+                        value 1;
+                    }
                 }
             }
         }

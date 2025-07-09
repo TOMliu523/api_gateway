@@ -20,6 +20,9 @@
 
 #include "macro.h"
 
+// port
+#define DPDK_ETHPORT_MAX RTE_MAX_ETHPORTS
+
 #ifndef DPDK_DATA_LEN_MAX
 #define DPDK_DATA_LEN_MAX RTE_MBUF_DEFAULT_BUF_SIZE
 #endif // DPDK_DATA_LEN_MAX
@@ -48,9 +51,11 @@
 #define dpdk_arp rte_arp_hdr
 #define dpdk_ipv4 rte_ipv4_hdr
 #define dpdk_ipv6 rte_ipv6_hdr
+#define dpdk_ndp rte_ndp_hdr
 #define dpdk_icmp rte_icmp_hdr
 #define dpdk_tcp rte_tcp_hdr
 #define dpdk_udp rte_udp_hdr
+#define dpdk_arp_data rte_arp_ipv4
 
 // Ethernet frame types
 #define DPDK_ETHER_IPV4 RTE_ETHER_TYPE_IPV4
@@ -61,9 +66,22 @@
 #define DPDK_ETHER_LLDP RTE_ETHER_TYPE_LLDP
 
 // Byte order conversion
-#define dpdk_to_be_16(v) rte_cpu_to_be_16(v)
-#define dpdk_to_be_32(v) rte_cpu_to_be_32(v)
-#define dpdk_to_be_64(v) rte_cpu_to_be_64(v)
+#define dpdk_cpu_to_be_16(v) rte_cpu_to_be_16(v)
+#define dpdk_cpu_to_be_32(v) rte_cpu_to_be_32(v)
+#define dpdk_cpu_to_be_64(v) rte_cpu_to_be_64(v)
+#define dpdk_be_to_cpu_16(v) rte_be_to_cpu_16(v)
+#define dpdk_be_to_cpu_32(v) rte_be_to_cpu_32(v)
+#define dpdk_be_to_cpu_64(v) rte_be_to_cpu_64(v)
+
+union dpdk_ipv6_addr {
+    struct rte_ipv6_addr addr;
+    __uint128_t big_addr;
+};
+
+union dpdk_ip {
+    uint32_t ipv4;
+    union dpdk_ipv6_addr ipv6;
+};
 
 // type
 struct dpdk_icmp6 {
@@ -83,10 +101,16 @@ struct dpdk_icmp6 {
     } icmp6_data;
 };
 
+enum PKT_MBUF_TYPE {
+    PKT_MBUF_INIT = 0,
+    PKT_MBUF_GARP,
+    PKT_MBUF_ARP,
+};
+
 struct dpdk_headroom {
     union {
         struct {
-
+            enum PKT_MBUF_TYPE type;
         };
         uint8_t reserve[2 * CACHE_LINE];
     };
