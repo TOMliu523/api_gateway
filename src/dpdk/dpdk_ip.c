@@ -41,7 +41,7 @@ void *dpdk_ip_frag_table_create(uint64_t max_cycles, int hw_numa_id)
         return NULL;
     }
 
-    memset(queue->row, 0, sizeof(*queue));
+    memset(queue, 0, sizeof(*queue));
 
     tls_handle.table = table;
     tls_handle.queue = queue;
