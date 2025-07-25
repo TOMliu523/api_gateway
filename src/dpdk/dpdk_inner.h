@@ -33,7 +33,7 @@ struct numa_cpu {
     struct cpu_to_numa c2n[CPU_MAX];
 };
 
-extern void dpdk_numa_cpu_init(int, int);
+extern int dpdk_numa_cpu_init(int);
 extern int dpdk_cpu_count_get(void);
 extern int dpdk_numa_count_get(void);
 extern struct numa_cpu *dpdk_numa_cpu_get(void);

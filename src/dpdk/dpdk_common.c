@@ -26,14 +26,38 @@ struct numa_cpu *dpdk_numa_cpu_get(void)
     return &s_numa_cpu;
 }
 
-void dpdk_numa_cpu_init(int numa_count, int cpu_count)
+int dpdk_numa_cpu_init(int cpu_count)
 {
     int lcore_id = 0;
+    int numa_count = 0;
     int numa[NUMA_MAX] = {0};
+    int numa_id[NUMA_MAX] = {0};
     struct numa_cpu *nc = &s_numa_cpu;
 
     if (nc->inited) {
-        return;
+        return nc->numa_count;
+    }
+
+    nc->cpu_count = cpu_count;
+    RTE_LCORE_FOREACH(lcore_id) {
+        int cpu_lcore = rte_lcore_index(lcore_id);
+        struct cpu_to_numa *c2n = &nc->c2n[cpu_lcore];
+
+        c2n->hw_cpu_id = lcore_id;
+        c2n->cpu_id = cpu_lcore;
+        c2n->hw_numa_id = rte_lcore_to_socket_id(lcore_id);
+        c2n->numa_cpu_id = numa[c2n->hw_numa_id]++;
+    }
+
+    for (int i = 0; i < NUMA_MAX; i++) {
+        if (numa[i] != 0) {
+            numa_id[i] = numa_count++;
+        }
+    }
+
+    for (int i = 0; i < cpu_count; i++) {
+        struct cpu_to_numa *c2n = &nc->c2n[i];
+        c2n->numa_id = numa_id[c2n->hw_numa_id];
     }
 
     nc->numa_count = numa_count;
@@ -58,26 +82,6 @@ void dpdk_numa_cpu_init(int numa_count, int cpu_count)
         n2c->count = count;
     }
 
-    nc->cpu_count = cpu_count;
-    RTE_LCORE_FOREACH(lcore_id) {
-        int cpu_lcore = rte_lcore_index(lcore_id);
-        struct cpu_to_numa *c2n = &nc->c2n[cpu_lcore];
-
-        c2n->hw_cpu_id = lcore_id;
-        c2n->cpu_id = cpu_lcore;
-        c2n->hw_numa_id = rte_lcore_to_socket_id(lcore_id);
-        for (int i = 0; i < NUMA_MAX; i++) {
-            if (c2n->hw_numa_id == rte_socket_id_by_idx(i)) {
-                c2n->numa_id = i;
-                break;
-            }
-        }
-    }
-
-    for (int i = 0; i < cpu_count; i++) {
-        struct cpu_to_numa *one = &nc->c2n[i];
-        one->numa_cpu_id = numa[one->numa_id]++;
-    }
-
     nc->inited = 1;
+    return numa_count;
 }

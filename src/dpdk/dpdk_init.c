@@ -38,8 +38,8 @@ static int _dpdk_memory_info(const struct rte_memseg_list *msl, const struct rte
     struct hw_info *info = arg;
 
     if (msl != NULL) {
-        info->hugepage_size = msl->page_sz;
-        info->total_memory += msl->len;
+        info->hugepage_size[msl->socket_id] = msl->page_sz;
+        info->total_memory[msl->socket_id] = msl->len;
     }
 
     return 0;
@@ -47,7 +47,6 @@ static int _dpdk_memory_info(const struct rte_memseg_list *msl, const struct rte
 
 static INLINE void _dpdk_info(struct hw_info *info)
 {
-    info->numa_count = rte_socket_count();
     info->cpu_count = rte_lcore_count();
     info->nic_count = rte_eth_dev_count_avail();
     rte_memseg_walk(_dpdk_memory_info, info);
@@ -102,7 +101,8 @@ int dpdk_init(int argc, char *argv[], void *output)
     rte_srand(rte_rdtsc());
 
     _dpdk_info(info);
-    dpdk_numa_cpu_init(info->numa_count, info->cpu_count);
+    info->numa_count = dpdk_numa_cpu_init(info->cpu_count);
+
     dpdk_rcu_create();
 
     ret = dpdk_port_init();

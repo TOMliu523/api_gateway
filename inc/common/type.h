@@ -102,8 +102,8 @@ struct hw_info {
     int numa_count;
     int cpu_count;
     int nic_count;
-    uint64_t total_memory;
-    uint64_t hugepage_size;
+    uint64_t total_memory[NUMA_MAX];
+    uint64_t hugepage_size[NUMA_MAX];
 };
 
 struct root {
