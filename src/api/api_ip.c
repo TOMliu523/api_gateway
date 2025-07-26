@@ -379,7 +379,7 @@ static INLINE int _api_iface_ipv4_manage_add(struct root *root, void *ipv4_manag
     }
 
     numa_count = root->hw_info.numa_count;
-    for (int i = 1; i < numa_count; i++) {
+    for (int i = 0; i < numa_count; i++) {
         one = root->dpdk_thread[i];
         if (i == dp->numa_id) {
             continue;
@@ -426,7 +426,7 @@ static int _api_iface_route_table_add(struct root *root, void *route[],
             continue;
         }
 
-        ret = route_conf_create_and_append(&route[i], &route[dp->numa_id], NULL, 0, root->dpdk_thread[i]->hw_numa_id, arg);
+        ret = route_conf_create_and_append(&route[i], route[dp->numa_id], NULL, 0, root->dpdk_thread[i]->hw_numa_id, arg);
         if (ret != 0) {
             goto _quit;
         }
