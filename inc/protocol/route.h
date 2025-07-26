@@ -37,17 +37,17 @@ struct route_item {
 };
 
 extern int route_conf_create_and_append(void **dst,
-										void *src,
-										const struct route_item *item,
-										int count,
-										int hw_numa_id,
-										const void *arg);
+                                        void *src,
+                                        const struct route_item *item,
+                                        int count,
+                                        int hw_numa_id,
+                                        const void *arg);
 extern int route_conf_create_and_delete(void **dst,
-										void *src,
-										const struct route_item *items,
-										int count,
-										int hw_numa_id,
-									    bool is_route);
+                                        void *src,
+                                        const struct route_item *items,
+                                        int count,
+                                        int hw_numa_id,
+                                        bool is_route);
 extern void route_conf_table_get(void *src, struct route_item **item, int *count);
 extern void route_conf_destroy(void *ptr);
 extern void route_conf_update_lock(void);
