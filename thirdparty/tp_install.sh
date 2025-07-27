@@ -103,6 +103,16 @@ install_lib \
     "install libmongoose.a ${INSTALL}/lib"
 
 install_lib \
+    timeout-master.zip \
+    ${INSTALL}/lib/libtimeout.a \
+    "make" \
+    "ar -cr libtimeout.a timeout.o" \
+    "mkdir -p ${INSTALL}/include" \
+    "mkdir -p ${INSTALL}/lib" \
+    "install timeout.h ${INSTALL}/include" \
+    "install libtimeout.a ${INSTALL}/lib"
+
+install_lib \
     LuaJIT-2.1.zip \
     ${INSTALL}/lib/libluajit-5.1.so \
     "make -j ${PROC}" \
