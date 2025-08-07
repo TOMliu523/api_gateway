@@ -69,13 +69,13 @@ static INLINE uint16_t util_cksum_incr_update_multi(uint16_t old_cksum, const ui
 {
     uint32_t cksum = ~old_cksum & 0xFFFF;
 
-    for (int i = 0; i < count; i++) {
+    UNROLL_LOOP_8(i, count, {
         uint16_t old_word = word[2 * i];
         uint16_t new_word = word[2 * i + 1];
 
         cksum += (~old_word & 0xFFFF) + new_word;
         cksum = (cksum & 0xFFFF) + (cksum >> 16);
-    }
+    });
 
     cksum = (cksum & 0xFFFF) + (cksum >> 16);
     uint16_t result = (uint16_t)~cksum;

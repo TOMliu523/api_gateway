@@ -31,12 +31,6 @@ struct route_table {
 	struct route_item store[L3_ROUTE_ITEM_MAX];
 };
 
-struct route_ctl {
-    int numa_count;
-    struct dpdk_lpm *numa_route[NUMA_MAX];
-};
-
-static struct route_ctl s_route_ctl;
 static __thread struct route_table *tls_route = NULL;
 // Lock protecting concurrent writes by config thread & per-NUMA threads
 // Read operations are lockless
@@ -185,7 +179,7 @@ static int _route_conf_add_check(struct route_table *route, const struct route_i
          * Check for the existence of a directly connected route.
          */
         do {
-            if (route == NULL) {
+            if (route == NULL || one->interface == L3_INTERFACE_INVALID) {
                 break;
             }
 
@@ -218,6 +212,10 @@ static int _route_conf_add_check(struct route_table *route, const struct route_i
          * The address is neither a broadcast address nor a multicast address.
          */
         do {
+            if (route == NULL || one->interface == L3_INTERFACE_INVALID) {
+                break;
+            }
+
             uint32_t nexthop = dpdk_be_to_cpu_32(one->nexthop);
 
             // check multicast address
@@ -250,6 +248,10 @@ static int _route_conf_add_check(struct route_table *route, const struct route_i
          * No local IP references
          */
         do {
+            if (one->interface == L3_INTERFACE_INVALID) {
+                break;
+            }
+
             if (l3_conf_ipv4_manage_ip_is_local(arg, one->nexthop, one->interface)) {
                 inet_ntop(AF_INET, &one->nexthop, ip_str, sizeof(ip_str));
                 LOG_ERROR("The next hop is a local IP(%s) address.", ip_str);
@@ -290,7 +292,7 @@ static int _route_conf_del_check(const struct route_table *route, const struct r
 
         if (!hit) {
             inet_ntop(AF_INET, &store->dst_subnet, ip_str, sizeof(ip_str));
-            LOG_ERROR("Such a subnet(%s) and netmask(%d) combination does not exist.", ip_str, store->interface);
+            LOG_ERROR("Such a subnet(%s) and netmask(%d) combination does not exist.", ip_str, store->mask);
             return ERRCODE_SUBNET_NO_EXIST;
         }
 
@@ -411,6 +413,7 @@ int route_conf_create_and_delete(void **dst, void *src, const struct route_item 
     ret = _route_conf_delete(*dst, route, items, count, is_route);
     if (UNLIKELY(ret != 0)) {
         _route_conf_destroy(*dst);
+        *dst = NULL;
         return ret;
     }
 

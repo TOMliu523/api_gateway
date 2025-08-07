@@ -267,35 +267,40 @@ _quit:
     exit(EXIT_FAILURE);
 }
 
-static INLINE void _dp_time_update(void)
+static INLINE void _dp_time_update(double inv_hz, double inv_hz_ms)
 {
     tls_dp->timer_cycles = dpdk_timer_cycles();
-    tls_dp->off_time = tls_dp->timer_cycles / tls_dp->hz_per_second;
+    tls_dp->off_time = tls_dp->timer_cycles * inv_hz;
+    tls_dp->off_time_ms = tls_dp->timer_cycles * inv_hz_ms;
 }
 
 static INLINE void _dp_mbuf_send(const uint16_t ports[], int count)
 {
-    struct rte_eth_stats stat = {0};
+    int cnt = 0;
+    uint16_t port = 0;
+    struct pkt_tx *tx = NULL;
 
-    for (int i = 0; i < count; i++) {
-        uint16_t port = ports[i];
-        struct pkt_tx *tx = &tls_tx[port];
+    UNROLL_LOOP_8(i, count, {
+        port = ports[i];
+        tx = &tls_tx[port];
+        cnt = tx->count;
 
-        if (tx->count != 0) {
-            int nums = dpdk_pktmbuf_tx(port, tls_thread_id, tx->data, tx->count);
-            if (UNLIKELY(nums != tx->count)) {
-                dpdk_pktmbuf_push(tx->data + nums, tx->count - nums);
+        if (cnt != 0) {
+            int nums = dpdk_pktmbuf_tx(port, tls_thread_id, tx->data, cnt);
+            if (UNLIKELY(nums != cnt)) {
+                dpdk_pktmbuf_push(tx->data + nums, cnt - nums);
             }
 
             tx->count = 0;
         }
-    }
+    });
 }
 
 static INLINE void _dp_mbuf_drop(void)
 {
-    if (tls_drop->count != 0) {
-        dpdk_pktmbuf_push(tls_drop->data, tls_drop->count);
+    int cnt = tls_drop->count;
+    if (cnt != 0) {
+        dpdk_pktmbuf_push(tls_drop->data, cnt);
         tls_drop->count = 0;
     }
 }
@@ -304,6 +309,8 @@ int dp_startup(void *arg)
 {
     int count = 0;
     int port_nums = 0;
+    double inv_hz = 0;
+    double inv_hz_ms = 0;
     int count_rx_per = 0;
     const uint16_t *ports = NULL;
     const struct iface *iface = NULL;
@@ -316,6 +323,9 @@ int dp_startup(void *arg)
      */
     _dp_init(arg);
 
+    inv_hz = 1.0 / (double) tls_dp->hz_per_second;
+    inv_hz_ms = 1000.0 / (double) tls_dp->hz_per_second;
+
     for (;;) {
         iface = rcu_dereference(tls_th_cfg->iface);
 
@@ -323,13 +333,13 @@ int dp_startup(void *arg)
         port_nums = iface->nums;
         count_rx_per = ARR_NUMS(mbuf) / port_nums;
 
-        _dp_time_update();
+        _dp_time_update(inv_hz, inv_hz_ms);
 
         for (int i = 0; i < DP_LOOP_MAX; i++) {
             count = 0;
-            for (int j = 0; j < port_nums; j++) {
+            UNROLL_LOOP_8(j, port_nums, {
                 count += dpdk_pktmbuf_rx(ports[j], tls_thread_id, mbuf + count, count_rx_per);
-            }
+            });
 
             if (count != 0) {
                 l2_process(mbuf, count);

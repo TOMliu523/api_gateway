@@ -8,6 +8,7 @@
 #define __DPDK_TYPE_H__
 
 #include <stdint.h>
+#include <linux/icmpv6.h>
 
 #include <rte_ip.h>
 #include <rte_arp.h>
@@ -19,9 +20,7 @@
 #include <rte_mempool.h>
 
 #include "macro.h"
-
-// port
-#define DPDK_ETHPORT_MAX RTE_MAX_ETHPORTS
+#include "dpdk_limits.h"
 
 #ifndef DPDK_DATA_LEN_MAX
 #define DPDK_DATA_LEN_MAX RTE_MBUF_DEFAULT_BUF_SIZE
@@ -96,27 +95,16 @@ union dpdk_ip {
 
 // type
 struct dpdk_icmp6 {
-    uint8_t icmp6_type;
-    uint8_t icmp6_code;
-    uint16_t icmp6_chsum;
-
-    union {
-        uint32_t un_data32[1];
-        uint32_t un_data16[2];
-        uint8_t un_data8[4];
-
-        struct {
-            uint16_t id;
-            uint16_t sequence;
-        } echo;
-    } icmp6_data;
+    struct icmp6hdr icmp6_hdr;
+	struct in6_addr target;
+	__u8 opt[0];
 };
 
 enum PKT_MBUF_TYPE {
     PKT_MBUF_DEFAULT = 0, // data packet
     PKT_MBUF_GARP,
     PKT_MBUF_ARP,
-    PKT_MBUF_FRAG,
+    PKT_MBUF_NDP,
 };
 
 struct dpdk_headroom {
@@ -124,6 +112,28 @@ struct dpdk_headroom {
         // host byte order
         struct {
             enum PKT_MBUF_TYPE type;
+            uint8_t l2_type;
+            uint8_t l3_type;
+            uint8_t l4_type;
+
+            union {
+                struct dpdk_eth *eth;
+                void *l2;
+            };
+
+            union {
+                struct dpdk_ipv4 *ipv4;
+                struct dpdk_ipv6 *ipv6;
+                struct dpdk_arp *arp;
+                void *l3;
+            };
+
+            union {
+                struct dpdk_tcp *tcp;
+                struct dpdk_icmp6 icmp6;
+                struct dpdk_icmp *icmp;
+                void *l4;
+            };
         };
         uint8_t reserve[2 * CACHE_LINE];
     };

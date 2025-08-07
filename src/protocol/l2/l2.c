@@ -575,6 +575,23 @@ int l2_gratuitous_arp_gen(struct dpdk_mbuf *mbuf, uint16_t port, uint32_t addr, 
     return 0;
 }
 
+int l2_neighbor_solicitation_gen(struct dpdk_mbuf *mbuf, uint16_t port, const union dpdk_ipv6_addr *addr, struct dpdk_mac *mac)
+{
+    struct dpdk_eth *eth = NULL;
+    struct dpdk_ipv6 *ipv6 = NULL;
+    struct dpdk_icmp6 *icmp6 = NULL;
+
+    eth = dpdk_append(mbuf, sizeof(struct dpdk_eth) + sizeof(struct dpdk_ipv6) + sizeof(struct dpdk_icmp6), void *);
+    if (UNLIKELY(eth == NULL)) {
+        LOG_ERROR("There is not enough tailroom space in the last segment.");
+        return -1;
+    }
+
+    mbuf->port = port;
+
+    return 0;
+}
+
 void l2_process(void *data[], int count)
 {
     struct dpdk_eth *eth = NULL;
@@ -601,9 +618,9 @@ void l2_process(void *data[], int count)
             case DPDK_ETHER_IPV4:
                 tls_ipv4->data[tls_ipv4->count++] = mbuf;
                 break;
-            /*case DPDK_ETHER_IPV6:
+            case DPDK_ETHER_IPV6:
                 tls_ipv6->data[tls_ipv6->count++] = mbuf;
-                break;*/
+                break;
             default:
                 tls_drop->data[tls_drop->count++] = mbuf;
                 break;

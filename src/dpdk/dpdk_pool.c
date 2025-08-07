@@ -15,7 +15,6 @@
 #include "dpdk_common.h"
 
 #define DPDK_PKTMBUF_CACHE_SIZE 256
-#define DPDK_MAX_DESCRIPTORS_PER_CPU 250000
 #define DPDK_INDIRECT_PKTMBUF_MAX 8192
 
 struct dpdk_pool_st {

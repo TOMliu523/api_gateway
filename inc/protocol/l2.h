@@ -42,6 +42,7 @@ extern void l2_thread_arp_table_destroy(void *);
 extern void *l2_thread_arp_table_create(int, int, int);
 extern int l2_arp_mac_get(struct dpdk_mac *mac, int port, uint32_t be_ip);
 extern int l2_gratuitous_arp_gen(struct dpdk_mbuf *mbuf, uint16_t port, uint32_t addr, struct dpdk_mac *mac);
+extern int l2_neighbor_solicitation_gen(struct dpdk_mbuf *mbuf, uint16_t port, const union dpdk_ipv6_addr *addr, struct dpdk_mac *mac);
 
 extern void l2_process(void **data, int count);
 

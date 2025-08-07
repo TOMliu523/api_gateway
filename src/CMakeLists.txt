@@ -43,7 +43,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
                       ${DPDK}
                       ${PROTOCOL}
                       ${DATAPLANE}
-                      -L${TP_LIB} -lmongoose
+                      -L${TP_LIB} -lmongoose -ltimeout
                       -Wl,--no-whole-archive
                       PkgConfig::LIBYANG
                       PkgConfig::SYSREPO

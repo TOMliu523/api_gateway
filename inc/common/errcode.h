@@ -38,7 +38,8 @@
     XX(ROUTE_LOCAL_IP, 303, "Nexthop is local ip") \
     XX(ROUTE_NEXTHOP_INVALID, 304, "Nexthop invalid") \
     XX(SUBNET_NO_EXIST, 305, "Subnext no exist") \
-    XX(ROUTE_REFERENCED, 306, "Route referenced")
+    XX(ROUTE_REFERENCED, 306, "Route referenced") \
+    XX(SUBNET_INVALID, 307, "Subnet invalid")
 
 enum ERRCODE {
 #define ERRCODE(code, value, msg) ERRCODE_##code = value,

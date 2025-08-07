@@ -2,8 +2,8 @@
 cmake_minimum_required(VERSION 3.20)
 project(api_gateway)
 
-set(CMAKE_C_FLAGS "-std=gnu99 -Werror -mssse3 -ggdb -mrtm")
-#set(CMAKE_C_FLAGS "-std=gnu99 -Werror -mssse3 -Ofast -mrtm")
+#set(CMAKE_C_FLAGS "-std=gnu99 -Werror -msse4.2 -mssse3 -ggdb -mrtm")
+set(CMAKE_C_FLAGS "-std=gnu99 -Werror -msse4.2 -mssse3 -g -Ofast -mrtm")
 set(CMAKE_VERBOSE_MAKEFILE ON)
 
 set(SRC ${PROJECT_SOURCE_DIR}/src)

@@ -16,6 +16,8 @@
 #include "protocol.h"
 #include "dpdk_rcu.h"
 #include "dpdk_fib.h"
+#include "dpdk_hash.h"
+#include "dpdk_fib6.h"
 #include "dpdk_core.h"
 #include "dpdk_icmp.h"
 #include "dpdk_common.h"
@@ -24,6 +26,8 @@
 // Big Endian ip
 #define L3_IPv4_BUCKET_IDX(x) ((x) >> 16)
 #define L3_IPv4_BUCKET_MAX (1 << 16)
+
+#define L3_IPv6_BUCKET_MAX (1 << 16)
 
 struct ipv4_manage {
     int ip_count;
@@ -37,6 +41,15 @@ struct ipv4_manage {
     struct list_head head[L3_IPv4_BUCKET_MAX];
     struct ipv4_info *master[DPDK_ETHPORT_MAX];
     struct ipv4_info store[L3_IPv4_BUCKET_MAX];
+};
+
+struct ipv6_manage {
+    int ip_count;
+    int nic_count;
+    struct dpdk_fib6 *fib[DPDK_ETHPORT_MAX];
+    struct dpdk_hash *hash[DPDK_ETHPORT_MAX];
+    struct ipv6_info *master[DPDK_ETHPORT_MAX];
+    struct ipv6_info store[L3_IPv4_BUCKET_MAX];
 };
 
 static dpdk_spinlock_t s_spinlock[NUMA_MAX] = {0};
@@ -57,9 +70,38 @@ static void _l3_conf_ipv4_manage_destroy(struct ipv4_manage *manage)
     dpdk_free(manage);
 }
 
-static int _l3_conf_ipv4_manage_add(struct ipv4_manage *manage, const struct ipv4_info *one, int nums)
+static void _l3_conf_ipv6_manage_destroy(struct ipv6_manage *manage)
+{
+    if (manage == NULL) {
+        return;
+    }
+
+    for (int i = 0; i < manage->nic_count; i++) {
+        dpdk_hash_destroy(manage->hash[i]);
+        dpdk_fib6_destroy(manage->fib[i]);
+    }
+
+    dpdk_free(manage);
+}
+
+static int _l3_conf_ipv6_info_cmp(const void *key1, const void *key2, size_t len)
+{
+    const __uint128_t ip1 = *(const __uint128_t *)&key1;
+    const __uint128_t ip2 = *(const __uint128_t *)&key2;
+
+    if (ip1 == ip2) {
+        return 0;
+    } else if (ip1 < ip2) {
+        return -1;
+    } else {
+        return 1;
+    }
+}
+
+static int _l3_conf_ipv4_manage_add(struct ipv4_manage *manage, const struct ipv4_info *one)
 {
     int ret = 0;
+    int nums = 0;
     uint32_t host_ip = 0;
     char ip_str[CACHE_LINE] = "";
     struct ipv4_info *cur = NULL;
@@ -68,6 +110,7 @@ static int _l3_conf_ipv4_manage_add(struct ipv4_manage *manage, const struct ipv
     int idx = L3_IPv4_BUCKET_IDX(one->ip);
     struct list_head *head = &manage->head[idx];
 
+    nums = manage->ip_count;
     store = &manage->store[nums];
     *store = *one;
     INIT_LIST_HEAD(&store->node);
@@ -102,6 +145,37 @@ static int _l3_conf_ipv4_manage_add(struct ipv4_manage *manage, const struct ipv
     }
 
     list_add(&store->node, prev);
+    manage->ip_count = nums + 1;
+
+    return 0;
+}
+
+static int _l3_conf_ipv6_manage_add(struct ipv6_manage *manage, const struct ipv6_info *one)
+{
+    int ret = 0;
+    int nums = 0;
+    struct ipv6_info *store = NULL;
+
+    nums = manage->ip_count;
+    store = &manage->store[nums];
+    *store = *one;
+
+    if (manage->master[one->port] == NULL && store->type == IP_MASTER) {
+        manage->master[one->port] = store;
+    }
+
+    ret = dpdk_fib6_add(manage->fib[one->port], &store->ipv6, store->mask, nums);
+    if (UNLIKELY(ret != 0)) {
+        LOG_ERROR("Failure dpdk_fib6_add: %s", strerror(-ret));
+        return ERRCODE_INNER;
+    }
+
+    ret = dpdk_hash_add_kv(manage->hash[one->port], &one->ipv6, store);
+    if (UNLIKELY(ret != 0)) {
+        LOG_ERROR("Failure dpdk_hash_add_kv: %s", strerror(-rte_errno));
+        return ERRCODE_INNER;
+    }
+
     return 0;
 }
 
@@ -129,6 +203,7 @@ static int _l3_conf_ipv4_manage_add_check(struct ipv4_manage *manage, const stru
 
     for (int i = 0; i < count; i++) {
         one = &info[i];
+
         ret = dpdk_fib_lookup(manage->fib[one->port], (uint32_t *)&info->ip, &next_hop, 1);
         if (UNLIKELY(ret != 0)) {
             LOG_ERROR("Inner error.");
@@ -139,6 +214,43 @@ static int _l3_conf_ipv4_manage_add_check(struct ipv4_manage *manage, const stru
             mask = one->mask;
             inet_ntop(AF_INET, &one->ip, ip_str, sizeof(ip_str));
             LOG_ERROR("IP address conflict — another IP(%s/%d) in the same subnet is already configured.", ip_str, mask);
+            return ERRCODE_SUBNET_EXIST;
+        }
+    }
+
+    return 0;
+}
+
+static int _l3_conf_ipv6_manage_add_check(struct ipv6_manage *manage, const struct ipv6_info *info, int count)
+{
+    int ret = 0;
+    uint8_t mask = 0;
+    uint64_t next_hop = 0;
+    char ip_str[CACHE_LINE] = "";
+    const struct ipv6_info *one = NULL;
+
+    if (UNLIKELY(manage == NULL || manage->ip_count == 0)) {
+        return 0;
+    }
+
+    if (UNLIKELY(manage->ip_count + count > L3_IPv6_BUCKET_MAX)) {
+        LOG_ERROR("Maximum supported IP address count(%d) exceeded", L3_IPv6_BUCKET_MAX);
+        return ERRCODE_IP_LIMIT_EXCEEDED;
+    }
+
+    for (int i = 0; i < count; i++) {
+        one = &info[i];
+
+        ret = dpdk_fib6_lookup(manage->fib[one->port], &info->ipv6, &next_hop, 1);
+        if (UNLIKELY(ret != 0)) {
+            LOG_ERROR("Inner error.");
+            return ERRCODE_INNER;
+        }
+
+        if (UNLIKELY(ret == 0 && next_hop != DPDK_FIB6_DEFAULT && manage->store[next_hop].mask == one->mask)) {
+            mask = one->mask;
+            inet_ntop(AF_INET6, &one->ipv6, ip_str, sizeof(ip_str));
+            LOG_ERROR("IP address conflict - another IP(%s/%d) in the same subnet is already configured.", ip_str, mask);
             return ERRCODE_SUBNET_EXIST;
         }
     }
@@ -190,6 +302,28 @@ static int _l3_conf_ipv4_manage_del_check(struct ipv4_manage *manage, const stru
     return 0;
 }
 
+static int _l3_conf_ipv6_manage_del_check(struct ipv6_manage *manage, const struct ipv6_info *info, int count)
+{
+    int ret = 0;
+    bool hit = false;
+    char ip_str[CACHE_LINE] = "";
+    struct ipv6_info *data = NULL;
+
+    if (UNLIKELY(manage->ip_count - count < 0)) {
+        LOG_ERROR("Parameter exception: origin %d, delete %d", manage->ip_count, count);
+        return ERRCODE_INNER;
+    }
+
+    // ret = dpdk_hash_lookup_data(manage->hash[info->port], (const void *)&info->ipv6, (void **)&data);
+    if (UNLIKELY(ret != 0)) {
+        inet_ntop(AF_INET6, &info->ipv6, ip_str, sizeof(ip_str));
+        LOG_ERROR("IP: %s, port: %d not exists", ip_str, info->port);
+        return ERRCODE_IP_NOT_EXIST;
+    }
+
+    return 0;
+}
+
 // Initialize a fresh ipv4_manage object with default/empty values.
 static int _l3_conf_ipv4_manage_create(void **dst, int nic_count, int hw_numa_id)
 {
@@ -230,26 +364,83 @@ _quit:
     return ERRCODE_OOM;
 }
 
+static int _l3_conf_ipv6_manage_create(void **dst, int nic_count, int hw_numa_id)
+{
+    struct ipv6_manage *manage = NULL;
+
+    manage = dpdk_malloc_numa(sizeof(*manage), hw_numa_id);
+    if (UNLIKELY(manage == NULL)) {
+        LOG_ERROR("HA NUMA(%d) OOM.", hw_numa_id);
+        return ERRCODE_OOM;
+    }
+
+    memset(manage, 0, sizeof(*manage));
+
+    manage->ip_count = 0;
+    manage->nic_count = nic_count;
+
+    for (int i = 0; i < nic_count; i++) {
+        manage->hash[i] = dpdk_hash_create(L3_IPv6_BUCKET_MAX, sizeof(union dpdk_ipv6_addr), hw_numa_id, _l3_conf_ipv6_info_cmp);
+        if (UNLIKELY(manage->hash[i] == NULL)) {
+            goto _quit;
+        }
+    }
+
+    for (int i = 0; i < nic_count; i++) {
+        manage->fib[i] = dpdk_fib6_create(hw_numa_id, L3_IPv6_BUCKET_MAX);
+        if (UNLIKELY(manage->fib[i] == NULL)) {
+            goto _quit;
+        }
+    }
+
+    *dst = manage;
+    return 0;
+
+_quit:
+    _l3_conf_ipv6_manage_destroy(manage);
+    return ERRCODE_OOM;
+}
+
 static int _l3_conf_ipv4_manage_append(struct ipv4_manage *dst, const struct ipv4_manage *src, const struct ipv4_info *info, int count)
 {
     int ret = 0;
-    int nums = 0;
 
     for (int i = 0; i < src->ip_count; i++) {
-        ret = _l3_conf_ipv4_manage_add(dst, &src->store[i], nums++);
+        ret = _l3_conf_ipv4_manage_add(dst, &src->store[i]);
         if (UNLIKELY(ret != 0)) {
             return ret;
         }
     }
 
     for (int i = 0; i < count; i++) {
-        ret = _l3_conf_ipv4_manage_add(dst, &info[i], nums++);
+        ret = _l3_conf_ipv4_manage_add(dst, &info[i]);
         if (UNLIKELY(ret != 0)) {
             return ret;
         }
     }
 
-    dst->ip_count = nums;
+    return 0;
+}
+
+static int _l3_conf_ipv6_manage_append(struct ipv6_manage *dst, const struct ipv6_manage *src, const struct ipv6_info *info, int count)
+{
+    int ret = 0;
+    int nums = 0;
+
+    for (int i = 0; i < src->ip_count; i++) {
+        ret = _l3_conf_ipv6_manage_add(dst, &src->store[i]);
+        if (UNLIKELY(ret != 0)) {
+            return ret;
+        }
+    }
+
+    for (int i = 0; i < count; i++) {
+        ret = _l3_conf_ipv6_manage_add(dst, &info[i]);
+        if (UNLIKELY(ret != 0)) {
+            return ret;
+        }
+    }
+
     return 0;
 }
 
@@ -257,18 +448,18 @@ static int _l3_conf_ipv4_manage_delete(struct ipv4_manage *dst, const struct ipv
 {
     int ret = 0;
     int nums = 0;
-    int need_delete = 0;
+    bool need_delete = false;
     const struct ipv4_info *one = NULL;
     const struct ipv4_info *store = NULL;
 
     for (int i = 0; i < src->ip_count; i++) {
-        need_delete = 0;
+        need_delete = false;
         store = &src->store[i];
 
         for (int j = 0; j < count; j++) {
             one = &info[j];
             if (one->ip == store->ip && one->port == store->port) {
-                need_delete = !0;
+                need_delete = true;
                 break;
             }
         }
@@ -277,13 +468,45 @@ static int _l3_conf_ipv4_manage_delete(struct ipv4_manage *dst, const struct ipv
             continue;
         }
 
-        ret = _l3_conf_ipv4_manage_add(dst, store, nums++);
+        ret = _l3_conf_ipv4_manage_add(dst, store);
         if (UNLIKELY(ret != 0)) {
             return ret;
         }
     }
 
-    dst->ip_count = nums;
+    return 0;
+}
+
+static int _l3_conf_ipv6_manage_delete(struct ipv6_manage *dst, const struct ipv6_manage *src, const struct ipv6_info *info, int count)
+{
+    int ret = 0;
+    int nums = 0;
+    bool need_delete = false;
+    const struct ipv6_info *one = NULL;
+    const struct ipv6_info *store = NULL;
+
+    for (int i = 0; i < src->ip_count; i++) {
+        need_delete = false;
+        store = &src->store[i];
+
+        for (int j = 0; j < count; j++) {
+            one = &info[j];
+            if (one->ipv6.big_addr == store->ipv6.big_addr && one->port == store->port) {
+                need_delete = true;
+                break;
+            }
+        }
+
+        if (need_delete) {
+            continue;
+        }
+
+        ret = _l3_conf_ipv6_manage_add(dst, store);
+        if (UNLIKELY(ret != 0)) {
+            return ret;
+        }
+    }
+
     return 0;
 }
 
@@ -307,6 +530,21 @@ bool l3_conf_ipv4_manage_ip_is_local(const void *arg, uint32_t ip, uint8_t port)
     }
 
     return false;
+}
+
+bool l3_conf_ipv6_manage_ip_is_local(const void *arg, const union dpdk_ipv6_addr *addr, uint8_t port)
+{
+    int ret = 0;
+    const struct ipv6_info *cur = NULL;
+    const struct ipv6_manage *ipv6_manage = (const struct ipv6_manage *)arg;
+
+    if (arg == NULL) {
+        return false;
+    }
+
+    // ret = dpdk_hash_lookup_bulk_data();
+
+    return true;
 }
 
 int l3_conf_ipv4_manage_create_and_append(void **dst, void *src, const struct ipv4_info *info, int count, int hw_numa_id)
@@ -369,6 +607,65 @@ int l3_conf_ipv4_manage_create_and_delete(void **dst, void *src, const struct ip
     ret = _l3_conf_ipv4_manage_delete(*dst, one, info, count);
     if (UNLIKELY(ret != 0)) {
         _l3_conf_ipv4_manage_destroy(*dst);
+        return ret;
+    }
+
+    return 0;
+}
+
+int l3_conf_ipv6_manage_create_and_append(void **dst, void *src, const struct ipv6_info *info, int count, int hw_numa_id)
+{
+    int ret = 0;
+    struct ipv6_manage *one = src;
+
+    if (UNLIKELY(dst == NULL || src == NULL || count < 0)) {
+        LOG_ERROR("Parameter exception(dst: %p, src: %p, count: %d).", dst, src, count);
+        return ERRCODE_INNER;
+    }
+
+    ret = _l3_conf_ipv6_manage_add_check(one, info, count);
+    if (UNLIKELY(ret != 0)) {
+        return ret;
+    }
+
+    ret = _l3_conf_ipv6_manage_create(dst, one->nic_count, hw_numa_id);
+    if (UNLIKELY(ret != 0)) {
+        return ret;
+    }
+
+    ret = _l3_conf_ipv6_manage_append(*dst, one, info, count);
+    if (UNLIKELY(ret != 0)) {
+        _l3_conf_ipv6_manage_destroy(*dst);
+        return ret;
+    }
+
+    return 0;
+}
+
+int l3_conf_ipv6_manage_create_and_delete(void **dst, void *src, const struct ipv6_info *info, int count, int hw_numa_id)
+{
+    int ret = 0;
+    struct ipv6_manage *one = src;
+
+    if (UNLIKELY(dst == NULL || src == NULL || count < 0)) {
+        LOG_ERROR("Parameter exception(dst: %p, src: %p, count: %d).", dst, src, count);
+        return ERRCODE_INNER;
+    }
+
+    ret = _l3_conf_ipv6_manage_del_check(one, info, count);
+    if (UNLIKELY(ret != 0)) {
+        return ret;
+    }
+
+    ret = _l3_conf_ipv6_manage_create(dst, one->nic_count, hw_numa_id);
+    if (UNLIKELY(ret != 0)) {
+        _l3_conf_ipv6_manage_destroy(*dst);
+        return ret;
+    }
+
+    ret = _l3_conf_ipv6_manage_delete(*dst, one, info, count);
+    if (UNLIKELY(ret != 0)) {
+        _l3_conf_ipv6_manage_destroy(*dst);
         return ret;
     }
 
@@ -471,7 +768,6 @@ static INLINE void _l3_icmp_fragment(struct dpdk_mbuf *mbuf)
     struct dpdk_mbuf *pkt = NULL;
     struct dpdk_ipv4 *ipv4 = NULL;
     struct dpdk_eth *src_eth = NULL;
-    struct dpdk_headroom *headroom = NULL;
 
     src_eth = dpdk_pktmbuf_eth(mbuf);
 
@@ -503,7 +799,6 @@ static INLINE void _l3_icmp_fragment(struct dpdk_mbuf *mbuf)
     }
 
     tx->count = len;
-    tls_drop->data[tls_drop->count++] = mbuf;
 }
 
 static INLINE void _l3_icmp_process(struct dpdk_mbuf *data[], int count)
@@ -526,12 +821,12 @@ static INLINE void _l3_icmp_process(struct dpdk_mbuf *data[], int count)
 
         if (LIKEYLY(dpdk_icmp_cksum_verify(mbuf, icmp, icmp_len))) {
             if (icmp->icmp_type == DPDK_ICMP_TYPE_ECHO_REQUEST && icmp->icmp_code == DPDK_ICMP_CODE_ECHO_REQUEST) {
-                tx = &tls_tx[mbuf->port];
+                _l3_icmp_echo_reply(mbuf, icmp);
+
                 if (mbuf->pkt_len <= tls_dp->mtu) {
-                    _l3_icmp_echo_reply(mbuf, icmp);
+                    tx = &tls_tx[mbuf->port];
                     tx->data[tx->count++] = mbuf;
                 } else {
-                    _l3_icmp_echo_reply(mbuf, icmp);
                     _l3_icmp_fragment(mbuf);
                     tls_drop->data[tls_drop->count++] = mbuf;
                 }
@@ -666,15 +961,18 @@ enum IP_LOCAL_CLASS l3_ipv4_local_class(uint16_t port, uint32_t ip)
 
 void l3_process(void)
 {
-    if (tls_ipv4->count != 0) {
-        _l3_ipv4_process((struct dpdk_mbuf **)tls_ipv4->data, tls_ipv4->count);
+    int ipv4_cnt = tls_ipv4->count;
+    int ipv6_cnt = tls_ipv6->count;
+
+    if (ipv4_cnt != 0) {
+        _l3_ipv4_process((struct dpdk_mbuf **)tls_ipv4->data, ipv4_cnt);
         tls_ipv4->count = 0;
     }
 
-    /*if (tls_ipv6->count != 0) {
-        _l3_ipv6_do();
+    if (ipv6_cnt != 0) {
+        // _l3_ipv6_do();
         tls_ipv6->count = 0;
-    }*/
+    }
 }
 
 void *l3_thread_startup(int hw_numa_id, int nic_count)

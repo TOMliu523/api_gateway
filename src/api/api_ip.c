@@ -22,9 +22,9 @@
 #include "dpdk_core.h"
 #include "dpdk_common.h"
 
-#define API_INTERFACE_FORMAT "/v1:ipv4/entrys[name='%s']/*"
+#define API_INTERFACE_FORMAT "/v1:ip/entrys[name='%s']/*"
 
-struct api_interface {
+struct api_ip {
     const char *name;
     uint16_t port;
     int mask;
@@ -35,7 +35,7 @@ struct api_interface {
 
 static int s_arp_thread_id = -1;
 
-static int _api_iface_obj_gen(void *array, sr_val_t *val, int cnt)
+static int _api_ip_obj_gen(void *array, sr_val_t *val, int cnt)
 {
     int i = 0;
     int j = 0;
@@ -94,12 +94,12 @@ _quit:
     return ERRCODE_OOM;
 }
 
-static INLINE void _api_iface_broadcast_free(void **arp, int count)
+static INLINE void _api_ip_broadcast_free(void **arp, int count)
 {
     dpdk_pktmbuf_push(arp, count);
 }
 
-static INLINE void _api_iface_ipv4_manage_numa_free(void *manage[], int count)
+static INLINE void _api_ip_ipv4_manage_numa_free(void *manage[], int count)
 {
     for (int i = 0; i < count; i++) {
         if (manage[i] != NULL) {
@@ -108,7 +108,7 @@ static INLINE void _api_iface_ipv4_manage_numa_free(void *manage[], int count)
     }
 }
 
-static INLINE void _api_iface_route_numa_free(void *route[], int count)
+static INLINE void _api_ip_route_numa_free(void *route[], int count)
 {
     for (int i = 0; i < count; i++) {
         if (route[i] != NULL) {
@@ -117,7 +117,7 @@ static INLINE void _api_iface_route_numa_free(void *route[], int count)
     }
 }
 
-static INLINE void _api_iface_ipv4_info_free(struct ipv4_info *info)
+static INLINE void _api_ip_ipv4_info_free(struct ipv4_info *info)
 {
     if (info == NULL) {
         return;
@@ -126,12 +126,12 @@ static INLINE void _api_iface_ipv4_info_free(struct ipv4_info *info)
     dpdk_free(info);
 }
 
-static INLINE void _api_iface_free(void *ptr)
+static INLINE void _api_ip_free(void *ptr)
 {
     dpdk_free(ptr);
 }
 
-static INLINE void *_api_iface_alloc(size_t total)
+static INLINE void *_api_ip_alloc(size_t total)
 {
     void *tmp = NULL;
 
@@ -145,12 +145,12 @@ static INLINE void *_api_iface_alloc(size_t total)
     return tmp;
 }
 
-static enum ERRCODE _api_iface_broadcast_gen(struct root *root, void **arp, struct api_interface *iface, int count)
+static enum ERRCODE _api_ip_broadcast_gen(struct root *root, void **arp, struct api_ip *iface, int count)
 {
     int id = 0;
     int ret = 0;
     enum ERRCODE code = 0;
-    struct api_interface *one = NULL;
+    struct api_ip *one = NULL;
 
     id = (s_arp_thread_id + 1) % root->hw_info.cpu_count;
     s_arp_thread_id = id;
@@ -166,7 +166,7 @@ static enum ERRCODE _api_iface_broadcast_gen(struct root *root, void **arp, stru
 
         ret = l2_gratuitous_arp_gen(arp[i], one->port, one->ip.ipv4, &one->mac);
         if (ret != 0) {
-            _api_iface_broadcast_free(arp, count);
+            _api_ip_broadcast_free(arp, count);
             return ERRCODE_INNER;
         }
 
@@ -176,30 +176,30 @@ static enum ERRCODE _api_iface_broadcast_gen(struct root *root, void **arp, stru
     return ERRCODE_SUCCESS;
 }
 
-static INLINE int _api_iface_post_parse_count(void *json)
+static INLINE int _api_ip_post_parse_count(void *json)
 {
     void *array = NULL;
 
-    array = api_v1_modify_list(json, "ipv4", "entrys");
+    array = api_v1_modify_list(json, "ip", "entrys");
     return json_array_size(array);
 }
 
-static INLINE int _api_iface_del_parse_count(void *json)
+static INLINE int _api_ip_del_parse_count(void *json)
 {
     void *array = NULL;
 
-    array = api_v1_delete_list(json, "ipv4", "entrys");
+    array = api_v1_delete_list(json, "ip", "entrys");
     return json_array_size(array);
 }
 
-static enum ERRCODE _api_iface_post_parse(struct root *root, void *json, struct api_interface *iface, int count)
+static enum ERRCODE _api_ip_post_parse(struct root *root, void *json, struct api_ip *iface, int count)
 {
     int af = 0;
     int ret = 0;
     void *array = NULL;
-    struct api_interface *one = NULL;
+    struct api_ip *one = NULL;
 
-    array = api_v1_modify_list(json, "ipv4", "entrys");
+    array = api_v1_modify_list(json, "ip", "entrys");
     for (int i = 0; i < count; i++) {
         json_t *obj = NULL;
         const char *ip = NULL;
@@ -210,7 +210,7 @@ static enum ERRCODE _api_iface_post_parse(struct root *root, void *json, struct 
         one->name = json_string_value(json_object_get(obj, "name"));
         one->port = dpdk_port_by_name_get(one->name);
         if (one->port == (USHRT_MAX)-1) {
-            LOG_ERROR("Not exists(%s)", iface->name);
+            LOG_ERROR("Not exists(%s)", one->name);
             return ERRCODE_PORT_NOT_EXIST;
         }
 
@@ -231,7 +231,7 @@ static enum ERRCODE _api_iface_post_parse(struct root *root, void *json, struct 
         }
 
         if (!dpdk_port_is_up(one->port)) {
-            LOG_ERROR("Failure(dpdk_port_startup) port(%d), message: %s", one->port, strerror(-ret));
+            LOG_ERROR("Port %d is down", one->port);
             return ERRCODE_PORT_IS_DOWN;
         }
     }
@@ -239,13 +239,13 @@ static enum ERRCODE _api_iface_post_parse(struct root *root, void *json, struct 
     return 0;
 }
 
-static enum ERRCODE _api_iface_del_parse(struct root *root, void *json, struct api_interface *iface, int count)
+static enum ERRCODE _api_ip_del_parse(struct root *root, void *json, struct api_ip *iface, int count)
 {
     int ret = 0;
     void *array = NULL;
-    struct api_interface *one = NULL;
+    struct api_ip *one = NULL;
 
-    array = api_v1_delete_list(json, "ipv4", "entrys");
+    array = api_v1_delete_list(json, "ip", "entrys");
     for (int i = 0; i < count; i++) {
         json_t *obj = NULL;
         const char *ip = NULL;
@@ -266,7 +266,7 @@ static enum ERRCODE _api_iface_del_parse(struct root *root, void *json, struct a
     return ERRCODE_SUCCESS;
 }
 
-static INLINE void *_api_iface_to_ipv4_info(const struct api_interface *iface, int count)
+static INLINE void *_api_ip_to_ipv4_info(const struct api_ip *iface, int count)
 {
     struct ipv4_info *info = NULL;
 
@@ -289,7 +289,15 @@ static INLINE void *_api_iface_to_ipv4_info(const struct api_interface *iface, i
     return info;
 }
 
-static INLINE void *_api_iface_to_route_item(const struct api_interface *iface, int count)
+static INLINE uint32_t _api_ip_to_subnet(uint32_t ip_be, int mask)
+{
+    uint32_t ip = dpdk_be_to_cpu_32(ip_be);
+    uint32_t ip_mask = L3_MASK_TO_IP(mask);
+
+    return dpdk_cpu_to_be_32(ip & ip_mask);
+}
+
+static INLINE void *_api_ip_to_route_item(const struct api_ip *iface, int count)
 {
     struct route_item *item = NULL;
 
@@ -304,7 +312,7 @@ static INLINE void *_api_iface_to_route_item(const struct api_interface *iface, 
     for (int i = 0; i < count; i++) {
         INIT_LIST_HEAD(&item[i].lru_head);
         item[i].nexthop = 0;
-        item[i].dst_subnet = iface[i].ip.ipv4;
+        item[i].dst_subnet = _api_ip_to_subnet(iface[i].ip.ipv4, iface[i].mask);
         item[i].mask = iface[i].mask;
         item[i].route_type = ROUTE_DIRECT;
         item[i].priority = 0;
@@ -318,22 +326,22 @@ static INLINE void *_api_iface_to_route_item(const struct api_interface *iface, 
     return item;
 }
 
-static INLINE int _api_iface_ipv4_manage_del(struct root *root, void *ipv4_manage[],
-                                             struct api_interface *iface, int count)
+static INLINE int _api_ip_ipv4_manage_del(struct root *root, void *ipv4_manage[],
+                                             struct api_ip *iface, int count)
 {
     int ret = 0;
     int numa_count = 0;
     struct dataplane *dp = NULL;
     struct ipv4_info *info = NULL;
 
-    info = _api_iface_to_ipv4_info(iface, count);
+    info = _api_ip_to_ipv4_info(iface, count);
     if (info == NULL) {
         return ERRCODE_OOM;
     }
 
     dp = root->dpdk_thread[0];
     ret = l3_conf_ipv4_manage_create_and_delete(&ipv4_manage[dp->numa_id], dp->tc->ipv4_manage, info, count, dp->hw_numa_id);
-    _api_iface_ipv4_info_free(info);
+    _api_ip_ipv4_info_free(info);
     if (ret != 0) {
         return ret;
     }
@@ -353,12 +361,12 @@ static INLINE int _api_iface_ipv4_manage_del(struct root *root, void *ipv4_manag
     return 0;
 
 _quit:
-    _api_iface_ipv4_manage_numa_free(ipv4_manage, numa_count);
+    _api_ip_ipv4_manage_numa_free(ipv4_manage, numa_count);
     return ret;
 }
 
-static INLINE int _api_iface_ipv4_manage_add(struct root *root, void *ipv4_manage[],
-                                             const struct api_interface *iface, int count)
+static INLINE int _api_ip_ipv4_manage_add(struct root *root, void *ipv4_manage[],
+                                             const struct api_ip *iface, int count)
 {
     int ret = 0;
     int numa_count = 0;
@@ -366,14 +374,14 @@ static INLINE int _api_iface_ipv4_manage_add(struct root *root, void *ipv4_manag
     struct dataplane *one = NULL;
     struct ipv4_info *info = NULL;
 
-    info = _api_iface_to_ipv4_info(iface, count);
+    info = _api_ip_to_ipv4_info(iface, count);
     if (info == NULL) {
         return ERRCODE_OOM;
     }
 
     dp = root->dpdk_thread[0];
     ret = l3_conf_ipv4_manage_create_and_append(&ipv4_manage[dp->numa_id], dp->tc->ipv4_manage, info, count, dp->hw_numa_id);
-    _api_iface_ipv4_info_free(info);
+    _api_ip_ipv4_info_free(info);
     if (ret != 0) {
         return ret;
     }
@@ -394,12 +402,12 @@ static INLINE int _api_iface_ipv4_manage_add(struct root *root, void *ipv4_manag
     return 0;
 
 _quit:
-    _api_iface_ipv4_manage_numa_free(ipv4_manage, numa_count);
+    _api_ip_ipv4_manage_numa_free(ipv4_manage, numa_count);
     return ret;
 }
 
-static int _api_iface_route_table_add(struct root *root, void *route[],
-                                      const struct api_interface *iface, int count, const void *arg)
+static int _api_ip_route_table_add(struct root *root, void *route[],
+                                      const struct api_ip *iface, int count, const void *arg)
 {
     int ret = 0;
     int numa_count = 0;
@@ -407,7 +415,7 @@ static int _api_iface_route_table_add(struct root *root, void *route[],
     struct route_item *item = NULL;
     struct proto_header *proto = NULL;
 
-    item = _api_iface_to_route_item(iface, count);
+    item = _api_ip_to_route_item(iface, count);
     if (item == NULL) {
         return ERRCODE_OOM;
     }
@@ -415,7 +423,7 @@ static int _api_iface_route_table_add(struct root *root, void *route[],
     dp = root->dpdk_thread[0];
     proto = dp->protocol;
     ret = route_conf_create_and_append(&route[dp->numa_id], proto->route, item, count, dp->hw_numa_id, arg);
-    _api_iface_free(item);
+    _api_ip_free(item);
     if (ret != 0) {
         return ret;
     }
@@ -435,12 +443,12 @@ static int _api_iface_route_table_add(struct root *root, void *route[],
     return 0;
 
 _quit:
-    _api_iface_route_numa_free(route, numa_count);
+    _api_ip_route_numa_free(route, numa_count);
     return ret;
 }
 
-static int _api_iface_route_table_del(struct root *root, void *route[],
-                                      const struct api_interface *iface, int count, const void *arg)
+static int _api_ip_route_table_del(struct root *root, void *route[],
+                                      const struct api_ip *iface, int count, const void *arg)
 {
     int ret = 0;
     int numa_count = 0;
@@ -448,7 +456,7 @@ static int _api_iface_route_table_del(struct root *root, void *route[],
     struct route_item *item = NULL;
     struct proto_header *proto = NULL;
 
-    item = _api_iface_to_route_item(iface, count);
+    item = _api_ip_to_route_item(iface, count);
     if (item == NULL) {
         return ERRCODE_OOM;
     }
@@ -456,7 +464,7 @@ static int _api_iface_route_table_del(struct root *root, void *route[],
     dp = root->dpdk_thread[0];
     proto = dp->protocol;
     ret = route_conf_create_and_delete(&route[dp->numa_id], proto->route, item, count, dp->hw_numa_id, false);
-    _api_iface_free(item);
+    _api_ip_free(item);
     if (ret != 0) {
         goto _quit;
     }
@@ -475,62 +483,63 @@ static int _api_iface_route_table_del(struct root *root, void *route[],
     return 0;
 
 _quit:
-    _api_iface_route_numa_free(route, numa_count);
+    _api_ip_route_numa_free(route, numa_count);
     return ret;
 }
 
-static INLINE void _api_iface_arp_send(struct root *root, void *arp_mbuf[], int count)
+static INLINE void _api_ip_arp_send(struct root *root, void *arp_mbuf[], int count)
 {
     dpdk_ring_mp_push(root->dpdk_thread[s_arp_thread_id]->notice_ring, arp_mbuf, count);
 }
 
-API_POST(/v1/network/ipv4, ipv4)
+API_POST(/v1/network/ip, ip)
 {
     int count = 0;
     void **arp = NULL;
     enum ERRCODE code = 0;
     struct root *root = cfg;
+    struct api_ip *api_iface = {0};
     void *route[NUMA_MAX] = {NULL};
     void **position[CPU_MAX] = {NULL};
     void *ipv4_manage[NUMA_MAX] = {NULL};
     void *thread_route[CPU_MAX] = {NULL};
-    struct api_interface *api_iface = {0};
     void *thread_ipv4_manage[CPU_MAX] = {NULL};
 
-    count = _api_iface_post_parse_count(json);
+    count = _api_ip_post_parse_count(json);
     if (count < 0) {
         LOG_ERROR("Parameter exception.");
         return api_fail(ERRCODE_INVALID);
     }
 
-    arp = _api_iface_alloc(count * sizeof(*arp));
+    arp = _api_ip_alloc(count * sizeof(*arp));
     if (arp == NULL) {
         goto _quit;
     }
 
-    api_iface = _api_iface_alloc(count * sizeof(*api_iface));
+    api_iface = _api_ip_alloc(count * sizeof(*api_iface));
     if (api_iface == NULL) {
         goto _quit;
     }
 
-    code = _api_iface_post_parse(cfg, json, api_iface, count);
+    code = _api_ip_post_parse(cfg, json, api_iface, count);
     if (code != 0) {
         goto _quit;
     }
 
-    code = _api_iface_broadcast_gen(cfg, arp, api_iface, count);
+    code = _api_ip_broadcast_gen(cfg, arp, api_iface, count);
     if (code != 0) {
         goto _quit;
     }
 
-    code = _api_iface_ipv4_manage_add(cfg, ipv4_manage, api_iface, count);
+    code = _api_ip_ipv4_manage_add(cfg, ipv4_manage, api_iface, count);
     if (code != 0) {
-        _api_iface_broadcast_free(arp, count);
+        _api_ip_broadcast_free(arp, count);
         goto _quit;
     }
 
-    code = _api_iface_route_table_add(cfg, route, api_iface, count, ipv4_manage[0]);
+    code = _api_ip_route_table_add(cfg, route, api_iface, count, ipv4_manage[0]);
     if (code != 0) {
+        _api_ip_broadcast_free(arp, count);
         goto _quit;
     }
 
@@ -539,7 +548,7 @@ API_POST(/v1/network/ipv4, ipv4)
         thread_ipv4_manage[i] = ipv4_manage[root->dpdk_thread[i]->numa_id];
     }
 
-    api_config_update(cfg, position, thread_ipv4_manage, _api_iface_ipv4_manage_numa_free);
+    api_config_update(cfg, position, thread_ipv4_manage, _api_ip_ipv4_manage_numa_free);
 
     for (int i = 0; i < root->hw_info.cpu_count; i++) {
         struct proto_header *proto = root->dpdk_thread[i]->protocol;
@@ -547,62 +556,62 @@ API_POST(/v1/network/ipv4, ipv4)
         thread_route[i] = route[root->dpdk_thread[i]->numa_id];
     }
 
-    api_config_update(cfg, position, thread_route, _api_iface_route_numa_free);
+    api_config_update(cfg, position, thread_route, _api_ip_route_numa_free);
 
-    _api_iface_arp_send(cfg, arp, count);
-    _api_iface_free(api_iface);
-    _api_iface_free(arp);
+    _api_ip_arp_send(cfg, arp, count);
+    _api_ip_free(api_iface);
+    _api_ip_free(arp);
 
     LOG_DEBUG("CONFIG IP SUCCESS.");
     return api_succ(NULL);
 
 _quit:
-    _api_iface_free(arp);
-    _api_iface_free(api_iface);
-    // _api_iface_route_numa_free(route, root->hw_info.numa_count);
-    _api_iface_ipv4_manage_numa_free(ipv4_manage, root->hw_info.numa_count);
+    _api_ip_free(arp);
+    _api_ip_free(api_iface);
+    // _api_ip_route_numa_free(route, root->hw_info.numa_count);
+    _api_ip_ipv4_manage_numa_free(ipv4_manage, root->hw_info.numa_count);
     return api_fail(code);
 }
 
-API_PUT(/v1/network/ipv4, ipv4)
+API_PUT(/v1/network/ip, ip)
 {
     return api_fail(ERRCODE_NOT_SUPPORT);
 }
 
-API_DELETE(/v1/network/ipv4, ipv4)
+API_DELETE(/v1/network/ip, ip)
 {
     int count = 0;
     enum ERRCODE code = 0;
     struct root *root = cfg;
+    struct api_ip *api_iface = {0};
     void *route[NUMA_MAX] = {NULL};
     void **position[CPU_MAX] = {NULL};
     void *ipv4_manage[NUMA_MAX] = {NULL};
     void *thread_route[CPU_MAX] = {NULL};
-    struct api_interface *api_iface = {0};
     void *thread_ipv4_manage[CPU_MAX] = {NULL};
 
-    count = _api_iface_del_parse_count(json);
+    count = _api_ip_del_parse_count(json);
     if (count < 0) {
         LOG_ERROR("Parameter exception.");
         return api_fail(ERRCODE_INVALID);
     }
 
-    api_iface = _api_iface_alloc(count);
+    api_iface = _api_ip_alloc(count);
     if (api_iface == NULL) {
         return api_fail(ERRCODE_OOM);
     }
 
-    code = _api_iface_del_parse(cfg, json, api_iface, count);
+    code = _api_ip_del_parse(cfg, json, api_iface, count);
     if (code != 0) {
         goto _quit;
     }
 
-    code = _api_iface_ipv4_manage_del(cfg, ipv4_manage, api_iface, count);
+    code = _api_ip_ipv4_manage_del(cfg, ipv4_manage, api_iface, count);
     if (code != 0) {
         goto _quit;
     }
 
-    code = _api_iface_route_table_del(cfg, route, api_iface, count, ipv4_manage[0]);
+    code = _api_ip_route_table_del(cfg, route, api_iface, count, ipv4_manage[0]);
     if (code != 0) {
         goto _quit;
     }
@@ -612,7 +621,7 @@ API_DELETE(/v1/network/ipv4, ipv4)
         thread_ipv4_manage[i] = ipv4_manage[root->dpdk_thread[i]->numa_id];
     }
 
-    api_config_update(cfg, position, thread_ipv4_manage, _api_iface_ipv4_manage_numa_free);
+    api_config_update(cfg, position, thread_ipv4_manage, _api_ip_ipv4_manage_numa_free);
 
     for (int i = 0; i < root->hw_info.cpu_count; i++) {
         struct proto_header *proto = root->dpdk_thread[i]->protocol;
@@ -620,17 +629,17 @@ API_DELETE(/v1/network/ipv4, ipv4)
         thread_route[i] = route[root->dpdk_thread[i]->numa_id];
     }
 
-    api_config_update(cfg, position, thread_route, _api_iface_route_numa_free);
+    api_config_update(cfg, position, thread_route, _api_ip_route_numa_free);
 
-    _api_iface_free(api_iface);
+    _api_ip_free(api_iface);
     return api_succ(NULL);
 
 _quit:
-    _api_iface_free(api_iface);
+    _api_ip_free(api_iface);
     return api_fail(code);
 }
 
-API_GET(/v1/network/ipv4, ipv4)
+API_GET(/v1/network/ip, ip)
 {
     int ret = 0;
     void *array = NULL;
@@ -657,7 +666,7 @@ API_GET(/v1/network/ipv4, ipv4)
             goto _quit;
         }
 
-        ret = _api_iface_obj_gen(array, val, val_cnt);
+        ret = _api_ip_obj_gen(array, val, val_cnt);
         if (ret != 0) {
             goto _quit;
         }

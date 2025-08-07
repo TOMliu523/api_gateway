@@ -45,12 +45,21 @@ static INLINE struct route_item *_api_route_item_alloc(int count)
     return item;
 }
 
+static INLINE bool _api_route_is_valid_subnet(uint32_t ip_be, uint8_t mask)
+{
+    uint32_t ip = dpdk_be_to_cpu_32(ip_be);
+    uint32_t ip_mask = L3_MASK_TO_IP(mask);
+
+    return (ip & ~ip_mask) == 0 ? true : false;
+}
+
 static int _api_route_post_parse(struct route_item **pp_item, int *p_count, void *json)
 {
     int af= 0;
     int code = 0;
     int count = 0;
     void *array = NULL;
+    char ip_str[CACHE_LINE] = "";
     struct route_item *item = NULL;
 
     array = api_v1_modify_list(json, "route_v4", "entrys");
@@ -73,15 +82,28 @@ static int _api_route_post_parse(struct route_item **pp_item, int *p_count, void
         one = &item[i];
 
         net = json_string_value(json_object_get(obj, "net"));
-        name = json_string_value(json_object_get(obj, "interface_name"));
         mask = json_integer_value(json_object_get(obj, "mask"));
-        nexthop = json_string_value(json_object_get(obj, "nexthop"));
 
         inet_pton(AF_INET, net, &one->dst_subnet);
         one->mask = mask;
-        inet_pton(AF_INET, nexthop, &one->nexthop);
-        one->interface = dpdk_port_by_name_get(name);
+
+        if (json_object_get(obj, "nexthop")) {
+            nexthop = json_string_value(json_object_get(obj, "nexthop"));
+            inet_pton(AF_INET, nexthop, &one->nexthop);
+            one->interface = UINT8_MAX;
+        } else {
+            name = json_string_value(json_object_get(obj, "interface_name"));
+            one->interface = dpdk_port_by_name_get(name);
+        }
+
         one->route_type = ROUTE_MANUAL;
+
+        if (!_api_route_is_valid_subnet(one->dst_subnet, one->mask)) {
+            inet_ntop(AF_INET, &one->dst_subnet, ip_str, sizeof(ip_str));
+            LOG_ERROR("Invalid subnet(%s).", ip_str);
+            code = ERRCODE_SUBNET_INVALID;
+            goto _quit;
+        }
 
         if (!dpdk_port_is_up(one->interface)) {
             LOG_ERROR("Ethdev port(%d) startup failure.", one->interface);
@@ -92,6 +114,7 @@ static int _api_route_post_parse(struct route_item **pp_item, int *p_count, void
 
     *pp_item = item;
     *p_count = count;
+
     return 0;
 
 _quit:
@@ -212,7 +235,7 @@ _quit:
     return 0;
 }
 
-API_POST(/v1/network/route_v4, route_v4)
+API_POST(/v1/network/route, route)
 {
     int code = 0;
     int count = 0;
@@ -248,12 +271,12 @@ _quit:
     return api_fail(code);
 }
 
-API_PUT(/v1/network/route_v4, route_v4)
+API_PUT(/v1/network/route, route)
 {
     return api_fail(ERRCODE_NOT_SUPPORT);
 }
 
-API_DELETE(/v1/network/route_v4, route_v4)
+API_DELETE(/v1/network/route, route)
 {
     int code = 0;
     int count = 0;
@@ -289,7 +312,7 @@ _quit:
     return api_fail(code);
 }
 
-API_GET(/v1/network/route_v4, route_v4)
+API_GET(/v1/network/route, route)
 {
     int code = 0;
     int count = 0;
@@ -298,6 +321,14 @@ API_GET(/v1/network/route_v4, route_v4)
     struct root *root = cfg;
     struct route_item *items = NULL;
     struct proto_header *proto = NULL;
+    const char *route_type[] = {
+        "DIRECT",
+        "STATIC",
+        "BGP",
+        "OSPF",
+        "ISIS",
+        "RIP",
+    };
 
     proto = root->dpdk_thread[0]->protocol;
     route = proto->route;
@@ -332,6 +363,8 @@ API_GET(/v1/network/route_v4, route_v4)
 
         name = dpdk_port_id_to_name(item->interface);
         api_json_add_string(one, "interface", name);
+
+        api_json_add_string(one, "owner", route_type[item->route_type]);
 
         code = json_array_append_new(array, one);
         if (code != 0) {

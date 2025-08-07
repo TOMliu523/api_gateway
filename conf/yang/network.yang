@@ -7,10 +7,11 @@ submodule network {
         prefix "inet";
     }
 
-    container ipv4 {
+    container ip {
         list entrys {
             key "name ip";
             leaf name {
+                mandatory true;
                 type string {
                     pattern '[-0-9a-zA-Z.]{3,63}';
                 }
@@ -40,7 +41,41 @@ submodule network {
         }
     }
 
-    container route_v4 {
+    container ip6 {
+        list entrys {
+            key "name ip";
+            leaf name {
+                mandatory true;
+                type string {
+                    pattern '[-0-9a-zA-Z.]{3,63}';
+                }
+            }
+            leaf ip {
+                mandatory true;
+                type inet:ipv6-address;
+            }
+            leaf mask {
+                mandatory true;
+                type uint8 {
+                    range "0 .. 128";
+                }
+                description "A mask value from 0 to 128 inclusive.";
+            }
+            leaf type {
+                mandatory true;
+                type enumeration {
+                    enum IP_MASTER {
+                        value 0;
+                    }
+                    enum IP_SECONDARY {
+                        value 1;
+                    }
+                }
+            }
+        }
+    }
+
+    container route {
         list entrys {
             key "net mask";
 
@@ -57,14 +92,58 @@ submodule network {
                 description "A mask value from 0 to 32 inclusive.";
             }
 
-            leaf nexthop {
+            choice nexthop-or-interface { 
                 mandatory true;
-                type inet:ipv4-address;
+
+                case via-nexthop {
+                    leaf nexthop {
+                        type inet:ipv4-address;
+                    }
+                }
+
+                case via-interface {
+                    leaf interface_name {
+                        type string {
+                            pattern '[-0-9a-zA-Z.]{3,63}';
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    container route6 {
+        list entrys {
+            key "net mask";
+
+            leaf net {
+                mandatory true;
+                type inet:ipv6-address;
             }
 
-            leaf interface_name {
-                type string {
-                    pattern '[-0-9a-zA-Z.]{3,63}';
+            leaf mask {
+                mandatory true;
+                type uint8 {
+                    range "0 .. 128";
+                }
+                description "A mask value from 0 to 128 inclusive.";
+            }
+
+            choice nexthop-or-interface {
+                mandatory true;
+
+                case via-nexthop {
+                    leaf nexthop {
+                        type inet:ipv4-address;
+                    }
+                }
+
+                case via-interface {
+                    leaf interface_name {
+                        type string {
+                            pattern '[-0-9a-zA-Z.]{3,63}';
+                        }
+                    }
                 }
             }
         }

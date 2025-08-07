@@ -11,18 +11,6 @@
 
 #include "dpdk_type.h"
 
-#ifndef NUMA_MAX
-#define NUMA_MAX RTE_MAX_NUMA_NODES
-#endif // NUMA_MAX
-
-#ifndef NUMA_PER_CPU_MAX
-#define NUMA_PER_CPU_MAX 64
-#endif // NUMA_PER_CPU_MAX
-
-#ifndef CPU_MAX
-#define CPU_MAX RTE_MAX_LCORE
-#endif // CPU_MAX
-
 #ifndef MBUF_STORE_MAX
 #define MBUF_STORE_MAX 2048
 #endif // MBUF_STORE_PER_MAX
@@ -42,6 +30,7 @@
 struct thread_config {
     void *iface;
     void *ipv4_manage;
+    void *ipv6_manage;
     // ... other per-NUMA modules
 } ALIGNED(CACHE_LINE);
 
@@ -78,16 +67,17 @@ struct pkt_classifier {
 struct dataplane {
     void *rcu;
     struct thread_config *tc; // Pointer to the configuration for this NUMA node
+    struct pkt_classifier *pc;
     void *pktmbuf_pool;
     void *indirect_pool;
     void *notice_ring;
     void *frag_handle;
-    struct pkt_classifier *pc;
     void *protocol;
     struct stats *stats;
     uint64_t hz_per_second;
     uint64_t timer_cycles;
     uint64_t off_time;
+    uint64_t off_time_ms;
     struct {
         uint8_t numa_id; // NUMA index in your application (0-based)
         uint8_t numa_cpu_id; // Thread index within the NUMA node (0-based)
