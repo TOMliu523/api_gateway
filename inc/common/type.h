@@ -29,13 +29,14 @@
  */
 struct thread_config {
     void *iface;
-    void *ipv4_manage;
-    void *ipv6_manage;
+    void *ip4_manage;
+    void *ip6_manage;
     // ... other per-NUMA modules
 } ALIGNED(CACHE_LINE);
 
 struct stats {
     uint64_t rx_pkt_count;
+    // ...
 } ALIGNED(CACHE_LINE);
 
 struct pkt_store {
@@ -51,8 +52,8 @@ struct pkt_tx {
 struct pkt_classifier {
     struct pkt_store
         arp,
-        ipv4,
-        ipv6,
+        ip4,
+        ip6,
         icmp,
         icmp6,
         tcp,
@@ -103,22 +104,22 @@ struct root {
     struct dataplane *dpdk_thread[CPU_MAX];
 };
 
-extern __thread uint8_t tls_thread_id;
-extern __thread struct dataplane *tls_dp;
-extern __thread struct pkt_store *tls_arp;
-extern __thread struct pkt_store *tls_ipv4;
-extern __thread struct pkt_store *tls_ipv6;
-extern __thread struct pkt_store *tls_icmp;
-extern __thread struct pkt_store *tls_icmp6;
-extern __thread struct pkt_store *tls_tcp;
-extern __thread struct pkt_store *tls_notify;
-extern __thread struct pkt_store *tls_drop;
+extern __thread uint8_t tlv_thread_id;
+extern __thread struct dataplane *tlv_dp;
+extern __thread struct pkt_store *tlv_arp;
+extern __thread struct pkt_store *tlv_ip4;
+extern __thread struct pkt_store *tlv_ip6;
+extern __thread struct pkt_store *tlv_icmp;
+extern __thread struct pkt_store *tlv_icmp6;
+extern __thread struct pkt_store *tlv_tcp;
+extern __thread struct pkt_store *tlv_notify;
+extern __thread struct pkt_store *tlv_drop;
 // Temporary bug: it must be freed immediately after use to avoid affecting the next module.
-extern __thread struct pkt_store *tls_pending;
-extern __thread struct pkt_store *tls_cache;
-extern __thread struct pkt_tx *tls_tx;
-extern __thread struct thread_config *tls_th_cfg;
-extern __thread uint64_t tls_rx_offload[DPDK_ETHPORT_MAX];
-extern __thread uint64_t tls_tx_offload[DPDK_ETHPORT_MAX];
+extern __thread struct pkt_store *tlv_pending;
+extern __thread struct pkt_store *tlv_cache;
+extern __thread struct pkt_tx *tlv_tx;
+extern __thread struct thread_config *tlv_th_cfg;
+extern __thread uint64_t tlv_rx_offload[DPDK_ETHPORT_MAX];
+extern __thread uint64_t tlv_tx_offload[DPDK_ETHPORT_MAX];
 
 #endif // __TYPE_H__

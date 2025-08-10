@@ -11,6 +11,14 @@
 
 #include "macro.h"
 
+// Byte order conversion
+#define dpdk_cpu_to_be_16(v) rte_cpu_to_be_16(v)
+#define dpdk_cpu_to_be_32(v) rte_cpu_to_be_32(v)
+#define dpdk_cpu_to_be_64(v) rte_cpu_to_be_64(v)
+#define dpdk_be_to_cpu_16(v) rte_be_to_cpu_16(v)
+#define dpdk_be_to_cpu_32(v) rte_be_to_cpu_32(v)
+#define dpdk_be_to_cpu_64(v) rte_be_to_cpu_64(v)
+
 /**********************************************************************/
 /***************************** MEMORY *********************************/
 /**********************************************************************/

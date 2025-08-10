@@ -17,60 +17,43 @@
 #define DPDK_PERIODICAL PERIODICAL
 #define dpdk_timer_cb_t rte_timer_cb_t
 
-#define dpdk_timer rte_timer
+#define dpdk_timer timeout
 
-extern int dpdk_timer_startup(void);
-extern void *dpdk_timer_pool_get(int);
-extern void dpdk_timer_shutdown(void);
+extern int dpdk_timer_start(void);
+extern void dpdk_timer_close(void);
+extern void *dpdk_timer_pool_get(int numa_id);
+extern void *dpdk_timer_thread_create(void);
+extern void dpdk_timer_thread_destroy(void *);
 
-static INLINE int dpdk_timer_subsystem_init(void)
-{
-    return rte_timer_subsystem_init();
-}
-
-static INLINE void dpdk_timer_subsystem_fini(void)
-{
-    return rte_timer_subsystem_finalize();
-}
-
-static INLINE void dpdk_timer_init(struct dpdk_timer *timer)
-{
-    return rte_timer_init(timer);
-}
-
-static INLINE int dpdk_timer_stop(struct dpdk_timer *timer)
-{
-    return rte_timer_stop(timer);
-}
-
-static INLINE int dpdk_timer_pending(struct dpdk_timer *timer)
-{
-    return rte_timer_pending(timer);
-}
-
-static INLINE int dpdk_timer_trigger(void)
-{
-    return rte_timer_manage();
-}
-
-static INLINE int dpdk_timer_start_once(struct dpdk_timer *timer, uint64_t ticks, dpdk_timer_cb_t fn, void *arg)
-{
-    return rte_timer_reset(timer, ticks, DPDK_SINGLE, rte_lcore_id(), fn, arg);
-}
-
-static INLINE int dpdk_timer_start_repeat(struct dpdk_timer *timer, uint64_t ticks, dpdk_timer_cb_t fn, void *arg)
-{
-    return rte_timer_reset(timer, ticks, DPDK_PERIODICAL, rte_lcore_id(), fn, arg);
-}
-
-static INLINE int dpdk_timer_pop(void *pool, struct dpdk_timer *data[], int max)
+static INLINE int dpdk_timer_pop(void *pool, void *data[], int max)
 {
     return dpdk_mempool_pop(pool, (void **)data, max);
 }
 
-static INLINE int dpdk_timer_push(void *pool, struct dpdk_timer *data[], int max)
+static INLINE int dpdk_timer_push(void *pool, void *data[], int max)
 {
     dpdk_mempool_push(pool, (void **)data, max);
+}
+
+static INLINE void dpdk_timer_init(struct dpdk_timer *timer)
+{
+    timeout_init(timer, TIMEOUT_ABS);
+}
+
+static INLINE void dpdk_timer_add(void *handle, struct dpdk_timer *timer, timeout_t cur)
+{
+    timeouts_add(handle, timer, cur);
+}
+
+static INLINE void dpdk_timer_del(void *handle, struct dpdk_timer *timer)
+{
+    timeouts_del(handle, timer);
+}
+
+static INLINE void dpdk_timer_trigger(void *handle, int limits, timeout_t cur, void *pool, void *objs[])
+{
+    timeouts_update(handle, cur);
+    timeouts_trigger(handle, limits, dpdk_timer_pop, pool, objs);
 }
 
 #endif // __DPDK_TIMER_H__

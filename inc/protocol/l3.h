@@ -11,7 +11,7 @@
 #include <stdbool.h>
 
 #include "list.h"
-#include "type.h"
+#include "dpdk_ip6.h"
 
 #define L3_INTERFACE_INVALID UINT8_MAX
 #define L3_MASK_TO_IP(m) ((m) == 0 ? 0 : ((~0U) << (32 - (m))))
@@ -27,7 +27,7 @@ enum IP_TYPE {
     IP_SECONDARY,
 };
 
-struct ipv4_info {
+struct ip4_info {
     struct list_head node;
     uint32_t ip;
     uint16_t port;
@@ -35,36 +35,38 @@ struct ipv4_info {
     uint8_t type; // enum IP_TYPE
 };
 
-struct ipv6_info {
-    union dpdk_ipv6_addr ipv6;
+struct ip6_info {
+    union dpdk_ip6_addr ip6;
     uint16_t port;
     uint8_t mask;
     uint8_t type;
 };
 
-extern int l3_conf_ipv4_manage_create_and_append(void **dst,
+extern int l3_conf_ip4_manage_create_and_append(void **dst,
                                                  void *src,
-                                                 const struct ipv4_info *info,
+                                                 const struct ip4_info *info,
                                                  int count,
                                                  int hw_numa_id);
-extern int l3_conf_ipv4_manage_create_and_delete(void **dst,
+extern int l3_conf_ip4_manage_create_and_delete(void **dst,
                                                  void *src,
-                                                 const struct ipv4_info *info,
+                                                 const struct ip4_info *info,
                                                  int count,
                                                  int hw_numa_id);
-extern bool l3_conf_ipv4_manage_ip_is_local(const void *arg, uint32_t ip, uint8_t port);
+extern bool l3_conf_ip4_manage_ip_is_local(const void *arg, uint32_t ip, uint8_t port);
 
-extern int l3_conf_ipv6_manage_create_and_append(void **dst,
+extern int l3_conf_ip6_manage_create_and_append(void **dst,
                                                  void *src,
-                                                 const struct ipv6_info *info,
+                                                 const struct ip6_info *info,
                                                  int count,
                                                  int hw_numa_id);
-extern int l3_conf_ipv6_manage_create_and_delete(void **dst,
+extern int l3_conf_ip6_manage_create_and_delete(void **dst,
                                                  void *src,
-                                                 const struct ipv6_info *info,
+                                                 const struct ip6_info *info,
                                                  int count,
                                                  int hw_numa_id);
-extern bool l3_conf_ipv6_manage_ip_is_local(const void *arg, const union dpdk_ipv6_addr *addr, uint8_t port);
+extern bool l3_conf_ip6_manage_ip_is_local(const void *arg, const union dpdk_ip6_addr *addr, uint8_t port);
+
+extern int l3_conf_ndp_advertisement_gen(struct dpdk_mbuf *, uint16_t port, const union dpdk_ip6_addr *, const struct dpdk_mac *);
 // Config plane interface
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -74,7 +76,8 @@ extern bool l3_conf_ipv6_manage_ip_is_local(const void *arg, const union dpdk_ip
 extern void l3_process(void);
 
 extern void l3_refresh(void);
-extern void l3_ipv4_manage_destroy(void *);
+extern void l3_ip4_manage_destroy(void *);
+extern void l3_ip6_manage_destroy(void *);
 
 extern void *l3_thread_startup(int, int);
 

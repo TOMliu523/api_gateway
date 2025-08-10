@@ -22,7 +22,7 @@ struct route6_table {
     struct route6_item store[L3_ROUTE6_ITEM_MAX];
 };
 
-static __thread struct route6_table *tls_route = NULL;
+static __thread struct route6_table *tlv_route = NULL;
 
 static int _route6_conf_add_check(struct route6_table *route6, const struct route6_item *item, int count, const void *arg)
 {
@@ -41,7 +41,7 @@ static int _route6_conf_add_check(struct route6_table *route6, const struct rout
             }
 
             next = &item[j];
-            if (UNLIKELY(cur->dst_subnet.big_addr == next->dst_subnet.big_addr && cur->mask == next->mask)) {
+            if (UNLIKELY(dpdk_ip6_addr_eq(&cur->dst_subnet, &next->dst_subnet) && cur->mask == next->mask)) {
                 LOG_ERROR("Cannot have two routing entries with the same subnet.");
                 return ERRCODE_ROUTE_CONFLICT;
             }
@@ -53,7 +53,7 @@ static int _route6_conf_add_check(struct route6_table *route6, const struct rout
 
         for (int j = 0; j < route6->store_count; j++) {
             next = &route6->store[j];
-            if (UNLIKELY(cur->dst_subnet.big_addr == next->dst_subnet.big_addr && cur->mask == next->mask)) {
+            if (UNLIKELY(dpdk_ip6_addr_eq(&cur->dst_subnet, &next->dst_subnet) && cur->mask == next->mask)) {
                 LOG_ERROR("Cannot have two routing entries with the same subnet.");
                 return ERRCODE_ROUTE_CONFLICT;
             }
@@ -91,7 +91,7 @@ static int _route6_conf_add_check(struct route6_table *route6, const struct rout
                 break;
             }
 
-            if (UNLIKELY(one->dst_subnet.big_addr == (__uint128_t)0 && one->mask == 0
+            if (UNLIKELY(dpdk_ip6_addr_is_unspec(&one->dst_subnet) && one->mask == 0
                 && route6->default_id != L3_ROUTE6_DEFAULT_INVALID_ID)) {
                 LOG_ERROR("Multiple default routes are not allowed.");
                 return ERRCODE_ROUTE_MULTI_DEFAULT;
@@ -114,7 +114,7 @@ static int _route6_conf_add_check(struct route6_table *route6, const struct rout
          * No local IP references
          */
         do {
-            if (UNLIKELY(l3_conf_ipv6_manage_ip_is_local(arg, &one->nexthop, one->interface))) {
+            if (UNLIKELY(l3_conf_ip6_manage_ip_is_local(arg, &one->nexthop, one->interface))) {
                 inet_ntop(AF_INET6, &one->nexthop, ip_str, sizeof(ip_str));
                 LOG_ERROR("The next hop is a local IP(%s) address.", ip_str);
                 return ERRCODE_ROUTE_LOCAL_IP;
@@ -140,7 +140,7 @@ static int _route6_conf_del_check(struct route6_table *route6, const struct rout
         if (is_route) {
             for (j = 0; j < route6->store_count; j++) {
                 store = &route6->store[j];
-                if (one->dst_subnet.big_addr == store->dst_subnet.big_addr && one->mask == store->mask) {
+                if (dpdk_ip6_addr_eq(&one->dst_subnet, &store->dst_subnet) && one->mask == store->mask) {
                     hit = true;
                     break;
                 }
@@ -148,7 +148,7 @@ static int _route6_conf_del_check(struct route6_table *route6, const struct rout
         } else {
             for (j = 0; j < route6->store_count; j++) {
                 store = &route6->store[j];
-                if (one->dst_subnet.big_addr == store->dst_subnet.big_addr && one->interface == store->interface) {
+                if (dpdk_ip6_addr_eq(&one->dst_subnet, &store->dst_subnet) && one->interface == store->interface) {
                     hit = true;
                     break;
                 }
@@ -228,7 +228,7 @@ static int _route6_conf_add_item(struct route6_table *route6, const struct route
         return ERRCODE_INNER;
     }
 
-    if (store->dst_subnet.big_addr == (__uint128_t)0 && item->mask == 0) {
+    if (dpdk_ip6_addr_is_unspec(&store->dst_subnet) && item->mask == 0) {
         route6->default_id = route6->store_count;
     }
 
@@ -268,14 +268,14 @@ static int _route6_conf_delete(void *dst, struct route6_table *src, const struct
 
         if (is_route) {
             for (int j = 0; j < count; j++) {
-                if (one->dst_subnet.big_addr == item[j].dst_subnet.big_addr && one->mask == item[j].mask) {
+                if (dpdk_ip6_addr_eq(&one->dst_subnet, &item[j].dst_subnet) && one->mask == item[j].mask) {
                     hit = true;
                     break;
                 }
             }
         } else {
             for (int j = 0; j < count; j++) {
-                if (one->dst_subnet.big_addr == item[j].dst_subnet.big_addr && one->interface == item[j].interface) {
+                if (dpdk_ip6_addr_eq(&one->dst_subnet, &item[j].dst_subnet) && one->interface == item[j].interface) {
                     hit = true;
                     break;
                 }

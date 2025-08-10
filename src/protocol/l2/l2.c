@@ -287,29 +287,29 @@ static INLINE void _l2_arp_gen(int (*func)(uint32_t *, uint32_t, int))
     struct dpdk_mbuf *mbuf = NULL;
     struct ipv4_manage *ipv4 = NULL;
 
-    count = dpdk_pktmbuf_pop(tls_dp->pktmbuf_pool, tls_cache->data, tls_pending->count);
+    count = dpdk_pktmbuf_pop(tlv_dp->pktmbuf_pool, tlv_cache->data, tlv_pending->count);
     if (UNLIKELY(count != 0)) {
         LOG_ERROR("pktmbuf no enough.");
         return;
     }
 
-    count = tls_pending->count;
+    count = tlv_pending->count;
     for (int i = 0; i < count; i++) {
         uint16_t port = 0;
-        struct arp_item *item = tls_pending->data[i];
+        struct arp_item *item = tlv_pending->data[i];
 
         port = item->port;
-        tx = &tls_tx[port];
+        tx = &tlv_tx[port];
 
         ret = func(&src_ip, item->ip, port);
         if (UNLIKELY(ret != 0)) {
             continue;
         }
 
-        mbuf = tls_cache->data[i];
+        mbuf = tlv_cache->data[i];
         ret = __l2_arp_gen(mbuf, item->port, src_ip, item->ip);
         if (UNLIKELY(ret != 0)) {
-            dpdk_pktmbuf_push(tls_cache->data, count);
+            dpdk_pktmbuf_push(tlv_cache->data, count);
             return;
         }
 
@@ -324,8 +324,8 @@ void l2_arp_refresh(int (*func)(uint32_t *, uint32_t, int))
     int count = 0;
     struct arp_item *cur = NULL;
     struct arp_item *next = NULL;
-    uint32_t time = tls_dp->off_time;
-    struct arp_table *table = ((struct proto_header *)tls_dp->protocol)->at;
+    uint32_t time = tlv_dp->off_time;
+    struct arp_table *table = ((struct proto_header *)tlv_dp->protocol)->at;
 
     static __thread void *s_arp_gc[ARP_GC_MAX] = {NULL};
 
@@ -336,7 +336,7 @@ void l2_arp_refresh(int (*func)(uint32_t *, uint32_t, int))
             } else {
                 cur->retry += 1;
                 cur->send_time = time;
-                tls_pending->data[tls_pending->count++] = cur;
+                tlv_pending->data[tlv_pending->count++] = cur;
             }
         } else { // expired
             list_del_init(&cur->lru_node);
@@ -349,14 +349,20 @@ void l2_arp_refresh(int (*func)(uint32_t *, uint32_t, int))
         }
     }
 
-    if (tls_pending->count != 0) {
+    if (tlv_pending->count != 0) {
         _l2_arp_gen(func);
-        tls_pending->count = 0;
+        tlv_pending->count = 0;
     }
 
     if (count != 0) {
         dpdk_mempool_push(table->pool, s_arp_gc, count);
     }
+}
+
+static INLINE void _l2_add_arp_notify(void *data[], int count, struct dpdk_mbuf *mbuf)
+{
+    DPDK_HEADROOM(mbuf)->type = PKT_MBUF_ARP;
+    data[count] = mbuf;
 }
 
 static void _l2_arp_parse(void *data[], int count)
@@ -366,11 +372,11 @@ static void _l2_arp_parse(void *data[], int count)
     struct dpdk_arp *arp = NULL;
     struct dpdk_mbuf *mbuf = NULL;
     struct dpdk_arp_data *arp_data = NULL;
-    struct proto_header *proto = tls_dp->protocol;
+    struct proto_header *proto = tlv_dp->protocol;
     struct arp_table *at = proto->at;
 
-    int drop_count = tls_drop->count;
-    int notify_count = tls_notify->count;
+    int drop_count = tlv_drop->count;
+    int notify_count = tlv_notify->count;
 
     for (int i = 0; i < count; i++) {
         mbuf = data[i];
@@ -378,18 +384,18 @@ static void _l2_arp_parse(void *data[], int count)
         arp_data = &arp->arp_data;
         port = mbuf->port;
 
-        tx = &tls_tx[port];
+        tx = &tlv_tx[port];
 
         switch (*(uint64_t *)arp) {
         case L2_ARP_RESPONSE:
             switch (l3_ipv4_local_class(port, arp_data->arp_tip)) {
             case IP_LOCAL_CLASS_SELF:
             case IP_LOCAL_CLASS_LAN:
-                _arp_update_or_create(at, port, arp_data->arp_sip, &arp_data->arp_sha, tls_dp->off_time);
-                tls_notify->data[notify_count++] = mbuf;
+                _arp_update_or_create(at, port, arp_data->arp_sip, &arp_data->arp_sha, tlv_dp->off_time);
+                _l2_add_arp_notify(tlv_notify->data, notify_count++, mbuf);
                 break;
             default:
-                tls_drop->data[drop_count++] = mbuf;
+                tlv_drop->data[drop_count++] = mbuf;
                 break;
             }
             break;
@@ -398,10 +404,10 @@ static void _l2_arp_parse(void *data[], int count)
             if (arp_data->arp_sip != arp_data->arp_tip && arp_data->arp_sip != 0) { // ARP Response
                 switch (l3_ipv4_local_class(port, arp_data->arp_tip)) {
                 case IP_LOCAL_CLASS_SELF:
-                    _arp_update_or_create(at, port, arp_data->arp_sip, &arp_data->arp_sha, tls_dp->off_time);
-                    tls_notify->data[notify_count++] = mbuf;
+                    _arp_update_or_create(at, port, arp_data->arp_sip, &arp_data->arp_sha, tlv_dp->off_time);
+                    _l2_add_arp_notify(tlv_notify->data, notify_count++, mbuf);
 
-                    mbuf = dpdk_pktmbuf_copy(mbuf, tls_dp->pktmbuf_pool);
+                    mbuf = dpdk_pktmbuf_copy(mbuf, tlv_dp->pktmbuf_pool);
                     if (UNLIKELY(mbuf == NULL)) {
                         break;
                     }
@@ -410,11 +416,11 @@ static void _l2_arp_parse(void *data[], int count)
                     tx->data[tx->count++] = mbuf;
                     break;
                 case IP_LOCAL_CLASS_LAN:
-                    _arp_update_or_create(at, port, arp_data->arp_sip, &arp_data->arp_sha, tls_dp->off_time);
-                    tls_notify->data[notify_count++] = mbuf;
+                    _arp_update_or_create(at, port, arp_data->arp_sip, &arp_data->arp_sha, tlv_dp->off_time);
+                    _l2_add_arp_notify(tlv_notify->data, notify_count++, mbuf);
                     break;
                 default:
-                    tls_drop->data[drop_count++] = mbuf;
+                    tlv_drop->data[drop_count++] = mbuf;
                     break;
                 }
             } else if (arp_data->arp_sip == 0) {
@@ -424,45 +430,45 @@ static void _l2_arp_parse(void *data[], int count)
                     tx->data[tx->count++] = mbuf;
                     break;
                 default:
-                    tls_drop->data[drop_count++] = mbuf;
+                    tlv_drop->data[drop_count++] = mbuf;
                     break;
                 }
             } else {
                 switch (l3_ipv4_local_class(port, arp_data->arp_tip)) {
                 case IP_LOCAL_CLASS_SELF:
                     LOG_WARN("Local IP address is already in use.");
-                    tls_drop->data[drop_count++] = mbuf;
+                    tlv_drop->data[drop_count++] = mbuf;
                     break;
                 case IP_LOCAL_CLASS_LAN:
-                    _arp_update_or_create(at, port, arp_data->arp_sip, &arp_data->arp_sha, tls_dp->off_time);
-                    tls_notify->data[notify_count++] = mbuf;
+                    _arp_update_or_create(at, port, arp_data->arp_sip, &arp_data->arp_sha, tlv_dp->off_time);
+                    _l2_add_arp_notify(tlv_notify->data, notify_count++, mbuf);
                     break;
                 default:
-                    tls_drop->data[drop_count++] = mbuf;
+                    tlv_drop->data[drop_count++] = mbuf;
                     break;
                 }
             }
             break;
 
         default:
-            tls_drop->data[drop_count++] = mbuf;
+            tlv_drop->data[drop_count++] = mbuf;
             break;
         }
     }
 
-    tls_drop->count = drop_count;
-    tls_notify->count = notify_count;
+    tlv_drop->count = drop_count;
+    tlv_notify->count = notify_count;
 }
 
 void l2_arp_update_or_create(void *arg)
 {
     struct dpdk_mbuf *mbuf = arg;
-    struct proto_header *proto = tls_dp->protocol;
+    struct proto_header *proto = tlv_dp->protocol;
     struct arp_table *at = proto->at;
     struct dpdk_arp *arp = dpdk_pktmbuf_arp(mbuf);
     struct dpdk_arp_data *arp_data = &arp->arp_data;
 
-    _arp_update_or_create(at, mbuf->port, arp_data->arp_sip, &arp_data->arp_sha, tls_dp->off_time);
+    _arp_update_or_create(at, mbuf->port, arp_data->arp_sip, &arp_data->arp_sha, tlv_dp->off_time);
 }
 
 void *l2_thread_arp_table_create(int nic_count, int cpu_id, int numa_id)
@@ -575,23 +581,6 @@ int l2_gratuitous_arp_gen(struct dpdk_mbuf *mbuf, uint16_t port, uint32_t addr, 
     return 0;
 }
 
-int l2_neighbor_solicitation_gen(struct dpdk_mbuf *mbuf, uint16_t port, const union dpdk_ipv6_addr *addr, struct dpdk_mac *mac)
-{
-    struct dpdk_eth *eth = NULL;
-    struct dpdk_ipv6 *ipv6 = NULL;
-    struct dpdk_icmp6 *icmp6 = NULL;
-
-    eth = dpdk_append(mbuf, sizeof(struct dpdk_eth) + sizeof(struct dpdk_ipv6) + sizeof(struct dpdk_icmp6), void *);
-    if (UNLIKELY(eth == NULL)) {
-        LOG_ERROR("There is not enough tailroom space in the last segment.");
-        return -1;
-    }
-
-    mbuf->port = port;
-
-    return 0;
-}
-
 void l2_process(void *data[], int count)
 {
     struct dpdk_eth *eth = NULL;
@@ -609,30 +598,30 @@ void l2_process(void *data[], int count)
         if (MAC_ADDR_CMP(&eth->dst_addr, &s_mac[mbuf->port]) || MAC_IS_TO_LOCAL(&eth->dst_addr)) {
             switch (dpdk_be_to_cpu_16(eth->ether_type)) {
             case DPDK_ETHER_ARP:
-                if (LIKEYLY(mbuf->data_len >= DPDK_ARP_MBUF_LEN_MIN)) {
-                    tls_arp->data[tls_arp->count++] = mbuf;
+                if (LIKEYLY(mbuf->data_len >= sizeof(struct dpdk_eth) + sizeof(struct dpdk_arp))) {
+                    tlv_arp->data[tlv_arp->count++] = mbuf;
                 } else {
-                    tls_drop->data[tls_drop->count++] = mbuf;
+                    tlv_drop->data[tlv_drop->count++] = mbuf;
                 }
                 break;
-            case DPDK_ETHER_IPV4:
-                tls_ipv4->data[tls_ipv4->count++] = mbuf;
+            case DPDK_ETHER_IP4:
+                tlv_ip4->data[tlv_ip4->count++] = mbuf;
                 break;
-            case DPDK_ETHER_IPV6:
-                tls_ipv6->data[tls_ipv6->count++] = mbuf;
+            case DPDK_ETHER_IP6:
+                tlv_ip6->data[tlv_ip6->count++] = mbuf;
                 break;
             default:
-                tls_drop->data[tls_drop->count++] = mbuf;
+                tlv_drop->data[tlv_drop->count++] = mbuf;
                 break;
             }
         } else {
-            tls_drop->data[tls_drop->count++] = mbuf;
+            tlv_drop->data[tlv_drop->count++] = mbuf;
         }
     });
 
-    if (tls_arp->count != 0) {
-        _l2_arp_parse(tls_arp->data, tls_arp->count);
-        tls_arp->count = 0;
+    if (tlv_arp->count != 0) {
+        _l2_arp_parse(tlv_arp->data, tlv_arp->count);
+        tlv_arp->count = 0;
     }
 }
 

@@ -33,7 +33,7 @@ API_PUT(/v1/network/arp, arp)
     return api_succ(NULL);
 }
 
-API_DELETE(/v1/network/arp, arp)
+API_DEL(/v1/network/arp, arp)
 {
     return api_succ(NULL);
 }

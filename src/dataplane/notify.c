@@ -18,48 +18,50 @@ int notify_init(void *arg)
     return 0;
 }
 
-static void _notify_other_thread_arp(void)
+static void _notify_other_thread(void)
 {
     int count = 0;
     int cpu_count = 0;
     int drop_count = 0;
+    struct dpdk_mbuf *one = NULL;
     struct dpdk_mbuf *mbuf = NULL;
     struct dpdk_headroom *headroom = NULL;
 
-    count = tls_notify->count;
-    drop_count = tls_drop->count;
+    count = tlv_notify->count;
+    drop_count = tlv_drop->count;
 
     for (int i = 0; i < count; i++) {
-        mbuf = tls_notify->data[i];
+        mbuf = tlv_notify->data[i];
         headroom = &((struct dpdk_data *)mbuf)->headroom;
         headroom->type = PKT_MBUF_ARP;
 
-        tls_drop->data[drop_count++] = mbuf;
+        tlv_drop->data[drop_count++] = mbuf;
     }
 
-    tls_drop->count = drop_count;
+    tlv_drop->count = drop_count;
 
     cpu_count = root->hw_info.cpu_count;
     for (int i = 0; i < cpu_count; i++) {
         struct dataplane *other = root->dpdk_thread[i];
 
-        if (i == tls_thread_id) {
+        if (i == tlv_thread_id) {
             continue;
         }
 
         for (int j = 0; j < count; j++) {
-            mbuf = dpdk_pktmbuf_clone(tls_notify->data[j], other->pktmbuf_pool);
+            one = tlv_notify->data[j];
+            mbuf = dpdk_pktmbuf_clone(one, other->pktmbuf_pool);
             if (UNLIKELY(mbuf == NULL)) {
                 LOG_ERROR("Notify CPU(%d) failure", i);
-                dpdk_pktmbuf_push(tls_cache->data, j);
+                dpdk_pktmbuf_push(tlv_cache->data, j);
                 break;
             }
 
-            ((struct dpdk_data *)mbuf)->headroom.type = PKT_MBUF_ARP;
-            tls_cache->data[j] = mbuf;
+            DPDK_HEADROOM(mbuf)->type = DPDK_HEADROOM(one)->type;
+            tlv_cache->data[j] = mbuf;
         }
 
-        dpdk_ring_mp_push(other->notice_ring, (void *const *)tls_cache->data, count);
+        dpdk_ring_mp_push(other->notice_ring, (void *const *)tlv_cache->data, count);
     }
 }
 
@@ -71,23 +73,24 @@ static INLINE void _notify_accept_and_handle(void)
     struct dpdk_mbuf *mbuf = NULL;
     static __thread void *mbufs[MBUF_NOTIFY_MAX] = {NULL};
 
-    count = dpdk_ring_sc_pop(tls_dp->notice_ring, mbufs, ARR_NUMS(mbufs));
+    count = dpdk_ring_sc_pop(tlv_dp->notice_ring, mbufs, ARR_NUMS(mbufs));
     for (unsigned i = 0; i < count; i++) {
         mbuf = mbufs[i];
         type = ((struct dpdk_data *)mbuf)->headroom.type;
 
         switch (type) {
-        case PKT_MBUF_GARP: // 0 thread
-            tx = &tls_tx[mbuf->port];
+        case PKT_MBUF_NDP:
+        case PKT_MBUF_GARP:
+            tx = &tlv_tx[mbuf->port];
             tx->data[tx->count++] = mbuf;
             break;
         case PKT_MBUF_ARP:
             l2_arp_update_or_create(mbuf);
-            tls_drop->data[tls_drop->count++] = mbuf;
+            tlv_drop->data[tlv_drop->count++] = mbuf;
             break;
         default:
             LOG_ERROR("Not support type(%d)", type);
-            tls_drop->data[tls_drop->count++] = mbuf;
+            tlv_drop->data[tlv_drop->count++] = mbuf;
             break;
         }
     }
@@ -95,9 +98,9 @@ static INLINE void _notify_accept_and_handle(void)
 
 void notify_do(void)
 {
-    if (tls_notify->count != 0) {
-        _notify_other_thread_arp();
-        tls_notify->count = 0;
+    if (tlv_notify->count != 0) {
+        _notify_other_thread();
+        tlv_notify->count = 0;
     }
 
     _notify_accept_and_handle();

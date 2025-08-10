@@ -43,7 +43,13 @@ static INLINE uint16_t util_cksum_incr_update(uint16_t old_cksum, uint16_t old_w
 
     uint16_t result = (uint16_t)~sum;
 
-    return (result == 0xFFFF) ? 0 : result;
+    return result;
+}
+
+static INLINE uint16_t util_cksum_udp_incr_update(uint16_t old_cksum, uint16_t old_word, uint16_t new_word)
+{
+    uint16_t cksum = util_cksum_incr_update(old_cksum, old_word, new_word);
+    return (cksum == 0) ? 0xFFFF : cksum;
 }
 
 /**
@@ -80,7 +86,13 @@ static INLINE uint16_t util_cksum_incr_update_multi(uint16_t old_cksum, const ui
     cksum = (cksum & 0xFFFF) + (cksum >> 16);
     uint16_t result = (uint16_t)~cksum;
 
-    return (result == 0xFFFF) ? 0 : result;
+    return result;
+}
+
+static INLINE uint16_t util_cksum_udp_incr_update_multi(uint16_t old_cksum, const uint16_t *word, int count)
+{
+    uint16_t cksum = util_cksum_incr_update_multi(old_cksum, word, count);
+    return (cksum == 0) ? 0xFFFF : cksum;
 }
 
 #endif // __UTIL_H__

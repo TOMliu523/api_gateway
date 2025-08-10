@@ -15,6 +15,7 @@ struct timer_context {
     struct timer_arp {
         uint16_t arp_cpu_id;
         uint32_t off_time;
+        uint32_t off_time_ms;
     } ta;
 };
 
@@ -35,13 +36,13 @@ void timer_check(void)
 {
     struct timer_arp *ta = &s_context.ta;
 
-    if (tls_thread_id == ta->arp_cpu_id && tls_dp->off_time > ta->off_time) {
+    if (tlv_thread_id == ta->arp_cpu_id && tlv_dp->off_time > ta->off_time) {
         l3_refresh();
     }
 
-    if (tls_dp->off_time > ta->off_time && dpdk_ip_mbuf_need_recall(tls_dp->frag_handle)) {
-        dpdk_ip_mbuf_recall(tls_dp->frag_handle, tls_dp->timer_cycles);
+    if (tlv_dp->off_time > ta->off_time && dpdk_ip_mbuf_need_recall(tlv_dp->frag_handle)) {
+        dpdk_ip_mbuf_recall(tlv_dp->frag_handle, tlv_dp->timer_cycles);
     }
 
-    ta->off_time = tls_dp->off_time;
+    ta->off_time = tlv_dp->off_time;
 }

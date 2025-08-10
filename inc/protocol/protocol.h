@@ -9,19 +9,18 @@
 
 #include "l2.h"
 #include "l3.h"
-#include "route.h"
+#include "route4.h"
+#include "route6.h"
 
 struct proto_header {
     struct dpdk_mac *mac;
     struct {
         struct arp_table *at;
-        struct route_table *route;
+        struct route4_table *route4;
     };
 
     struct {
-        // struct arp_v6_table *at_v6;
-        // struct route_v6_table route_v6;
-        // struct ipv6_manage *ipv6;
+        struct route6_table *route6;
     };
 };
 

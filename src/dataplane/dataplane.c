@@ -27,22 +27,22 @@
 #define DP_MBUF_MAX (MBUF_STORE_MAX / 2)
 
 // Thread-Local Storage
-__thread uint8_t tls_thread_id;
-__thread struct dataplane *tls_dp;
-__thread struct pkt_store *tls_arp;
-__thread struct pkt_store *tls_ipv4;
-__thread struct pkt_store *tls_ipv6;
-__thread struct pkt_store *tls_icmp;
-__thread struct pkt_store *tls_icmp6;
-__thread struct pkt_store *tls_tcp;
-__thread struct pkt_store *tls_notify;
-__thread struct pkt_store *tls_drop;
-__thread struct pkt_store *tls_pending;
-__thread struct pkt_store *tls_cache;
-__thread struct pkt_tx *tls_tx;
-__thread struct thread_config *tls_th_cfg;
-__thread uint64_t tls_rx_offload[DPDK_ETHPORT_MAX];
-__thread uint64_t tls_tx_offload[DPDK_ETHPORT_MAX];
+__thread uint8_t tlv_thread_id;
+__thread struct dataplane *tlv_dp;
+__thread struct pkt_store *tlv_arp;
+__thread struct pkt_store *tlv_ip4;
+__thread struct pkt_store *tlv_ip6;
+__thread struct pkt_store *tlv_icmp;
+__thread struct pkt_store *tlv_icmp6;
+__thread struct pkt_store *tlv_tcp;
+__thread struct pkt_store *tlv_notify;
+__thread struct pkt_store *tlv_drop;
+__thread struct pkt_store *tlv_pending;
+__thread struct pkt_store *tlv_cache;
+__thread struct pkt_tx *tlv_tx;
+__thread struct thread_config *tlv_th_cfg;
+__thread uint64_t tlv_rx_offload[DPDK_ETHPORT_MAX];
+__thread uint64_t tlv_tx_offload[DPDK_ETHPORT_MAX];
 
 static void _dp_tc_destroy(struct thread_config *nc)
 {
@@ -56,7 +56,7 @@ static void *_dp_tc_create(int nic_count, int hw_numa_id)
 {
     struct iface *iface = NULL;
     struct thread_config *nc = NULL;
-    struct ipv4_manage *ipv4_manage = NULL;
+    struct ip4_manage *ip4_manage = NULL;
 
     nc = dpdk_malloc(sizeof(*nc));
     if (nc == NULL) {
@@ -76,15 +76,15 @@ static void *_dp_tc_create(int nic_count, int hw_numa_id)
         iface->port[i] = i;
     }
 
-    ipv4_manage = l3_thread_startup(hw_numa_id, nic_count);
-    if (UNLIKELY(ipv4_manage == NULL)) {
+    ip4_manage = l3_thread_startup(hw_numa_id, nic_count);
+    if (UNLIKELY(ip4_manage == NULL)) {
         dpdk_free(iface);
         dpdk_free(nc);
         return NULL;
     }
 
     nc->iface = iface;
-    nc->ipv4_manage = ipv4_manage;
+    nc->ip4_manage = ip4_manage;
 
     return nc;
 }
@@ -129,24 +129,24 @@ static void *_dp_pkt_classifier_create(int nic_count)
 
 static INLINE void _dp_thread_local_var_init(void)
 {
-    tls_thread_id = tls_dp->cpu_id;
-    tls_arp = &tls_dp->pc->arp;
-    tls_ipv4 = &tls_dp->pc->ipv4;
-    tls_ipv6 = &tls_dp->pc->ipv6;
-    tls_icmp = &tls_dp->pc->icmp;
-    tls_icmp6 = &tls_dp->pc->icmp6;
-    tls_tcp = &tls_dp->pc->tcp;
-    tls_drop = &tls_dp->pc->drop;
-    tls_notify = &tls_dp->pc->notify;
-    tls_pending = &tls_dp->pc->pending;
-    tls_cache = &tls_dp->pc->cache;
-    tls_tx = tls_dp->pc->tx;
-    tls_th_cfg = tls_dp->tc;
-    tls_dp->mtu = 1500;
+    tlv_thread_id = tlv_dp->cpu_id;
+    tlv_arp = &tlv_dp->pc->arp;
+    tlv_ip4 = &tlv_dp->pc->ip4;
+    tlv_ip6 = &tlv_dp->pc->ip6;
+    tlv_icmp = &tlv_dp->pc->icmp;
+    tlv_icmp6 = &tlv_dp->pc->icmp6;
+    tlv_tcp = &tlv_dp->pc->tcp;
+    tlv_drop = &tlv_dp->pc->drop;
+    tlv_notify = &tlv_dp->pc->notify;
+    tlv_pending = &tlv_dp->pc->pending;
+    tlv_cache = &tlv_dp->pc->cache;
+    tlv_tx = tlv_dp->pc->tx;
+    tlv_th_cfg = tlv_dp->tc;
+    tlv_dp->mtu = 1500;
 
     for (int i = 0; i < DPDK_ETHPORT_MAX; i++) {
-        tls_rx_offload[i] = dpdk_port_rx_offload_get(i);
-        tls_tx_offload[i] = dpdk_port_tx_offload_get(i);
+        tlv_rx_offload[i] = dpdk_port_rx_offload_get(i);
+        tlv_tx_offload[i] = dpdk_port_tx_offload_get(i);
     }
 }
 
@@ -156,68 +156,68 @@ static INLINE void _dp_init(void *arg)
     struct root *root = arg;
     char name[NOTICE_NAME_MAX] = "";
 
-    tls_dp = dpdk_malloc(sizeof(*tls_dp));
-    if (UNLIKELY(tls_dp == NULL)) {
+    tlv_dp = dpdk_malloc(sizeof(*tlv_dp));
+    if (UNLIKELY(tlv_dp == NULL)) {
         LOG_ERROR("OOM.");
         goto _quit;
     }
-    memset(tls_dp, 0, sizeof(*tls_dp));
+    memset(tlv_dp, 0, sizeof(*tlv_dp));
 
-    tls_dp->hz_per_second = dpdk_timer_hz();
-    dpdk_thread_info(&tls_dp->numa_id,
-                     &tls_dp->numa_cpu_id,
-                     &tls_dp->cpu_id,
-                     &tls_dp->hw_numa_id,
-                     &tls_dp->hw_cpu_id);
-    tls_thread_id = tls_dp->cpu_id;
+    tlv_dp->hz_per_second = dpdk_timer_hz();
+    dpdk_thread_info(&tlv_dp->numa_id,
+                     &tlv_dp->numa_cpu_id,
+                     &tlv_dp->cpu_id,
+                     &tlv_dp->hw_numa_id,
+                     &tlv_dp->hw_cpu_id);
+    tlv_thread_id = tlv_dp->cpu_id;
 
-    tls_dp->rcu = dpdk_rcu_get(tls_dp->numa_id, tls_dp->numa_cpu_id);
-    if (tls_dp->rcu == NULL) {
+    tlv_dp->rcu = dpdk_rcu_get(tlv_dp->numa_id, tlv_dp->numa_cpu_id);
+    if (tlv_dp->rcu == NULL) {
         LOG_ERROR("RCU init failure.");
         goto _quit;
     }
 
-    tls_dp->tc = _dp_tc_create(root->hw_info.nic_count, tls_dp->hw_numa_id);
-    if (tls_dp->tc == NULL) {
+    tlv_dp->tc = _dp_tc_create(root->hw_info.nic_count, tlv_dp->hw_numa_id);
+    if (tlv_dp->tc == NULL) {
         goto _quit;
     }
 
-    snprintf(name, sizeof(name), "NOTICE_POOL_THREAD_%03d", tls_dp->cpu_id);
-    tls_dp->pktmbuf_pool = dpdk_pool_pktmbuf_get_by_numa(tls_dp->numa_id);
-    if (tls_dp->pktmbuf_pool == NULL) {
-        LOG_ERROR("Failure cpu_id(%d) dpdk_pool_pktmbuf_get_by_numa", tls_dp->cpu_id);
+    snprintf(name, sizeof(name), "NOTICE_POOL_THREAD_%03d", tlv_dp->cpu_id);
+    tlv_dp->pktmbuf_pool = dpdk_pool_pktmbuf_get_by_numa(tlv_dp->numa_id);
+    if (tlv_dp->pktmbuf_pool == NULL) {
+        LOG_ERROR("Failure cpu_id(%d) dpdk_pool_pktmbuf_get_by_numa", tlv_dp->cpu_id);
         goto _quit;
     }
 
-    tls_dp->indirect_pool = dpdk_indirect_pool_pktmbuf_get_by_numa(tls_dp->numa_id);
-    if (tls_dp->indirect_pool == NULL) {
-        LOG_ERROR("Failure cpu_id(%d) dpdk_indirect_pool_pktmbuf_get_by_numa", tls_dp->cpu_id);
+    tlv_dp->indirect_pool = dpdk_indirect_pool_pktmbuf_get_by_numa(tlv_dp->numa_id);
+    if (tlv_dp->indirect_pool == NULL) {
+        LOG_ERROR("Failure cpu_id(%d) dpdk_indirect_pool_pktmbuf_get_by_numa", tlv_dp->cpu_id);
         goto _quit;
     }
 
-    tls_dp->frag_handle = dpdk_ip_frag_table_create(tls_dp->hz_per_second, tls_dp->hw_numa_id);
-    if (UNLIKELY(tls_dp->frag_handle == NULL)) {
+    tlv_dp->frag_handle = dpdk_ip_frag_table_create(tlv_dp->hz_per_second, tlv_dp->hw_numa_id);
+    if (UNLIKELY(tlv_dp->frag_handle == NULL)) {
         goto _quit;
     }
 
-    tls_dp->pc = _dp_pkt_classifier_create(root->hw_info.nic_count);
-    if (tls_dp->pc == NULL) {
+    tlv_dp->pc = _dp_pkt_classifier_create(root->hw_info.nic_count);
+    if (tlv_dp->pc == NULL) {
         goto _quit;
     }
 
-    tls_dp->protocol = protocol_create(root->hw_info.nic_count, tls_dp);
-    if (tls_dp->protocol == NULL) {
+    tlv_dp->protocol = protocol_create(root->hw_info.nic_count, tlv_dp);
+    if (tlv_dp->protocol == NULL) {
         goto _quit;
     }
 
-    snprintf(name, sizeof(name), "NOTICE_RING_THREAD_%03d", tls_dp->cpu_id);
-    tls_dp->notice_ring = dpdk_ring_ms_create(name, NOTICE_NUMS, tls_dp->hw_numa_id);
-    if (tls_dp->notice_ring == NULL) {
+    snprintf(name, sizeof(name), "NOTICE_RING_THREAD_%03d", tlv_dp->cpu_id);
+    tlv_dp->notice_ring = dpdk_ring_ms_create(name, NOTICE_NUMS, tlv_dp->hw_numa_id);
+    if (tlv_dp->notice_ring == NULL) {
         goto _quit;
     }
 
-    tls_dp->stats = dpdk_malloc(sizeof(*tls_dp->stats));
-    if (tls_dp->stats == NULL) {
+    tlv_dp->stats = dpdk_malloc(sizeof(*tlv_dp->stats));
+    if (tlv_dp->stats == NULL) {
         LOG_ERROR("OOM");
         goto _quit;
     }
@@ -226,11 +226,11 @@ static INLINE void _dp_init(void *arg)
         goto _quit;
     }
 
-    dpdk_thread_set_name(tls_dp->numa_id, (uint8_t)tls_dp->cpu_id);
+    dpdk_thread_set_name(tlv_dp->numa_id, (uint8_t)tlv_dp->cpu_id);
 
     _dp_thread_local_var_init();
 
-    atomic_store(&root->dpdk_thread[tls_dp->cpu_id], tls_dp);
+    atomic_store(&root->dpdk_thread[tlv_dp->cpu_id], tlv_dp);
 
     /*
      * Must wait for all threads to complete initialization before starting business logic,
@@ -254,14 +254,14 @@ static INLINE void _dp_init(void *arg)
 
 _quit:
     // TODO 2025-07-14
-    if (tls_dp != NULL) {
-        dpdk_free(tls_dp->stats);
-        dpdk_ring_destroy(tls_dp->notice_ring);
-        dpdk_ip_frag_table_destroy(tls_dp->frag_handle);
-        protocol_destroy(tls_dp->protocol);
-        _dp_pkt_classifier_destroy(tls_dp->pc);
-        _dp_tc_destroy(tls_dp->tc);
-        dpdk_free(tls_dp);
+    if (tlv_dp != NULL) {
+        dpdk_free(tlv_dp->stats);
+        dpdk_ring_destroy(tlv_dp->notice_ring);
+        dpdk_ip_frag_table_destroy(tlv_dp->frag_handle);
+        protocol_destroy(tlv_dp->protocol);
+        _dp_pkt_classifier_destroy(tlv_dp->pc);
+        _dp_tc_destroy(tlv_dp->tc);
+        dpdk_free(tlv_dp);
     }
 
     exit(EXIT_FAILURE);
@@ -269,9 +269,9 @@ _quit:
 
 static INLINE void _dp_time_update(double inv_hz, double inv_hz_ms)
 {
-    tls_dp->timer_cycles = dpdk_timer_cycles();
-    tls_dp->off_time = tls_dp->timer_cycles * inv_hz;
-    tls_dp->off_time_ms = tls_dp->timer_cycles * inv_hz_ms;
+    tlv_dp->timer_cycles = dpdk_timer_cycles();
+    tlv_dp->off_time = tlv_dp->timer_cycles * inv_hz;
+    tlv_dp->off_time_ms = tlv_dp->timer_cycles * inv_hz_ms;
 }
 
 static INLINE void _dp_mbuf_send(const uint16_t ports[], int count)
@@ -282,11 +282,11 @@ static INLINE void _dp_mbuf_send(const uint16_t ports[], int count)
 
     UNROLL_LOOP_8(i, count, {
         port = ports[i];
-        tx = &tls_tx[port];
+        tx = &tlv_tx[port];
         cnt = tx->count;
 
         if (cnt != 0) {
-            int nums = dpdk_pktmbuf_tx(port, tls_thread_id, tx->data, cnt);
+            int nums = dpdk_pktmbuf_tx(port, tlv_thread_id, tx->data, cnt);
             if (UNLIKELY(nums != cnt)) {
                 dpdk_pktmbuf_push(tx->data + nums, cnt - nums);
             }
@@ -298,10 +298,10 @@ static INLINE void _dp_mbuf_send(const uint16_t ports[], int count)
 
 static INLINE void _dp_mbuf_drop(void)
 {
-    int cnt = tls_drop->count;
+    int cnt = tlv_drop->count;
     if (cnt != 0) {
-        dpdk_pktmbuf_push(tls_drop->data, cnt);
-        tls_drop->count = 0;
+        dpdk_pktmbuf_push(tlv_drop->data, cnt);
+        tlv_drop->count = 0;
     }
 }
 
@@ -323,11 +323,11 @@ int dp_startup(void *arg)
      */
     _dp_init(arg);
 
-    inv_hz = 1.0 / (double) tls_dp->hz_per_second;
-    inv_hz_ms = 1000.0 / (double) tls_dp->hz_per_second;
+    inv_hz = 1.0 / (double) tlv_dp->hz_per_second;
+    inv_hz_ms = 1000.0 / (double) tlv_dp->hz_per_second;
 
     for (;;) {
-        iface = rcu_dereference(tls_th_cfg->iface);
+        iface = rcu_dereference(tlv_th_cfg->iface);
 
         ports = iface->port;
         port_nums = iface->nums;
@@ -338,14 +338,12 @@ int dp_startup(void *arg)
         for (int i = 0; i < DP_LOOP_MAX; i++) {
             count = 0;
             UNROLL_LOOP_8(j, port_nums, {
-                count += dpdk_pktmbuf_rx(ports[j], tls_thread_id, mbuf + count, count_rx_per);
+                count += dpdk_pktmbuf_rx(ports[j], tlv_thread_id, mbuf + count, count_rx_per);
             });
 
             if (count != 0) {
                 l2_process(mbuf, count);
-
                 l3_process();
-
                 // l4_process();
             }
 
@@ -356,7 +354,7 @@ int dp_startup(void *arg)
             _dp_mbuf_drop();
         }
 
-        dpdk_rcu_quiescent(tls_dp->rcu, tls_dp->numa_cpu_id);
+        dpdk_rcu_quiescent(tlv_dp->rcu, tlv_dp->numa_cpu_id);
     }
 
     // TODO fini

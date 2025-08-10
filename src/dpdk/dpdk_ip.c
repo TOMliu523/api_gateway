@@ -1,5 +1,5 @@
 /*****************************************************************************
- * filename: dpdk_ipv4.c
+ * filename: dpdk_ip4.c
  * function:
  * description:
  ****************************************************************************/
@@ -14,7 +14,7 @@
 #define DPDK_IP_FRAG_BUCKET_ENTRIES 32
 #define DPDK_IP_FRAG_MAX_ENTRIES 102400
 
-static __thread struct dpdk_ip_frag_handle tls_handle = {
+static __thread struct dpdk_ip_frag_handle tlv_handle = {
     .add_mbuf_count = 0,
     .sub_mbuf_count = 0,
 };
@@ -43,10 +43,10 @@ void *dpdk_ip_frag_table_create(uint64_t max_cycles, int hw_numa_id)
 
     memset(queue, 0, sizeof(*queue));
 
-    tls_handle.table = table;
-    tls_handle.queue = queue;
+    tlv_handle.table = table;
+    tlv_handle.queue = queue;
 
-    return &tls_handle;
+    return &tlv_handle;
 }
 
 void dpdk_ip_frag_table_destroy(void *table)

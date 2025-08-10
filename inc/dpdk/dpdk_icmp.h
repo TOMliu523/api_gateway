@@ -12,11 +12,20 @@
 #include <rte_cksum.h>
 
 #include "util.h"
+#include "dpdk_ip.h"
 #include "dpdk_type.h"
+#include "dpdk_common.h"
 
 #define DPDK_ICMP_TYPE_ECHO_REPLY RTE_ICMP_TYPE_ECHO_REPLY
 #define DPDK_ICMP_TYPE_ECHO_REQUEST RTE_ICMP_TYPE_ECHO_REQUEST
 #define DPDK_ICMP_CODE_ECHO_REQUEST RTE_ICMP_CODE_UNREACH_NET
+
+#define dpdk_icmp rte_icmp_hdr
+
+static INLINE struct dpdk_icmp *dpdk_pktmbuf_icmp(struct dpdk_mbuf *m, uint16_t off)
+{
+    return rte_pktmbuf_mtod_offset(m, struct dpdk_icmp *, off);
+}
 
 static INLINE bool dpdk_icmp_cksum_verify(const struct dpdk_mbuf *mbuf, const struct dpdk_icmp *icmp, uint16_t icmp_len)
 {

@@ -10,6 +10,9 @@
 #include "log.h"
 #include "dpdk_type.h"
 
+#define dpdk_ring rte_ring
+#define dpdk_pool rte_mempool
+
 #define DPDK_POOL_CACHE_SIZE 64
 #define dpdk_append(mbuf, len, t) ((t) rte_pktmbuf_append(mbuf, len))
 
@@ -183,16 +186,6 @@ static INLINE struct dpdk_eth *dpdk_pktmbuf_eth(struct dpdk_mbuf *m)
 static INLINE struct dpdk_arp *dpdk_pktmbuf_arp(struct dpdk_mbuf *m)
 {
     return rte_pktmbuf_mtod_offset(m, struct dpdk_arp *, sizeof(struct dpdk_eth));
-}
-
-static INLINE struct dpdk_ipv6 *dpdk_pktmbuf_ipv6(struct dpdk_mbuf *m)
-{
-    return rte_pktmbuf_mtod_offset(m, struct dpdk_ipv6 *, sizeof(struct dpdk_eth));
-}
-
-static INLINE struct dpdk_icmp *dpdk_pktmbuf_icmp(struct dpdk_mbuf *m, uint16_t off)
-{
-    return rte_pktmbuf_mtod_offset(m, struct dpdk_icmp *, off);
 }
 
 #define DPDK_PKTMBUF_TO_TYPE(m, type, offset) rte_pktmbuf_mtod_offset(m, type, offset)

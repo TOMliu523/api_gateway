@@ -85,7 +85,7 @@ static void *api_account_put_update(void *cfg, const char *url, void *json, void
     return _api_account(cfg, url, json, sess, false);
 }
 
-API_DELETE(/v1/system/account, account)
+API_DEL(/v1/system/account, account)
 {
     return api_succ(NULL);
 }

@@ -76,7 +76,7 @@
         api_put_register(#uri, #container, fn1, fn2, fn3); \
     }
 
-#define API_DELETE(uri, container) \
+#define API_DEL(uri, container) \
     static void *CAT(container, _delete)(void *cfg, const char *, void *, void *); \
     static PROC_INIT void CAT2(container, _delete, _startup)(void) { \
         api_delete_register(#uri, #container, CAT(container, _delete)); \

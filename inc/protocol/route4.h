@@ -1,11 +1,11 @@
 /*****************************************************************************
- * filename: route.h
+ * filename: route4.h
  * function:
  * description:
  ****************************************************************************/
 
-#ifndef __ROUTE_H__
-#define __ROUTE_H__
+#ifndef __ROUTE4_H__
+#define __ROUTE4_H__
 
 #include <stdint.h>
 #include <stdbool.h>
@@ -13,16 +13,16 @@
 #include "list.h"
 #include "dpdk_fib.h"
 
-enum ROUTE_TYPE {
-    ROUTE_DIRECT,
-    ROUTE_MANUAL,
-    ROUTE_PROTO_BGP,
-    ROUTE_PROTO_OSPF,
-    ROUTE_PROTO_ISIS,
-    ROUTE_PROTO_RIP,
+enum ROUTE4_TYPE {
+    ROUTE4_DIRECT,
+    ROUTE4_MANUAL,
+    ROUTE4_PROTO_BGP,
+    ROUTE4_PROTO_OSPF,
+    ROUTE4_PROTO_ISIS,
+    ROUTE4_PROTO_RIP,
 };
 
-struct route_item {
+struct route4_item {
     struct list_head lru_head;   // Aging list entry
 	uint32_t nexthop;            // Next hop IP address (network byte order)
 	uint32_t dst_subnet;         // Destination IP address (network byte order)
@@ -36,21 +36,21 @@ struct route_item {
 	uint16_t direct_id;          // Reference to associated direct route for recursive resolution
 };
 
-extern int route_conf_create_and_append(void **dst,
+extern int route4_conf_create_and_append(void **dst,
                                         void *src,
-                                        const struct route_item *item,
+                                        const struct route4_item *item,
                                         int count,
                                         int hw_numa_id,
                                         const void *arg);
-extern int route_conf_create_and_delete(void **dst,
+extern int route4_conf_create_and_delete(void **dst,
                                         void *src,
-                                        const struct route_item *items,
+                                        const struct route4_item *items,
                                         int count,
                                         int hw_numa_id,
                                         bool is_route);
-extern void route_conf_table_get(void *src, struct route_item **item, int *count);
-extern void route_conf_destroy(void *ptr);
-extern void route_conf_update_lock(void);
-extern void route_conf_update_unlock(void);
+extern void route4_conf_table_get(void *src, struct route4_item **item, int *count);
+extern void route4_conf_destroy(void *ptr);
+extern void route4_conf_update_lock(void);
+extern void route4_conf_update_unlock(void);
 
-#endif // __ROUTE_H__
+#endif // __ROUTE4_H__

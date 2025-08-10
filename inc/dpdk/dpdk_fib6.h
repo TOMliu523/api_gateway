@@ -9,7 +9,7 @@
 
 #include <rte_fib6.h>
 
-#include "dpdk_type.h"
+#include "dpdk_ip6.h"
 
 #define dpdk_fib6 rte_fib6
 
@@ -19,17 +19,17 @@
 extern struct dpdk_fib6 *dpdk_fib6_create(int hw_numa_id, int max_item);
 extern void dpdk_fib6_destroy(struct dpdk_fib6 *fib);
 
-static INLINE int dpdk_fib6_add(struct dpdk_fib6 *fib, const union dpdk_ipv6_addr *ip6, uint8_t mask, uint64_t next_hop)
+static INLINE int dpdk_fib6_add(struct dpdk_fib6 *fib, const union dpdk_ip6_addr *ip6, uint8_t mask, uint64_t next_hop)
 {
     return rte_fib6_add(fib, (const struct rte_ipv6_addr *)ip6, mask, next_hop);
 }
 
-static INLINE int dpdk_fib6_del(struct dpdk_fib6 *fib, const union dpdk_ipv6_addr *ip6, uint8_t mask)
+static INLINE int dpdk_fib6_del(struct dpdk_fib6 *fib, const union dpdk_ip6_addr *ip6, uint8_t mask)
 {
     return rte_fib6_delete(fib, (const struct rte_ipv6_addr *)ip6, mask);
 }
 
-static INLINE int dpdk_fib6_lookup(struct dpdk_fib6 *fib, const union dpdk_ipv6_addr ip6[], uint64_t next_hop[], int n)
+static INLINE int dpdk_fib6_lookup(struct dpdk_fib6 *fib, const union dpdk_ip6_addr ip6[], uint64_t next_hop[], int n)
 {
     return rte_fib6_lookup_bulk(fib, (const struct rte_ipv6_addr *)ip6, next_hop, n);
 }

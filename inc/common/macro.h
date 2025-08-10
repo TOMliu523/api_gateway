@@ -48,7 +48,7 @@
 #endif // ALIGNED
 
 #ifndef ALIGN_PACKED
-#define ALIGN_PACKED __attribute__((aligned(1)))
+#define ALIGN_PACKED __attribute__((__packed__))
 #endif // ALIGN_PACKED
 
 #ifndef ALIGN_CACHE_LINE

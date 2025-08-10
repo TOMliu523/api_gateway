@@ -7,7 +7,7 @@ submodule network {
         prefix "inet";
     }
 
-    container ip {
+    container ip4 {
         list entrys {
             key "name ip";
             leaf name {
@@ -75,7 +75,7 @@ submodule network {
         }
     }
 
-    container route {
+    container route4 {
         list entrys {
             key "net mask";
 

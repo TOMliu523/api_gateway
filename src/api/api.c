@@ -46,7 +46,7 @@ struct api_method {
 };
 
 static struct api_method s_method;
-static const char *s_tls_ca =
+static const char *s_tlv_ca =
     "-----BEGIN CERTIFICATE-----\n"
     "MIIBFTCBvAIJAMNTFtpfcq8NMAoGCCqGSM49BAMCMBMxETAPBgNVBAMMCE1vbmdv\n"
     "b3NlMB4XDTI0MDUwNzE0MzczNloXDTM0MDUwNTE0MzczNlowEzERMA8GA1UEAwwI\n"
@@ -55,7 +55,7 @@ static const char *s_tls_ca =
     "epsRMAoGCCqGSM49BAMCA0gAMEUCIQCwb2CxuAKm51s81S6BIoy1IcandXSohnqs\n"
     "us64BAA7QgIgGGtUrpkgFSS0oPBlCUG6YPHFVw42vTfpTC0ySwAS0M4=\n"
     "-----END CERTIFICATE-----\n";
-static const char *s_tls_cert =
+static const char *s_tlv_cert =
     "-----BEGIN CERTIFICATE-----\n"
     "MIIBMTCB2aADAgECAgkAluqkgeuV/zUwCgYIKoZIzj0EAwIwEzERMA8GA1UEAwwI\n"
     "TW9uZ29vc2UwHhcNMjQwNTA3MTQzNzM2WhcNMzQwNTA1MTQzNzM2WjARMQ8wDQYD\n"
@@ -65,7 +65,7 @@ static const char *s_tls_cert =
     "RAIgTXW9MITQSwzqbNTxUUdt9DcB+8pPUTbWZpiXcA26GMYCIBiYw+DSFMLHmkHF\n"
     "+5U3NXW3gVCLN9ntD5DAx8LTG8sB\n"
     "-----END CERTIFICATE-----\n";
-static const char *s_tls_key =
+static const char *s_tlv_key =
     "-----BEGIN EC PRIVATE KEY-----\n"
     "MHcCAQEEIAVdo8UAScxG7jiuNY2UZESNX/KPH8qJ0u0gOMMsAzYWoAoGCCqGSM49\n"
     "AwEHoUQDQgAEqN6BIhvgbk7ecmUcn8Da9Avkj/uDNERtqWJG9r/or26X4u9jR5Jl\n"
@@ -397,12 +397,12 @@ static void _api_load_cb(struct mg_connection *c, int event, void *event_data)
     switch (event) {
     /*case MG_EV_ACCEPT:
         if (c->fn_data != NULL) {
-            struct mg_tls_opts opts = {
-                .ca = mg_str(s_tls_ca),
-                .cert = mg_str(s_tls_cert),
-                .key = mg_str(s_tls_key),
+            struct mg_tlv_opts opts = {
+                .ca = mg_str(s_tlv_ca),
+                .cert = mg_str(s_tlv_cert),
+                .key = mg_str(s_tlv_key),
             };
-            mg_tls_init(c, &opts);
+            mg_tlv_init(c, &opts);
         }
         break;*/
 

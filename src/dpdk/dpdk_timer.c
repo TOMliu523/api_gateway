@@ -7,6 +7,7 @@
 #include <rte_errno.h>
 
 #include "log.h"
+#include "timeout.h"
 #include "dpdk_core.h"
 #include "dpdk_inner.h"
 #include "dpdk_timer.h"
@@ -17,18 +18,12 @@ struct dpdk_timer_ctl {
 
 static struct dpdk_timer_ctl s_timer_ctl;
 
-int dpdk_timer_startup(void)
+int dpdk_timer_start(void)
 {
     int ret = 0;
     char name[CACHE_LINE] = "";
     struct numa_cpu *nc = NULL;
     struct dpdk_timer_ctl *ctl = &s_timer_ctl;
-
-    ret = dpdk_timer_subsystem_init();
-    if (ret != 0) {
-        LOG_ERROR("Init timer failure: %s", strerror(-rte_errno));
-        return -1;
-    }
 
     nc = dpdk_numa_cpu_get();
     for (int i = 0; i < nc->numa_count; i++) {
@@ -37,7 +32,7 @@ int dpdk_timer_startup(void)
         snprintf(name, sizeof(name), "DPDK_TIMER_%d", i);
         ctl->timer_pool[i] = dpdk_pool_mm_create(name,
                                                  n2c->count * DPDK_MAX_TIMER_PER_CPU,
-                                                 sizeof(struct dpdk_timer),
+                                                 sizeof(struct timeout),
                                                  n2c->hw_numa_id);
         if (ctl->timer_pool[i] == NULL) {
             goto _quit;
@@ -47,16 +42,38 @@ int dpdk_timer_startup(void)
     return 0;
 
 _quit:
-    for (int i = 0; i < nc->numa_count; i++) {
-        dpdk_pool_destroy(ctl->timer_pool[i]);
-    }
-
-    dpdk_timer_subsystem_fini();
+    dpdk_timer_close();
     return -1;
 }
 
-void dpdk_timer_shutdown(void)
+void *dpdk_timer_thread_create(void)
 {
+    int error = 0;
+
+    struct timeouts *tos = timeouts_open(TIMEOUT_mHZ, &error);
+    if (tos == NULL) {
+        LOG_ERROR("DPDK timer error: %s.", strerror(error));
+        return NULL;
+    }
+
+    return tos;
+}
+
+void dpdk_timer_thread_destroy(void *arg)
+{
+    if (arg != NULL) {
+        timeouts_close(arg);
+    }
+}
+
+void dpdk_timer_close(void)
+{
+    struct dpdk_timer_ctl * ctl = &s_timer_ctl;
+    for (int i = 0; i < NUMA_MAX; i++) {
+        if (ctl->timer_pool[i] != NULL) {
+            dpdk_pool_destroy(ctl->timer_pool[i]);
+        }
+    }
 }
 
 void *dpdk_timer_pool_get(int numa_id)
