@@ -20,14 +20,14 @@
 #define DPDK_ICMP_TYPE_ECHO_REQUEST RTE_ICMP_TYPE_ECHO_REQUEST
 #define DPDK_ICMP_CODE_ECHO_REQUEST RTE_ICMP_CODE_UNREACH_NET
 
-#define dpdk_icmp rte_icmp_hdr
+#define dpdk_icmp_hdr rte_icmp_hdr
 
-static INLINE struct dpdk_icmp *dpdk_pktmbuf_icmp(struct dpdk_mbuf *m, uint16_t off)
+static INLINE struct dpdk_icmp_hdr *dpdk_pktmbuf_icmp(struct dpdk_mbuf *m, uint16_t off)
 {
-    return rte_pktmbuf_mtod_offset(m, struct dpdk_icmp *, off);
+    return rte_pktmbuf_mtod_offset(m, struct dpdk_icmp_hdr *, off);
 }
 
-static INLINE bool dpdk_icmp_cksum_verify(const struct dpdk_mbuf *mbuf, const struct dpdk_icmp *icmp, uint16_t icmp_len)
+static INLINE bool dpdk_icmp_cksum_verify(const struct dpdk_mbuf *mbuf, const struct dpdk_icmp_hdr *icmp, uint16_t icmp_len)
 {
     uint16_t cksum = 0;
 
@@ -40,7 +40,7 @@ static INLINE bool dpdk_icmp_cksum_verify(const struct dpdk_mbuf *mbuf, const st
     return (cksum == UINT16_MAX) ? true : false;
 }
 
-static INLINE void dpdk_icmp_echo_reply_cksum(struct dpdk_icmp *icmp)
+static INLINE void dpdk_icmp_echo_reply_cksum(struct dpdk_icmp_hdr *icmp)
 {
     uint16_t old_cksum = dpdk_be_to_cpu_16(icmp->icmp_cksum);
     uint16_t old_word = dpdk_be_to_cpu_16(*(uint16_t *)&icmp->icmp_type);
@@ -52,7 +52,7 @@ static INLINE void dpdk_icmp_echo_reply_cksum(struct dpdk_icmp *icmp)
 }
 
 // TODO need debug
-static INLINE void dpdk_icmp_cksum(const struct dpdk_mbuf *mbuf, struct dpdk_icmp *icmp, uint16_t icmp_len)
+static INLINE void dpdk_icmp_cksum(const struct dpdk_mbuf *mbuf, struct dpdk_icmp_hdr *icmp, uint16_t icmp_len)
 {
     uint16_t cksum = 0;
 

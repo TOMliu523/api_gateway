@@ -17,6 +17,7 @@ add_library(${NAME} STATIC ${NO_SRC_LIST})
 target_include_directories(${NAME} PRIVATE ${DPDK_INC})
 target_include_directories(${NAME} PRIVATE ${COMMON_INC})
 target_include_directories(${NAME} PRIVATE ${PROTOCOL_INC})
+target_include_directories(${NAME} PRIVATE ${PROTOCOL_CONF_INC})
 target_include_directories(${NAME} PRIVATE ${DPDK_INCLUDE_DIRS})
 
 target_link_libraries(${PROJECT_NAME} PRIVATE

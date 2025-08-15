@@ -13,6 +13,7 @@ set(DPDK_INC ${INC}/dpdk)
 set(COMMON_INC ${INC}/common)
 set(PROTOCOL_INC ${INC}/protocol)
 set(DATAPLANE_INC ${INC}/dataplane)
+set(PROTOCOL_CONF_INC ${INC}/protocol/conf)
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(DPDK REQUIRED IMPORTED_TARGET libdpdk)

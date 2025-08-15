@@ -15,6 +15,7 @@
 
 #define DPDK_POOL_CACHE_SIZE 64
 #define dpdk_append(mbuf, len, t) ((t) rte_pktmbuf_append(mbuf, len))
+#define dpdk_prepend(mbuf, len, t) ((t) rte_pktmbuf_prepend(mbuf, len))
 
 extern int dpdk_pool_pktmbuf_create(void);
 extern void * const *dpdk_pool_pktmbuf_get(void);
@@ -178,14 +179,19 @@ static void *dpdk_pktmbuf_prepend(struct dpdk_mbuf *mbuf, size_t len)
     return rte_pktmbuf_prepend(mbuf, len);
 }
 
-static INLINE struct dpdk_eth *dpdk_pktmbuf_eth(struct dpdk_mbuf *m)
-{
-    return rte_pktmbuf_mtod(m, struct dpdk_eth *);
-}
-
 static INLINE struct dpdk_arp *dpdk_pktmbuf_arp(struct dpdk_mbuf *m)
 {
     return rte_pktmbuf_mtod_offset(m, struct dpdk_arp *, sizeof(struct dpdk_eth));
+}
+
+static INLINE const void *dpdk_pktmbuf_read(const struct dpdk_mbuf *mbuf, uint32_t off, uint32_t len, void *buf)
+{
+    return rte_pktmbuf_read(mbuf, off, len, buf);
+}
+
+static INLINE int dpdk_pktmbuf_trim(struct dpdk_mbuf *mbuf, uint16_t len)
+{
+    return rte_pktmbuf_trim(mbuf, len);
 }
 
 #define DPDK_PKTMBUF_TO_TYPE(m, type, offset) rte_pktmbuf_mtod_offset(m, type, offset)

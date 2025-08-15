@@ -11,8 +11,8 @@
 #define CACHE_LINE 64
 #endif // CACHE_LINE
 
-#ifndef LIKEYLY
-#define LIKEYLY(x) __builtin_expect(!!(x), 1)
+#ifndef LIKELY
+#define LIKELY(x) __builtin_expect(!!(x), 1)
 #endif // LIKELY
 
 #ifndef UNLIKELY

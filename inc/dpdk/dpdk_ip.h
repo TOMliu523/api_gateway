@@ -10,17 +10,12 @@
 #include <stdbool.h>
 #include <rte_ip_frag.h>
 
-#include "dpdk_ip4.h"
-#include "dpdk_ip6.h"
+#include "macro.h"
 
 #define dpdk_ip_frag_table rte_ip_frag_tbl
 #define dpdk_ip_frag_death_queue rte_ip_frag_death_row
 
 #define DPDK_IP_FRAG_RECALL_THOLD 1024
-
-#define DPDK_PTYPE_IP4 RTE_PTYPE_L3_IPV4
-#define DPDK_PTYPE_IP6 RTE_PTYPE_L3_IPV6
-#define DPDK_PTYPE_L3_TYPE(type) ((type) & RTE_PTYPE_L3_MASK)
 
 struct dpdk_ip_frag_handle {
     uint32_t continue_fail_thold;
@@ -30,30 +25,8 @@ struct dpdk_ip_frag_handle {
     struct dpdk_ip_frag_death_queue *queue;
 };
 
-union dpdk_ip {
-    uint32_t ip4;
-    union dpdk_ip6_addr ip6;
-};
-
 extern void *dpdk_ip_frag_table_create(uint64_t max_cycles, int hw_numa_id);
 extern void dpdk_ip_frag_table_destroy(void *handle);
-
-static INLINE bool dpdk_ip4_mbuf_is_fragmented(const struct dpdk_ip4_hdr *ip4hdr)
-{
-    return rte_ipv4_frag_pkt_is_fragmented(ip4hdr);
-}
-
-static INLINE struct dpdk_mbuf *dpdk_ip4_mbuf_reassemble(void *arg, struct dpdk_mbuf *mb, uint64_t tms, struct dpdk_ip4_hdr *ip4hdr)
-{
-    struct dpdk_ip_frag_handle *handle = arg;
-
-    return rte_ipv4_frag_reassemble_packet(handle->table, handle->queue, mb, tms, ip4hdr);
-}
-
-static INLINE int dpdk_ip4_mbuf_fragment(struct dpdk_mbuf *in, void *out[], uint16_t out_nb, uint16_t mtu, void *pool, void *indirect_pool)
-{
-    return rte_ipv4_fragment_packet(in, (struct dpdk_mbuf **)out, out_nb, mtu, pool, indirect_pool);
-}
 
 static INLINE bool dpdk_ip_mbuf_fail_exceed_thold(const struct dpdk_ip_frag_handle *handle)
 {
@@ -75,14 +48,27 @@ static INLINE bool dpdk_ip_mbuf_need_recall(struct dpdk_ip_frag_handle *handle)
     return (handle->add_mbuf_count != handle->sub_mbuf_count);
 }
 
-static INLINE void dpdk_ip_mbuf_table_add(struct dpdk_ip_frag_handle *handle)
+static INLINE void dpdk_ip_mbuf_table_add(struct dpdk_ip_frag_handle *handle, int n)
 {
-    handle->add_mbuf_count += 1;
+    handle->add_mbuf_count += n;
 }
 
-static INLINE void dpdk_ip_mbuf_table_sub(struct dpdk_ip_frag_handle *handle)
+static INLINE void dpdk_ip_mbuf_table_sub(struct dpdk_ip_frag_handle *handle, int n)
 {
-    handle->sub_mbuf_count += 1;
+    handle->sub_mbuf_count -= n;
+}
+
+static INLINE void dpdk_ip_reassemble_finish(void *handle, int nb)
+{
+    dpdk_ip_mbuf_table_sub(handle, nb);
+}
+
+static INLINE void dpdk_ip_reassemble_pending(void *handle, uint64_t cycles)
+{
+    dpdk_ip_mbuf_table_add(handle, 1);
+    if (dpdk_ip_mbuf_fail_exceed_thold(handle)) {
+        dpdk_ip_mbuf_recall(handle, cycles);
+    }
 }
 
 #endif // __DPDK_IP_H__

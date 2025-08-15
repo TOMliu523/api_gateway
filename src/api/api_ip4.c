@@ -12,16 +12,18 @@
 #include <sysrepo.h>
 
 #include "log.h"
+#include "ip4.h"
 #include "type.h"
-#include "route4.h"
 #include "errcode.h"
 #include "dpdk_ip.h"
 #include "protocol.h"
+#include "ip4_conf.h"
 #include "api_inner.h"
 #include "dpdk_port.h"
 #include "dpdk_type.h"
 #include "dpdk_core.h"
 #include "dpdk_common.h"
+#include "route4_conf.h"
 
 #define API_INTERFACE_FORMAT "/v1:ip4/entrys[name='%s']/*"
 
@@ -104,7 +106,7 @@ static INLINE void _api_ip4_manage_numa_free(void *manage[], int count)
 {
     for (int i = 0; i < count; i++) {
         if (manage[i] != NULL) {
-            l3_ip4_manage_destroy(manage[i]);
+            ip4_manage_destroy(manage[i]);
         }
     }
 }
@@ -340,7 +342,7 @@ static INLINE int _api_ip4_manage_del(struct root *root, void *ip4_manage[], str
     }
 
     dp = root->dpdk_thread[0];
-    ret = l3_conf_ip4_manage_create_and_delete(&ip4_manage[dp->numa_id], dp->tc->ip4_manage, info, count, dp->hw_numa_id);
+    ret = ip4_conf_manage_create_and_delete(&ip4_manage[dp->numa_id], dp->tc->ip4_manage, info, count, dp->hw_numa_id);
     _api_ip4_info_free(info);
     if (ret != 0) {
         return ret;
@@ -352,7 +354,7 @@ static INLINE int _api_ip4_manage_del(struct root *root, void *ip4_manage[], str
             continue;
         }
 
-        ret = l3_conf_ip4_manage_create_and_append(&ip4_manage[i], ip4_manage[dp->numa_id], NULL, 0, rte_socket_id_by_idx(i));
+        ret = ip4_conf_manage_create_and_append(&ip4_manage[i], ip4_manage[dp->numa_id], NULL, 0, rte_socket_id_by_idx(i));
         if (ret != 0) {
             goto _quit;
         }
@@ -379,7 +381,7 @@ static INLINE int _api_ip4_manage_add(struct root *root, void *ip4_manage[], con
     }
 
     dp = root->dpdk_thread[0];
-    ret = l3_conf_ip4_manage_create_and_append(&ip4_manage[dp->numa_id], dp->tc->ip4_manage, info, count, dp->hw_numa_id);
+    ret = ip4_conf_manage_create_and_append(&ip4_manage[dp->numa_id], dp->tc->ip4_manage, info, count, dp->hw_numa_id);
     _api_ip4_info_free(info);
     if (ret != 0) {
         return ret;
@@ -392,7 +394,7 @@ static INLINE int _api_ip4_manage_add(struct root *root, void *ip4_manage[], con
             continue;
         }
 
-        ret = l3_conf_ip4_manage_create_and_append(&ip4_manage[i], ip4_manage[dp->numa_id], NULL, 0, one->hw_numa_id);
+        ret = ip4_conf_manage_create_and_append(&ip4_manage[i], ip4_manage[dp->numa_id], NULL, 0, one->hw_numa_id);
         if (ret != 0) {
             goto _quit;
         }

@@ -42,4 +42,8 @@
 #define DPDK_MAX_TIMER_PER_CPU (DPDK_MAX_CONN_PER_CPU)
 #endif // DPDK_MAX_TIMER_PER_CPU
 
+#ifndef DP_MBUF_MAX
+#define DP_MBUF_MAX 64
+#endif // DP_MBUF_MAX
+
 #endif // __DPDK_LIMITIS_H__

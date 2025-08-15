@@ -8,7 +8,6 @@
 #define __PROTOCOL_H__
 
 #include "l2.h"
-#include "l3.h"
 #include "route4.h"
 #include "route6.h"
 

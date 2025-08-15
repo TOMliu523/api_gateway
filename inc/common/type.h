@@ -36,7 +36,12 @@ struct thread_config {
 
 struct stats {
     uint64_t rx_pkt_count;
-    // ...
+
+    struct ip4_stat {
+        uint64_t ip4_cksum_fail;
+        uint64_t ip4_version_fail;
+        uint64_t ip4_ttl_fail;
+    } ip4_stat;
 } ALIGNED(CACHE_LINE);
 
 struct pkt_store {
@@ -60,7 +65,8 @@ struct pkt_classifier {
         drop,
         notify,
         pending,
-        cache;
+        // Try to use it all within one interface instead of carrying it over to the next interface.
+        cache, cache1, cache2, cache3;
 
     struct pkt_tx *tx;
 };
@@ -75,7 +81,6 @@ struct dataplane {
     void *frag_handle;
     void *protocol;
     struct stats *stats;
-    uint64_t hz_per_second;
     uint64_t timer_cycles;
     uint64_t off_time;
     uint64_t off_time_ms;
@@ -116,7 +121,11 @@ extern __thread struct pkt_store *tlv_notify;
 extern __thread struct pkt_store *tlv_drop;
 // Temporary bug: it must be freed immediately after use to avoid affecting the next module.
 extern __thread struct pkt_store *tlv_pending;
+// Try to use it all within one interface instead of carrying it over to the next interface.
 extern __thread struct pkt_store *tlv_cache;
+extern __thread struct pkt_store *tlv_cache1;
+extern __thread struct pkt_store *tlv_cache2;
+extern __thread struct pkt_store *tlv_cache3;
 extern __thread struct pkt_tx *tlv_tx;
 extern __thread struct thread_config *tlv_th_cfg;
 extern __thread uint64_t tlv_rx_offload[DPDK_ETHPORT_MAX];

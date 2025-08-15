@@ -8,7 +8,7 @@
 #include <string.h>
 
 #include "l2.h"
-#include "l3.h"
+#include "ip4.h"
 #include "log.h"
 #include "type.h"
 #include "list.h"
@@ -254,11 +254,11 @@ static void _arp_update_or_create(struct arp_table *at, uint16_t port, uint32_t 
 
     if (s_arp_cache_count == 0) {
         ret = dpdk_mempool_pop(at->pool, s_arp_cache, ARR_NUMS(s_arp_cache));
-        if (LIKEYLY(ret == 0)) {
+        if (LIKELY(ret == 0)) {
             s_arp_cache_count = ARR_NUMS(s_arp_cache);
         } else {
             ret = dpdk_mempool_pop(at->pool, s_arp_cache, 1);
-            if (LIKEYLY(ret == 0)) {
+            if (LIKELY(ret == 0)) {
                 s_arp_cache_count = 1;
             }
         }
@@ -388,7 +388,7 @@ static void _l2_arp_parse(void *data[], int count)
 
         switch (*(uint64_t *)arp) {
         case L2_ARP_RESPONSE:
-            switch (l3_ipv4_local_class(port, arp_data->arp_tip)) {
+            switch (ip4_local_class(port, arp_data->arp_tip)) {
             case IP_LOCAL_CLASS_SELF:
             case IP_LOCAL_CLASS_LAN:
                 _arp_update_or_create(at, port, arp_data->arp_sip, &arp_data->arp_sha, tlv_dp->off_time);
@@ -402,7 +402,7 @@ static void _l2_arp_parse(void *data[], int count)
 
         case L2_ARP_REQUEST:
             if (arp_data->arp_sip != arp_data->arp_tip && arp_data->arp_sip != 0) { // ARP Response
-                switch (l3_ipv4_local_class(port, arp_data->arp_tip)) {
+                switch (ip4_local_class(port, arp_data->arp_tip)) {
                 case IP_LOCAL_CLASS_SELF:
                     _arp_update_or_create(at, port, arp_data->arp_sip, &arp_data->arp_sha, tlv_dp->off_time);
                     _l2_add_arp_notify(tlv_notify->data, notify_count++, mbuf);
@@ -424,7 +424,7 @@ static void _l2_arp_parse(void *data[], int count)
                     break;
                 }
             } else if (arp_data->arp_sip == 0) {
-                switch (l3_ipv4_local_class(port, arp_data->arp_tip)) {
+                switch (ip4_local_class(port, arp_data->arp_tip)) {
                 case IP_LOCAL_CLASS_SELF:
                     _l2_arp_probe_reply(mbuf, port);
                     tx->data[tx->count++] = mbuf;
@@ -434,7 +434,7 @@ static void _l2_arp_parse(void *data[], int count)
                     break;
                 }
             } else {
-                switch (l3_ipv4_local_class(port, arp_data->arp_tip)) {
+                switch (ip4_local_class(port, arp_data->arp_tip)) {
                 case IP_LOCAL_CLASS_SELF:
                     LOG_WARN("Local IP address is already in use.");
                     tlv_drop->data[drop_count++] = mbuf;
@@ -586,6 +586,10 @@ void l2_process(void *data[], int count)
     struct dpdk_eth *eth = NULL;
     struct dpdk_mbuf *mbuf = NULL;
 
+    UNROLL_LOOP_8(i, count, {
+
+    });
+
     /*
      * Letting the compiler optimize this loop usually yields better performance,
      * unless manually optimized with SIMD for comparison efficiency.
@@ -598,16 +602,20 @@ void l2_process(void *data[], int count)
         if (MAC_ADDR_CMP(&eth->dst_addr, &s_mac[mbuf->port]) || MAC_IS_TO_LOCAL(&eth->dst_addr)) {
             switch (dpdk_be_to_cpu_16(eth->ether_type)) {
             case DPDK_ETHER_ARP:
-                if (LIKEYLY(mbuf->data_len >= sizeof(struct dpdk_eth) + sizeof(struct dpdk_arp))) {
-                    tlv_arp->data[tlv_arp->count++] = mbuf;
-                } else {
-                    tlv_drop->data[tlv_drop->count++] = mbuf;
-                }
+                /*
+                 * Because each received packet has a minimum length of 60 bytes,
+                 * we skip length checks when it is smaller than 60 bytes and only
+                 * perform a length check once at Layer 4.
+                 * Scatter, buffer split, and header split must be disabled
+                 */
+                tlv_arp->data[tlv_arp->count++] = mbuf;
                 break;
             case DPDK_ETHER_IP4:
+                DPDK_HEADROOM(mbuf)->l2 = eth;
                 tlv_ip4->data[tlv_ip4->count++] = mbuf;
                 break;
             case DPDK_ETHER_IP6:
+                DPDK_HEADROOM(mbuf)->l2 = eth;
                 tlv_ip6->data[tlv_ip6->count++] = mbuf;
                 break;
             default:

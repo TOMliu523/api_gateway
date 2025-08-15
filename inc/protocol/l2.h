@@ -45,4 +45,9 @@ extern int l2_gratuitous_arp_gen(struct dpdk_mbuf *mbuf, uint16_t port, uint32_t
 
 extern void l2_process(void **data, int count);
 
+static INLINE struct dpdk_eth *dpdk_pktmbuf_eth(struct dpdk_mbuf *m)
+{
+    return rte_pktmbuf_mtod(m, struct dpdk_eth *);
+}
+
 #endif // __L2_H__

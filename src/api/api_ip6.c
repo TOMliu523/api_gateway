@@ -12,17 +12,17 @@
 #include <sysrepo.h>
 
 #include "l2.h"
-#include "l3.h"
 #include "log.h"
 #include "type.h"
-#include "route6.h"
 #include "errcode.h"
+#include "ip6_conf.h"
 #include "protocol.h"
 #include "dpdk_ip6.h"
 #include "api_inner.h"
 #include "dpdk_port.h"
 #include "dpdk_core.h"
 #include "dpdk_common.h"
+#include "route6_conf.h"
 
 #define API_INTERFACE_FORMAT "/v1:ip6/entrys[name='%s']/*"
 
@@ -31,8 +31,8 @@ struct api_ip6 {
     uint16_t port;
     int mask;
     enum IP_TYPE type;
-    union dpdk_ip6_addr ip6;
     struct dpdk_mac mac;
+    struct dpdk_ip6_addr addr;
 };
 
 static int s_ndp_thread_id = -1;
@@ -67,7 +67,7 @@ static void _api_ip6_manage_numa_free(void *manage[], int count)
 {
     for (int i = 0; i < count; i++) {
         if (manage[i] != NULL) {
-            l3_ip6_manage_destroy(manage[i]);
+            ip6_conf_manage_destroy(manage[i]);
         }
     }
 }
@@ -177,7 +177,7 @@ static int _api_ip6_del_parse(struct root *root, void *json, struct api_ip6 *ip6
         }
 
         ip = json_string_value(json_object_get(obj, "ip"));
-        inet_pton(AF_INET6, ip, &one->ip6);
+        inet_pton(AF_INET6, ip, &one->addr);
     }
 
     return 0;
@@ -205,7 +205,7 @@ static int _api_ip6_post_parse(struct root *root, void *json, struct api_ip6 ip6
         }
 
         ip = json_string_value(json_object_get(obj, "ip"));
-        inet_pton(AF_INET6, ip, &one->ip6);
+        inet_pton(AF_INET6, ip, &one->addr);
 
         one->mask = json_integer_value(json_object_get(obj, "mask"));
         ret = l2_port_mac(one->port, &one->mac);
@@ -248,7 +248,7 @@ static int _api_ip6_ndp_gen(struct root *root, void *ndp[], struct api_ip6 ip6[]
     for (int i = 0; i < count; i++) {
         one = &ip6[i];
 
-        ret = l3_conf_ndp_advertisement_gen(ndp[i], one->port, &one->ip6, &one->mac);
+        ret = ip6_ndp_advertisement_gen(ndp[i], one->port, &one->addr, &one->mac);
         if (ret != 0) {
             _api_ip6_ndp_free(ndp, count);
             return ERRCODE_INNER;
@@ -270,7 +270,7 @@ static struct ip6_info *_api_ip6_to_info(struct api_ip6 *ip6, int count)
     }
 
     for (int i = 0; i < count; i++) {
-        info[i].ip6 = ip6[i].ip6;
+        info[i].addr = ip6[i].addr;
         info[i].mask = ip6[i].mask;
         info[i].port = ip6[i].port;
         info[i].type = ip6[i].type;
@@ -279,7 +279,7 @@ static struct ip6_info *_api_ip6_to_info(struct api_ip6 *ip6, int count)
     return info;
 }
 
-static INLINE void _api_ip6_to_subnet(union dpdk_ip6_addr *addr, const union dpdk_ip6_addr *ip6, uint8_t mask)
+static INLINE void _api_ip6_to_subnet(struct dpdk_ip6_addr *addr, const struct dpdk_ip6_addr *ip6, uint8_t mask)
 {
     *addr = *ip6;
     dpdk_ip6_addr_subnet(addr, mask);
@@ -297,7 +297,7 @@ static struct route6_item *_api_ip6_to_route_item(const struct api_ip6 *ip6, int
     for (int i = 0; i < count; i++) {
         INIT_LIST_HEAD(&item[i].lru_head);
         dpdk_ip6_addr_unspec(&item[i].nexthop);
-        _api_ip6_to_subnet(&item[i].dst_subnet, &ip6[i].ip6, ip6[i].mask);
+        _api_ip6_to_subnet(&item[i].dst_subnet, &ip6[i].addr, ip6[i].mask);
         item[i].mask = ip6[i].mask;
         item[i].route_type = ROUTE6_DIRECT;
         item[i].interface = ip6[i].port;
@@ -320,7 +320,7 @@ static INLINE int _api_ip6_manage_del(struct root *root, void *ip6_manage[], str
     }
 
     dp = root->dpdk_thread[0];
-    ret = l3_conf_ip6_manage_create_and_delete(&ip6_manage[dp->numa_id], dp->tc->ip6_manage, info, count, dp->hw_numa_id);
+    ret = ip6_conf_manage_create_and_delete(&ip6_manage[dp->numa_id], dp->tc->ip6_manage, info, count, dp->hw_numa_id);
     _api_ip6_free(info);
     if (ret != 0) {
         return ret;
@@ -332,7 +332,7 @@ static INLINE int _api_ip6_manage_del(struct root *root, void *ip6_manage[], str
             continue;
         }
 
-        ret = l3_conf_ip4_manage_create_and_append(&ip6_manage[i], ip6_manage[dp->numa_id], NULL, 0, rte_socket_id_by_idx(i));
+        ret = ip6_conf_manage_create_and_append(&ip6_manage[i], ip6_manage[dp->numa_id], NULL, 0, rte_socket_id_by_idx(i));
         if (ret != 0) {
             goto _quit;
         }
@@ -358,7 +358,7 @@ static int _api_ip6_manage_add(struct root *root, void *ip6_manage[], struct api
     }
 
     dp = root->dpdk_thread[0];
-    ret = l3_conf_ip6_manage_create_and_append(&ip6_manage[dp->numa_id], dp->tc->ip6_manage, info, count, dp->hw_numa_id);
+    ret = ip6_conf_manage_create_and_append(&ip6_manage[dp->numa_id], dp->tc->ip6_manage, info, count, dp->hw_numa_id);
     _api_ip6_free(info);
     if (ret != 0) {
         return ret;
@@ -370,7 +370,7 @@ static int _api_ip6_manage_add(struct root *root, void *ip6_manage[], struct api
         }
 
         one = root->dpdk_thread[i];
-        ret = l3_conf_ip6_manage_create_and_append(&ip6_manage[i], ip6_manage[dp->numa_id], NULL, 0, one->hw_numa_id);
+        ret = ip6_conf_manage_create_and_append(&ip6_manage[i], ip6_manage[dp->numa_id], NULL, 0, one->hw_numa_id);
         if (ret != 0) {
             goto _quit;
         }

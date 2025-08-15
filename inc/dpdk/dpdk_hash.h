@@ -7,6 +7,8 @@
 #ifndef __DPDK_HASH_H__
 #define __DPDK_HASH_H__
 
+#include <assert.h>
+
 #include <rte_hash.h>
 
 #include "macro.h"
@@ -86,9 +88,31 @@ static INLINE int dpdk_hash_lookup(const struct dpdk_hash *hash, const void *key
     return rte_hash_lookup_data(hash, key, data);
 }
 
-static INLINE int dpdk_hash_lookup_bulk(const struct dpdk_hash *hash, const void *keys[], uint32_t num_keys, uint64_t hit_mask[], void *data[])
+/*
+ * If the parameters are correct, there will be no errors;
+ * you can determine this from the interface’s error codes.
+ * Therefore, by debugging during the development phase to ensure correct parameters,
+ * you can avoid having to handle negative return values during the runtime phase
+ */
+static INLINE int dpdk_hash_lookup_bulk(const struct dpdk_hash *hash, const void **keys, uint32_t num_keys, uint64_t result[], void **data)
 {
-    return rte_hash_lookup_bulk_data(hash, keys, num_keys, hit_mask, data);
+    int n = 0;
+    int off = 0;
+    int round = 0;
+    int count = 0;
+    int total_count = 0;
+
+    while (num_keys > 0) {
+        n = MIN(num_keys, DPDK_HASH_LOOKUP_MAX);
+        count = rte_hash_lookup_bulk_data(hash, keys + off, n, &result[round++], data + off);
+        assert(count >= 0);
+        total_count += count;
+
+        off += n;
+        num_keys -= n;
+    }
+
+    return total_count;
 }
 
 static INLINE int dpdk_hash_lookup_with_hash_data(const struct dpdk_hash *hash, const void *key, hash_sig_t sig, void **data)

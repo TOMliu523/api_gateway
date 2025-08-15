@@ -6,11 +6,12 @@
 
 #include <arpa/inet.h>
 
-#include "l3.h"
 #include "log.h"
+#include "ip4.h"
 #include "type.h"
-#include "route4.h"
 #include "errcode.h"
+#include "ip4_conf.h"
+#include "route4_conf.h"
 #include "dpdk_common.h"
 #include "dpdk_spinlock.h"
 
@@ -101,7 +102,7 @@ static int _route4_conf_add_item(struct route4_table *route, const struct route4
         store->direct_id = 0;
     } else {
         ret = dpdk_fib_lookup(route->fib, (uint32_t *)&item->nexthop, &next_hop, 1);
-        if (LIKEYLY(ret == 0 && next_hop != DPDK_FIB_DEFAULT)) {
+        if (LIKELY(ret == 0 && next_hop != DPDK_FIB_DEFAULT)) {
             struct route4_item *next_hop_item = &route->store[next_hop];
             if (next_hop_item->route_type == ROUTE4_DIRECT) {
                 store->direct_id = next_hop;
@@ -252,7 +253,7 @@ static int _route4_conf_add_check(struct route4_table *route, const struct route
                 break;
             }
 
-            if (l3_conf_ip4_manage_ip_is_local(arg, one->nexthop, one->interface)) {
+            if (ip4_conf_manage_ip_is_local(arg, one->nexthop, one->interface)) {
                 inet_ntop(AF_INET, &one->nexthop, ip_str, sizeof(ip_str));
                 LOG_ERROR("The next hop is a local IP(%s) address.", ip_str);
                 return ERRCODE_ROUTE_LOCAL_IP;

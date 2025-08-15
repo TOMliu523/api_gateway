@@ -8,10 +8,13 @@
 #include <stdlib.h>
 #include <unistd.h>
 
+#include "ip4.h"
+#include "ip6.h"
 #include "log.h"
 #include "timer.h"
 #include "notify.h"
-#include "dpdk_ip.h"
+#include "dpdk_ip4.h"
+#include "dpdk_ip6.h"
 #include "protocol.h"
 #include "dpdk_rcu.h"
 #include "dpdk_port.h"
@@ -20,11 +23,14 @@
 #include "dataplane.h"
 #include "dpdk_common.h"
 
-#define DP_LOOP_MAX 64
+#define DP_LOOP_MAX 256
 #define NOTICE_NAME_MAX 64
 // Set it large enough to ensure it won’t become full.
-#define NOTICE_NUMS (64 * 1024)
-#define DP_MBUF_MAX (MBUF_STORE_MAX / 2)
+#define NOTICE_NUMS (256 * 1024)
+// avoid putting excessive pressure on L1/L2 cache by reading too many packets in one go
+
+#define DP_FLUSH_EVERY 512
+#define DP_PORT_LOOP_PER_MAX 16
 
 // Thread-Local Storage
 __thread uint8_t tlv_thread_id;
@@ -39,6 +45,9 @@ __thread struct pkt_store *tlv_notify;
 __thread struct pkt_store *tlv_drop;
 __thread struct pkt_store *tlv_pending;
 __thread struct pkt_store *tlv_cache;
+__thread struct pkt_store *tlv_cache1;
+__thread struct pkt_store *tlv_cache2;
+__thread struct pkt_store *tlv_cache3;
 __thread struct pkt_tx *tlv_tx;
 __thread struct thread_config *tlv_th_cfg;
 __thread uint64_t tlv_rx_offload[DPDK_ETHPORT_MAX];
@@ -76,7 +85,7 @@ static void *_dp_tc_create(int nic_count, int hw_numa_id)
         iface->port[i] = i;
     }
 
-    ip4_manage = l3_thread_startup(hw_numa_id, nic_count);
+    ip4_manage = ip4_thread_startup(hw_numa_id, nic_count);
     if (UNLIKELY(ip4_manage == NULL)) {
         dpdk_free(iface);
         dpdk_free(nc);
@@ -140,6 +149,9 @@ static INLINE void _dp_thread_local_var_init(void)
     tlv_notify = &tlv_dp->pc->notify;
     tlv_pending = &tlv_dp->pc->pending;
     tlv_cache = &tlv_dp->pc->cache;
+    tlv_cache1 = &tlv_dp->pc->cache1;
+    tlv_cache2 = &tlv_dp->pc->cache2;
+    tlv_cache3 = &tlv_dp->pc->cache3;
     tlv_tx = tlv_dp->pc->tx;
     tlv_th_cfg = tlv_dp->tc;
     tlv_dp->mtu = 1500;
@@ -163,7 +175,6 @@ static INLINE void _dp_init(void *arg)
     }
     memset(tlv_dp, 0, sizeof(*tlv_dp));
 
-    tlv_dp->hz_per_second = dpdk_timer_hz();
     dpdk_thread_info(&tlv_dp->numa_id,
                      &tlv_dp->numa_cpu_id,
                      &tlv_dp->cpu_id,
@@ -195,7 +206,7 @@ static INLINE void _dp_init(void *arg)
         goto _quit;
     }
 
-    tlv_dp->frag_handle = dpdk_ip_frag_table_create(tlv_dp->hz_per_second, tlv_dp->hw_numa_id);
+    tlv_dp->frag_handle = dpdk_ip_frag_table_create(dpdk_timer_hz(), tlv_dp->hw_numa_id);
     if (UNLIKELY(tlv_dp->frag_handle == NULL)) {
         goto _quit;
     }
@@ -307,15 +318,14 @@ static INLINE void _dp_mbuf_drop(void)
 
 int dp_startup(void *arg)
 {
-    int count = 0;
     int port_nums = 0;
     double inv_hz = 0;
     double inv_hz_ms = 0;
-    int count_rx_per = 0;
     const uint16_t *ports = NULL;
     const struct iface *iface = NULL;
+    const uint64_t hz_per_second = dpdk_timer_hz();
 
-    static __thread void *mbuf[DP_MBUF_MAX] = {NULL};
+    static __thread void *data[DP_MBUF_MAX] = {NULL};
 
     /*
      * If initialization fails, then exit
@@ -323,28 +333,54 @@ int dp_startup(void *arg)
      */
     _dp_init(arg);
 
-    inv_hz = 1.0 / (double) tlv_dp->hz_per_second;
-    inv_hz_ms = 1000.0 / (double) tlv_dp->hz_per_second;
+    inv_hz = 1.0 / (double) hz_per_second;
+    inv_hz_ms = 1000.0 / (double) hz_per_second;
 
     for (;;) {
         iface = rcu_dereference(tlv_th_cfg->iface);
-
         ports = iface->port;
         port_nums = iface->nums;
-        count_rx_per = ARR_NUMS(mbuf) / port_nums;
+
+        if (UNLIKELY(port_nums == 0)) {
+            PAUSE();
+            continue;
+        }
 
         _dp_time_update(inv_hz, inv_hz_ms);
 
         for (int i = 0; i < DP_LOOP_MAX; i++) {
-            count = 0;
-            UNROLL_LOOP_8(j, port_nums, {
-                count += dpdk_pktmbuf_rx(ports[j], tlv_thread_id, mbuf + count, count_rx_per);
-            });
+            for (int j = 0; j < port_nums; j++) {
+                int count = 0;
+                int total = 0;
+                int ip4_count = 0;
+                int ip6_count = 0;
+                int budget = DP_PORT_LOOP_PER_MAX;
 
-            if (count != 0) {
-                l2_process(mbuf, count);
-                l3_process();
-                // l4_process();
+                do {
+                    count = dpdk_pktmbuf_rx(ports[j], tlv_thread_id, data, DP_MBUF_MAX);
+                    if (count == 0) break;
+
+                    l2_process(data, count);
+
+                    ip4_count = tlv_ip4->count;
+                    if (ip4_count != 0) {
+                        ip4_process(tlv_ip4->data, ip4_count);
+                        tlv_ip4->count = 0;
+                    }
+
+                    ip6_count = tlv_ip6->count;
+                    if (ip6_count != 0) {
+                        ip6_process(tlv_ip6->data, ip6_count);
+                        tlv_ip6->count = 0;
+                    }
+                    // l4_process();
+
+                    total += count;
+                    if (total >= DP_FLUSH_EVERY) {
+                        _dp_mbuf_send(&ports[j], 1);
+                        _dp_mbuf_drop();
+                    }
+                } while (--budget > 0);
             }
 
             notify_do();

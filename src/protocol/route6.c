@@ -4,12 +4,13 @@
  * description: High-Performance Longest Prefix Match Library
  ****************************************************************************/
 
-#include "l3.h"
+#include "ip6.h"
 #include "log.h"
-#include "route6.h"
 #include "errcode.h"
+#include "ip6_conf.h"
 #include "dpdk_fib6.h"
 #include "dpdk_common.h"
+#include "route6_conf.h"
 
 #define L3_DIRECT_ROUTE6_ITEM_MAX 2000
 #define L3_ROUTE6_ITEM_MAX 20000
@@ -114,7 +115,7 @@ static int _route6_conf_add_check(struct route6_table *route6, const struct rout
          * No local IP references
          */
         do {
-            if (UNLIKELY(l3_conf_ip6_manage_ip_is_local(arg, &one->nexthop, one->interface))) {
+            if (UNLIKELY(ip6_conf_manage_ip_is_local(arg, &one->nexthop, one->interface))) {
                 inet_ntop(AF_INET6, &one->nexthop, ip_str, sizeof(ip_str));
                 LOG_ERROR("The next hop is a local IP(%s) address.", ip_str);
                 return ERRCODE_ROUTE_LOCAL_IP;

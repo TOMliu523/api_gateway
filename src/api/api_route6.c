@@ -8,12 +8,12 @@
 
 #include "log.h"
 #include "type.h"
-#include "route6.h"
 #include "errcode.h"
 #include "protocol.h"
 #include "api_inner.h"
 #include "dpdk_port.h"
 #include "dpdk_common.h"
+#include "route6_conf.h"
 
 static INLINE void *_api_route6_item_free(struct route6_item *item)
 {
@@ -45,9 +45,9 @@ static INLINE struct route6_item *_api_route6_item_alloc(int count)
     return item;
 }
 
-static INLINE bool _api_route6_is_valid_subnet(const union dpdk_ip6_addr *addr, uint8_t mask)
+static INLINE bool _api_route6_is_valid_subnet(const struct dpdk_ip6_addr *addr, uint8_t mask)
 {
-    union dpdk_ip6_addr mask_addr = *addr;
+    struct dpdk_ip6_addr mask_addr = *addr;
     dpdk_ip6_addr_subnet(&mask_addr, mask);
     return dpdk_ip6_addr_eq(addr, &mask_addr);
 }

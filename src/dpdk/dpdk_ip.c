@@ -4,6 +4,7 @@
  * description:
  ****************************************************************************/
 
+#include <rte_errno.h>
 #include <rte_ip_frag.h>
 
 #include "log.h"

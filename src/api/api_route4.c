@@ -8,12 +8,13 @@
 
 #include "log.h"
 #include "type.h"
-#include "route4.h"
 #include "errcode.h"
+#include "ip4_conf.h"
 #include "protocol.h"
 #include "api_inner.h"
 #include "dpdk_port.h"
 #include "dpdk_common.h"
+#include "route4_conf.h"
 
 static INLINE void *_api_route4_item_free(struct route4_item *item)
 {
