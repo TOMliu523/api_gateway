@@ -179,9 +179,9 @@ static void *dpdk_pktmbuf_prepend(struct dpdk_mbuf *mbuf, size_t len)
     return rte_pktmbuf_prepend(mbuf, len);
 }
 
-static INLINE struct dpdk_arp *dpdk_pktmbuf_arp(struct dpdk_mbuf *m)
+static INLINE struct dpdk_arp_hdr *dpdk_pktmbuf_arp(struct dpdk_mbuf *m)
 {
-    return rte_pktmbuf_mtod_offset(m, struct dpdk_arp *, sizeof(struct dpdk_eth));
+    return rte_pktmbuf_mtod_offset(m, struct dpdk_arp_hdr *, sizeof(struct dpdk_eth_hdr));
 }
 
 static INLINE const void *dpdk_pktmbuf_read(const struct dpdk_mbuf *mbuf, uint32_t off, uint32_t len, void *buf)

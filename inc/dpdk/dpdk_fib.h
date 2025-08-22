@@ -18,7 +18,7 @@
 #define DPDK_FIB_DEFAULT 1000000000
 
 // create or destriy
-extern struct dpdk_fib *dpdk_fib_create(const char *name, int hw_numa_id, int max_item);
+extern struct dpdk_fib *dpdk_fib_create(int hw_numa_id, int max_item);
 
 static INLINE struct dpdk_fib *dpdk_fib_existing(const char *name)
 {

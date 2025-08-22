@@ -5,7 +5,8 @@
  *****************************************************************************/
 
 #include "l2.h"
-#include "l3.h"
+#include "ip4.h"
+#include "ip6.h"
 #include "type.h"
 #include "timer.h"
 #include "dpdk_ip.h"
@@ -36,7 +37,8 @@ void timer_check(void)
     struct timer_context *context = &s_context;
 
     if (tlv_thread_id == context->arp_cpu_id && tlv_dp->off_time > context->off_time) {
-        l3_refresh();
+        ip4_arp_refresh();
+        ip6_ndp_refresh();
     }
 
     if (tlv_dp->off_time > context->off_time && dpdk_ip_mbuf_need_recall(tlv_dp->frag_handle)) {

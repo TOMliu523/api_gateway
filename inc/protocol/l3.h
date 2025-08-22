@@ -42,6 +42,4 @@ struct ip6_info {
     uint8_t type;
 };
 
-extern void l3_refresh(void);
-
 #endif // __L3_H__

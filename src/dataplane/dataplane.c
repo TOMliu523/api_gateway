@@ -32,6 +32,24 @@
 #define DP_FLUSH_EVERY 512
 #define DP_PORT_LOOP_PER_MAX 16
 
+#define l3_process(data, count) \
+    do { \
+        int ip4_count = 0; \
+        int ip6_count = 0; \
+                           \
+        ip4_count = tlv_ip4->count; \
+        if (ip4_count != 0) { \
+            ip4_process(tlv_ip4->data, ip4_count); \
+            tlv_ip4->count = 0; \
+        } \
+          \
+        ip6_count = tlv_ip6->count; \
+        if (ip6_count != 0) { \
+            ip6_process(tlv_ip6->data, ip6_count); \
+            tlv_ip6->count = 0; \
+        } \
+    } while (0)
+
 // Thread-Local Storage
 __thread uint8_t tlv_thread_id;
 __thread struct dataplane *tlv_dp;
@@ -66,6 +84,7 @@ static void *_dp_tc_create(int nic_count, int hw_numa_id)
     struct iface *iface = NULL;
     struct thread_config *nc = NULL;
     struct ip4_manage *ip4_manage = NULL;
+    struct ip6_manage *ip6_manage = NULL;
 
     nc = dpdk_malloc(sizeof(*nc));
     if (nc == NULL) {
@@ -85,15 +104,24 @@ static void *_dp_tc_create(int nic_count, int hw_numa_id)
         iface->port[i] = i;
     }
 
-    ip4_manage = ip4_thread_startup(hw_numa_id, nic_count);
+    ip4_manage = ip4_startup(nic_count, hw_numa_id);
     if (UNLIKELY(ip4_manage == NULL)) {
         dpdk_free(iface);
         dpdk_free(nc);
         return NULL;
     }
 
+    ip6_manage = ip6_startup(nic_count, hw_numa_id);
+    if (UNLIKELY(ip6_manage == NULL)) {
+        dpdk_free(iface);
+        dpdk_free(nc);
+        ip6_destroy(ip6_manage);
+        return NULL;
+    }
+
     nc->iface = iface;
     nc->ip4_manage = ip4_manage;
+    nc->ip6_manage = ip6_manage;
 
     return nc;
 }
@@ -352,8 +380,6 @@ int dp_startup(void *arg)
             for (int j = 0; j < port_nums; j++) {
                 int count = 0;
                 int total = 0;
-                int ip4_count = 0;
-                int ip6_count = 0;
                 int budget = DP_PORT_LOOP_PER_MAX;
 
                 do {
@@ -361,18 +387,8 @@ int dp_startup(void *arg)
                     if (count == 0) break;
 
                     l2_process(data, count);
+                    l3_process(data, count);
 
-                    ip4_count = tlv_ip4->count;
-                    if (ip4_count != 0) {
-                        ip4_process(tlv_ip4->data, ip4_count);
-                        tlv_ip4->count = 0;
-                    }
-
-                    ip6_count = tlv_ip6->count;
-                    if (ip6_count != 0) {
-                        ip6_process(tlv_ip6->data, ip6_count);
-                        tlv_ip6->count = 0;
-                    }
                     // l4_process();
 
                     total += count;

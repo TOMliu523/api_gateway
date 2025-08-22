@@ -7,7 +7,12 @@
 #ifndef __DPDK_COMMON_H__
 #define __DPDK_COMMON_H__
 
+#include <stdbool.h>
+
 #include <rte_malloc.h>
+#include <rte_common.h>
+#include <rte_memcpy.h>
+#include <rte_prefetch.h>
 
 #include "macro.h"
 
@@ -18,6 +23,18 @@
 #define dpdk_be_to_cpu_16(v) rte_be_to_cpu_16(v)
 #define dpdk_be_to_cpu_32(v) rte_be_to_cpu_32(v)
 #define dpdk_be_to_cpu_64(v) rte_be_to_cpu_64(v)
+
+#define dpdk_prefetch0(m) rte_prefetch0(m)
+#define dpdk_prefetch1(m) rte_prefetch1(m)
+
+#define dpdk_ptr_add(ptr, x) RTE_PTR_ADD(ptr, x)
+#define dpdk_ptr_sub(ptr, x) RTE_PTR_SUB(ptr, x)
+#define dpdk_ptr_diff(ptr1, ptr2) RTE_PTR_DIFF(ptr1, ptr2)
+
+static INLINE bool dpdk_ptr_is_aligned(const void *const ptr, const unsigned int align)
+{
+    return rte_is_aligned(ptr, align);
+}
 
 /**********************************************************************/
 /***************************** MEMORY *********************************/

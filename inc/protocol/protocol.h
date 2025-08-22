@@ -19,6 +19,7 @@ struct proto_header {
     };
 
     struct {
+        struct ndp_table *nt;
         struct route6_table *route6;
     };
 };

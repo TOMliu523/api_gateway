@@ -14,15 +14,20 @@
 #include "dpdk_l4.h"
 #include "dpdk_ip6.h"
 
-#define DPDK_DNP_SOLICITATION 135
-#define DPDK_DNP_ADVERTISEMENT 136
-
-#define DPDK_LOCAL_HOP_LIMITS 255
-
 #define DPDK_ICMP6_ECHO_REQUEST ICMPV6_ECHO_REQUEST
 #define DPDK_ICMP6_ECHO_REPLY ICMPV6_ECHO_REPLY
 #define DPDK_NDP_SOLICT 135
 #define DPDK_NDP_ADVERT 136
+
+#define DPDK_NDP_SRC_LINK_OPT_LEN 8
+#define DPDK_NDP_DST_LINK_OPT_LEN 8
+
+#define DPDK_LOCAL_HOP_LIMITS 255
+
+#define DPDK_NDP_SRC_LINK_OPT 1
+#define DPDK_NDP_DST_LINK_OPT 2
+
+#define DPDK_NDP_BASE_LEN (14 + 40 + 24)
 
 #define dpdk_icmp6_hdr icmp6hdr
 
@@ -32,7 +37,7 @@ struct dpdk_ndp_opt {
     __u8 data[];
 } ALIGN_PACKED;
 
-struct dpdk_ndp {
+struct dpdk_ndp_hdr {
     struct dpdk_icmp6_hdr icmp6_hdr;
     struct dpdk_ip6_addr target;
     __u8 opt[];

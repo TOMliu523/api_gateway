@@ -6,6 +6,8 @@
 #ifndef __DPDK_IP6_H__
 #define __DPDK_IP6_H__
 
+#include <string.h>
+
 #include <rte_ip6.h>
 #include <rte_ip_frag.h>
 
@@ -15,10 +17,10 @@
 #include "dpdk_common.h"
 
 #define DPDK_IP6_ADDR_UNSPEC RTE_IPV6_ADDR_UNSPEC
-#define DPDK_IP6_ADDR_ZERO dpdk_ip6_addr_UNSPEC
+#define DPDK_IP6_ADDR_ZERO DPDK_IP6_ADDR_UNSPEC
 
 #define DPDK_IP6_INIT(a, b, c, d, e, f, g, h) RTE_IPV6(a, b, c, d, e, f, g, h)
-#define DPDK_IP6_UNSPEC() dpdk_ip6_INIT(0, 0, 0, 0, 0, 0, 0, 0)
+#define DPDK_IP6_UNSPEC() DPDK_IP6_INIT(0, 0, 0, 0, 0, 0, 0, 0)
 
 #if defined(__ORDER_LITTLE_ENDIAN__)
 #define DPDK_IP6_LOOKBACK_BYTE0 (uint64_t) 0
@@ -36,14 +38,21 @@
 
 #define DPDK_IP6_MASK_MAX RTE_IPV6_MAX_DEPTH
 #define DPDK_IP6_ADDR_SIZE RTE_IPV6_ADDR_SIZE
-#define DPDK_ICMP6_MBUF_LEN_MIN (dpdk_ip6_MBUF_LEN_MIN + sizeof(struct dpdk_icmp6))
 
-#define DPDK_IP6_ADDR0(addr) (*(uint64_t *)&addr)
-#define DPDK_IP6_ADDR1(addr) (*(uint64_t *)((void *)&addr + sizeof(uint64_t)))
+#define DPDK_IP6_ADDR0(addr) (*(uint64_t *)addr)
+#define DPDK_IP6_ADDR1(addr) (*(uint64_t *)((void *)addr + sizeof(uint64_t)))
+
+#define DPDK_U64_ZERO (0UL)
+
+enum IP6_ADDR_TYPE {
+    IP6_ADDR_UNICAST,
+    IP6_ADDR_UNSPEC,
+    IP6_ADDR_MULTICAST,
+};
 
 static INLINE struct dpdk_ip6_hdr *dpdk_pktmbuf_ip6_hdr(struct dpdk_mbuf *m)
 {
-    return rte_pktmbuf_mtod_offset(m, struct dpdk_ip6_hdr *, sizeof(struct dpdk_eth));
+    return rte_pktmbuf_mtod_offset(m, struct dpdk_ip6_hdr *, sizeof(struct dpdk_eth_hdr));
 }
 
 static INLINE struct dpdk_ip6_frag_ext *dpdk_pktmbuf_ip6_frag_hdr(struct dpdk_ip6_hdr *hdr)
@@ -53,8 +62,13 @@ static INLINE struct dpdk_ip6_frag_ext *dpdk_pktmbuf_ip6_frag_hdr(struct dpdk_ip
 
 static INLINE void dpdk_ip6_addr_unspec(struct dpdk_ip6_addr *addr)
 {
-    DPDK_IP6_ADDR0(addr) = 0;
-    DPDK_IP6_ADDR1(addr) = 0;
+    DPDK_IP6_ADDR0(addr) = 0UL;
+    DPDK_IP6_ADDR1(addr) = 0UL;
+}
+
+static INLINE int dpdk_ip6_addr_cmp(const void *first, const void *second, size_t len)
+{
+    return memcmp(first, second, len);
 }
 
 static INLINE bool dpdk_ip6_addr_eq(const struct dpdk_ip6_addr *addr1, const struct dpdk_ip6_addr *addr2)
@@ -64,7 +78,7 @@ static INLINE bool dpdk_ip6_addr_eq(const struct dpdk_ip6_addr *addr1, const str
 
 static INLINE bool dpdk_ip6_addr_is_unspec(const struct dpdk_ip6_addr *addr)
 {
-    return (DPDK_IP6_ADDR0(addr) == 0 && DPDK_IP6_ADDR1(addr) ==0);
+    return (DPDK_IP6_ADDR0(addr) == 0UL && DPDK_IP6_ADDR1(addr) == 0UL);
 }
 
 static INLINE bool dpdk_ip6_addr_is_lookback(const struct dpdk_ip6_addr *addr)
@@ -75,6 +89,26 @@ static INLINE bool dpdk_ip6_addr_is_lookback(const struct dpdk_ip6_addr *addr)
 static INLINE bool dpdk_ip6_addr_is_mcast(const struct dpdk_ip6_addr *addr)
 {
     return rte_ipv6_addr_is_mcast(addr);
+}
+
+static INLINE bool dpdk_ip6_addr_is_ucast(const struct dpdk_ip6_addr *addr)
+{
+    return ((addr->a[0] != 0xFF) && !(DPDK_IP6_ADDR0(addr) == 0 && DPDK_IP6_ADDR1(addr) == 0));
+}
+
+static enum IP6_ADDR_TYPE dpdk_ip6_addr_type(const struct dpdk_ip6_addr *addr)
+{
+    switch (addr->a[0]) {
+    case 0xFF: return IP6_ADDR_MULTICAST;
+    case 0x00:
+        if (DPDK_IP6_ADDR0(addr) == DPDK_U64_ZERO && DPDK_IP6_ADDR1(addr) == DPDK_U64_ZERO) {
+            return IP6_ADDR_UNSPEC;
+        } else {
+            return IP6_ADDR_UNICAST;
+        }
+        break;
+    default: return IP6_ADDR_UNICAST;
+    }
 }
 
 static INLINE uint8_t dpdk_ip6_addr_mask(const struct dpdk_ip6_addr *mask)
@@ -101,6 +135,16 @@ static INLINE bool dpdk_ip6_addr_subnet_eq(const struct dpdk_ip6_addr *first, co
     }
 
     return dpdk_ip6_addr_eq(first, second);
+}
+
+static INLINE void dpdk_eth_mcast_from_ip6(struct dpdk_mac *mac, const struct dpdk_ip6_addr *ip)
+{
+    rte_ether_mcast_from_ipv6(mac, ip);
+}
+
+static INLINE void dpdk_ip6_solnode_from_addr(struct dpdk_ip6_addr *sol, const struct dpdk_ip6_addr *ip)
+{
+    return rte_ipv6_solnode_from_addr(sol, ip);
 }
 
 static INLINE int dpdk_ip6_next_ext(const uint8_t *p, int next_proto, size_t *ext_len)

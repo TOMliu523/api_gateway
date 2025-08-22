@@ -31,7 +31,7 @@
 
 static INLINE struct dpdk_ip4_hdr *dpdk_pktmbuf_ip4_hdr(struct dpdk_mbuf *m)
 {
-    return rte_pktmbuf_mtod_offset(m, struct dpdk_ip4_hdr *, sizeof(struct dpdk_eth));
+    return rte_pktmbuf_mtod_offset(m, struct dpdk_ip4_hdr *, sizeof(struct dpdk_eth_hdr));
 }
 
 static INLINE uint8_t dpdk_ip4_header_len(const struct dpdk_ip4_hdr *ip4hdr)

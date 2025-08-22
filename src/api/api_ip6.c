@@ -254,7 +254,7 @@ static int _api_ip6_ndp_gen(struct root *root, void *ndp[], struct api_ip6 ip6[]
             return ERRCODE_INNER;
         }
 
-        DPDK_HEADROOM(ndp[i])->type = PKT_MBUF_NDP;
+        DPDK_HEADROOM(ndp[i])->type = PKT_MBUF_NDP_AD;
     }
 
     return 0;

@@ -5,11 +5,13 @@
  ****************************************************************************/
 
 #include "log.h"
+#include "atomic.h"
 #include "dpdk_fib.h"
 #include "rte_errno.h"
 
-struct dpdk_fib *dpdk_fib_create(const char *name, int hw_numa_id, int max_item)
+struct dpdk_fib *dpdk_fib_create(int hw_numa_id, int max_item)
 {
+    char name[CACHE_LINE] = "";
     struct rte_fib_conf conf = {
         .type = RTE_FIB_DIR24_8,
         .default_nh = DPDK_FIB_DEFAULT,
@@ -36,6 +38,11 @@ struct dpdk_fib *dpdk_fib_create(const char *name, int hw_numa_id, int max_item)
     int ret = 0;
     int hw_numa = 0;
     struct dpdk_fib *fib = NULL;
+
+    static uint32_t s_seq = 0;
+
+    atomic_fetch_add(&s_seq, 1);
+    snprintf(name, sizeof(name), "DPDK_FIB_%u_%u", hw_numa_id, s_seq);
 
     fib = rte_fib_create(name, hw_numa_id, &conf);
     if (fib == NULL) {

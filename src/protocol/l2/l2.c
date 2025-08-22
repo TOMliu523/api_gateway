@@ -138,8 +138,8 @@ static INLINE void _l2_arp_init(struct arp_item *item, uint32_t ip, struct dpdk_
 static INLINE void _l2_arp_reply(struct dpdk_mbuf *mbuf, uint16_t port)
 {
     uint32_t dst_ip = 0;
-    struct dpdk_eth *eth = NULL;
-    struct dpdk_arp *arp = NULL;
+    struct dpdk_eth_hdr *eth = NULL;
+    struct dpdk_arp_hdr *arp = NULL;
     struct dpdk_mac *src_mac = NULL;
 
     eth = dpdk_pktmbuf_eth(mbuf);
@@ -162,10 +162,10 @@ static INLINE void _l2_arp_reply(struct dpdk_mbuf *mbuf, uint16_t port)
 
 static INLINE void _l2_arp_probe_reply(struct dpdk_mbuf *mbuf, uint16_t port)
 {
-    struct dpdk_eth *eth = NULL;
-    struct dpdk_arp *arp = NULL;
+    struct dpdk_eth_hdr *eth = NULL;
+    struct dpdk_arp_hdr *arp = NULL;
     struct dpdk_mac *mac = NULL;
-    struct dpdk_arp_data *arp_data = NULL;
+    struct dpdk_arp_hdr_data *arp_data = NULL;
 
     eth = dpdk_pktmbuf_eth(mbuf);
     arp = dpdk_pktmbuf_arp(mbuf);
@@ -186,11 +186,11 @@ static INLINE void _l2_arp_probe_reply(struct dpdk_mbuf *mbuf, uint16_t port)
 
 static INLINE int __l2_arp_gen(struct dpdk_mbuf *mbuf, uint16_t port, uint32_t src_ip, uint32_t target_ip)
 {
-    struct dpdk_eth *eth = NULL;
-    struct dpdk_arp *arp = NULL;
+    struct dpdk_eth_hdr *eth = NULL;
+    struct dpdk_arp_hdr *arp = NULL;
     struct dpdk_mac *mac = NULL;
 
-    eth = dpdk_append(mbuf, sizeof(*eth) + sizeof(*arp), struct dpdk_eth *);
+    eth = dpdk_append(mbuf, sizeof(*eth) + sizeof(*arp), struct dpdk_eth_hdr *);
     if (UNLIKELY(eth == NULL)) {
         LOG_ERROR("There is not enough tailroom space in the last segment.");
         return -1;
@@ -203,7 +203,7 @@ static INLINE int __l2_arp_gen(struct dpdk_mbuf *mbuf, uint16_t port, uint32_t s
     eth->src_addr = *mac;
     eth->ether_type = dpdk_cpu_to_be_16(DPDK_ETHER_ARP);
 
-    arp = (struct dpdk_arp *)(eth + 1);
+    arp = (struct dpdk_arp_hdr *)(eth + 1);
     *(uint64_t *)&arp->arp_hardware = L2_ARP_REQUEST;
 
     // arp_data
@@ -262,11 +262,11 @@ static void _arp_update_or_create(struct arp_table *at, uint16_t port, uint32_t 
                 s_arp_cache_count = 1;
             }
         }
-    }
 
-    if (UNLIKELY(s_arp_cache_count == 0)) {
-        LOG_ERROR("The ARP table has reached its limit; no new entries can be added.");
-        return;
+        if (UNLIKELY(s_arp_cache_count == 0)) {
+            LOG_ERROR("The ARP table has reached its limit; no new entries can be added.");
+            return;
+        }
     }
 
     item = s_arp_cache[--s_arp_cache_count];
@@ -369,22 +369,23 @@ static void _l2_arp_parse(void *data[], int count)
 {
     uint16_t port = 0;
     struct pkt_tx *tx = NULL;
-    struct dpdk_arp *arp = NULL;
+    struct dpdk_arp_hdr *arp = NULL;
     struct dpdk_mbuf *mbuf = NULL;
-    struct dpdk_arp_data *arp_data = NULL;
+    struct dpdk_arp_hdr_data *arp_data = NULL;
     struct proto_header *proto = tlv_dp->protocol;
     struct arp_table *at = proto->at;
 
     int drop_count = tlv_drop->count;
     int notify_count = tlv_notify->count;
 
+    mbuf = data[0];
+    port = mbuf->port;
+    tx = &tlv_tx[mbuf->port];
+
     for (int i = 0; i < count; i++) {
         mbuf = data[i];
         arp = dpdk_pktmbuf_arp(mbuf);
         arp_data = &arp->arp_data;
-        port = mbuf->port;
-
-        tx = &tlv_tx[port];
 
         switch (*(uint64_t *)arp) {
         case L2_ARP_RESPONSE:
@@ -465,8 +466,8 @@ void l2_arp_update_or_create(void *arg)
     struct dpdk_mbuf *mbuf = arg;
     struct proto_header *proto = tlv_dp->protocol;
     struct arp_table *at = proto->at;
-    struct dpdk_arp *arp = dpdk_pktmbuf_arp(mbuf);
-    struct dpdk_arp_data *arp_data = &arp->arp_data;
+    struct dpdk_arp_hdr *arp = dpdk_pktmbuf_arp(mbuf);
+    struct dpdk_arp_hdr_data *arp_data = &arp->arp_data;
 
     _arp_update_or_create(at, mbuf->port, arp_data->arp_sip, &arp_data->arp_sha, tlv_dp->off_time);
 }
@@ -554,10 +555,10 @@ int l2_mac_get(struct dpdk_mac *mac, int port, uint32_t be_ip)
 
 int l2_gratuitous_arp_gen(struct dpdk_mbuf *mbuf, uint16_t port, uint32_t addr, struct dpdk_mac *mac)
 {
-    struct dpdk_eth *eth = NULL;
-    struct dpdk_arp *arp = NULL;
+    struct dpdk_eth_hdr *eth = NULL;
+    struct dpdk_arp_hdr *arp = NULL;
 
-    eth = dpdk_append(mbuf, sizeof(*eth) + sizeof(*arp), struct dpdk_eth *);
+    eth = dpdk_append(mbuf, sizeof(*eth) + sizeof(*arp), struct dpdk_eth_hdr *);
     if (UNLIKELY(eth == NULL)) {
         LOG_ERROR("There is not enough tailroom space in the last segment.");
         return -1;
@@ -569,7 +570,7 @@ int l2_gratuitous_arp_gen(struct dpdk_mbuf *mbuf, uint16_t port, uint32_t addr, 
     eth->src_addr = *mac;
     eth->ether_type = dpdk_cpu_to_be_16(DPDK_ETHER_ARP);
 
-    arp = (struct dpdk_arp *)(eth + 1);
+    arp = (struct dpdk_arp_hdr *)(eth + 1);
     *(uint64_t *)arp = L2_ARP_REQUEST;
 
     // arp_data
@@ -583,11 +584,17 @@ int l2_gratuitous_arp_gen(struct dpdk_mbuf *mbuf, uint16_t port, uint32_t addr, 
 
 void l2_process(void *data[], int count)
 {
-    struct dpdk_eth *eth = NULL;
+    int arp_count = 0;
     struct dpdk_mbuf *mbuf = NULL;
+    struct dpdk_eth_hdr *eth = NULL;
 
     UNROLL_LOOP_8(i, count, {
+        if (i + 1 < count) {
+            dpdk_prefetch0(data[i + 1]);
 
+            void *ptr = dpdk_pktmbuf_eth(data[i + 1]);
+            dpdk_prefetch0(ptr);
+        }
     });
 
     /*
@@ -627,8 +634,9 @@ void l2_process(void *data[], int count)
         }
     });
 
-    if (tlv_arp->count != 0) {
-        _l2_arp_parse(tlv_arp->data, tlv_arp->count);
+    arp_count = tlv_arp->count;
+    if (arp_count != 0) {
+        _l2_arp_parse(tlv_arp->data, arp_count);
         tlv_arp->count = 0;
     }
 }

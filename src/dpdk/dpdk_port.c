@@ -37,7 +37,7 @@ struct dpdk_speed {
     int nums;
     struct dpdk_speed_ex {
         const char *prefix;
-        int type_nums;
+        int type_nums; // start from zero
         int nums; // Users later need to perform reverse port lookup by name from static structures
     } ex[DPDK_SPEED_NUMS_MAX];
 };

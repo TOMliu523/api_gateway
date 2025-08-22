@@ -5,6 +5,7 @@
  *****************************************************************************/
 
 #include "l2.h"
+#include "ip6.h"
 #include "type.h"
 #include "dpdk_core.h"
 #include "dpdk_common.h"
@@ -79,13 +80,17 @@ static INLINE void _notify_accept_and_handle(void)
         type = ((struct dpdk_data *)mbuf)->headroom.type;
 
         switch (type) {
-        case PKT_MBUF_NDP:
         case PKT_MBUF_GARP:
+        case PKT_MBUF_NDP_AD:
             tx = &tlv_tx[mbuf->port];
             tx->data[tx->count++] = mbuf;
             break;
         case PKT_MBUF_ARP:
             l2_arp_update_or_create(mbuf);
+            tlv_drop->data[tlv_drop->count++] = mbuf;
+            break;
+        case PKT_MBUF_NDP:
+            ip6_ndp_update_or_create(mbuf);
             tlv_drop->data[tlv_drop->count++] = mbuf;
             break;
         default:

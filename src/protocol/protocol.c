@@ -5,8 +5,9 @@
  *****************************************************************************/
 
 #include "l2.h"
-#include "l3.h"
 #include "log.h"
+#include "ip4.h"
+#include "ip6.h"
 #include "type.h"
 #include "protocol.h"
 #include "dpdk_common.h"
@@ -26,13 +27,16 @@ void *protocol_create(int nic_count, void *arg)
 
     header->mac = l2_thread_mac_create(nic_count);
     if (UNLIKELY(header->mac == NULL)) {
-        LOG_ERROR("OOM.");
         goto _quit;
     }
 
     header->at = l2_thread_arp_table_create(nic_count, dp->cpu_id, dp->hw_numa_id);
     if (UNLIKELY(header->at == NULL)) {
-        LOG_ERROR("OOM.");
+        goto _quit;
+    }
+
+    header->nt = ip6_thread_ndp_table_create(nic_count, dp->cpu_id, dp->hw_numa_id);
+    if (UNLIKELY(header->nt == NULL)) {
         goto _quit;
     }
 
@@ -53,5 +57,6 @@ void protocol_destroy(void *arg)
 
     l2_thread_mac_destroy(header->mac);
     l2_thread_arp_table_destroy(header->at);
+    ip6_thread_ndp_table_destroy(header->nt);
     dpdk_free(header);
 }

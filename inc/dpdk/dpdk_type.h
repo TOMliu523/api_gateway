@@ -37,11 +37,11 @@
 
 #define dpdk_mbuf rte_mbuf
 #define dpdk_mac rte_ether_addr
-#define dpdk_eth rte_ether_hdr
-#define dpdk_arp rte_arp_hdr
-#define dpdk_tcp rte_tcp_hdr
-#define dpdk_udp rte_udp_hdr
-#define dpdk_arp_data rte_arp_ipv4
+#define dpdk_eth_hdr rte_ether_hdr
+#define dpdk_arp_hdr rte_arp_hdr
+#define dpdk_tcp_hdr rte_tcp_hdr
+#define dpdk_udp_hdr rte_udp_hdr
+#define dpdk_arp_hdr_data rte_arp_ipv4
 
 // Ethernet frame types
 #define DPDK_ETHER_IP4 RTE_ETHER_TYPE_IPV4
@@ -53,10 +53,29 @@
 
 #define DPDK_HEADROOM(m) (&((struct dpdk_data *)(m))->headroom)
 
+/**
+ * Packet buffer type definitions.
+ *
+ * PKT_MBUF_DEFAULT:
+ *   Default value for packets received from NICs when no specific type is set.
+ *
+ * PKT_MBUF_GARP:
+ *   Configured Gratuitous ARP (GARP). Retrieved by the receiving thread and sent directly.
+ *
+ * PKT_MBUF_ARP:
+ *   ARP packet. Notifies other threads about this information.
+ *
+ * PKT_MBUF_NDP_AD:
+ *   Configured NDP Advertisement. Retrieved by the receiving thread and sent directly.
+ *
+ * PKT_MBUF_NDP:
+ *   NDP packet. Notifies other threads about this information.
+ */
 enum PKT_MBUF_TYPE {
     PKT_MBUF_DEFAULT = 0, // data packet
     PKT_MBUF_GARP,
     PKT_MBUF_ARP,
+    PKT_MBUF_NDP_AD,
     PKT_MBUF_NDP,
 };
 
@@ -65,9 +84,6 @@ struct dpdk_headroom {
         // host byte order
         struct {
             enum PKT_MBUF_TYPE type;
-            uint8_t l2_type;
-            uint8_t l3_type;
-            uint8_t l4_type;
 
             void *l2;
             void *l3;

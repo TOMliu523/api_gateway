@@ -23,8 +23,8 @@
 #include "dpdk_spinlock.h"
 
 // Big Endian ip
-#define L3_IPv4_BUCKET_IDX(x) ((x) >> 16)
-#define L3_IPv4_BUCKET_MAX (1 << 16)
+#define IP4_BUCKET_IDX(x) ((x) >> 16)
+#define IP4_BUCKET_MAX (1 << 16)
 
 struct ip4_manage {
     int ip_count;
@@ -35,12 +35,10 @@ struct ip4_manage {
      * (based on big-endian representation). If the IP addresses are equal,
      * the nodes are further sorted in ascending order by port number
      */
-    struct list_head head[L3_IPv4_BUCKET_MAX];
+    struct list_head head[IP4_BUCKET_MAX];
     struct ip4_info *master[DPDK_ETHPORT_MAX];
-    struct ip4_info store[L3_IPv4_BUCKET_MAX];
+    struct ip4_info store[IP4_BUCKET_MAX];
 };
-
-static dpdk_spinlock_t s_spinlock[NUMA_MAX] = {0};
 
 // Release the ipv4_manage structure.
 static void _ip4_conf_manage_destroy(struct ip4_manage *manage)
@@ -67,7 +65,7 @@ static int _ip4_conf_manage_add(struct ip4_manage *manage, const struct ip4_info
     struct ip4_info *cur = NULL;
     struct list_head *prev = NULL;
     struct ip4_info *store = NULL;
-    int idx = L3_IPv4_BUCKET_IDX(one->ip);
+    int idx = IP4_BUCKET_IDX(one->ip);
     struct list_head *head = &manage->head[idx];
 
     nums = manage->ip_count;
@@ -127,8 +125,8 @@ static int _ip4_conf_manage_add_check(struct ip4_manage *manage, const struct ip
         return 0;
     }
 
-    if (UNLIKELY(manage->ip_count + count > L3_IPv4_BUCKET_MAX)) {
-        LOG_ERROR("Maximum supported IP address count(%d) exceeded", L3_IPv4_BUCKET_MAX);
+    if (UNLIKELY(manage->ip_count + count > IP4_BUCKET_MAX)) {
+        LOG_ERROR("Maximum supported IP address count(%d) exceeded", IP4_BUCKET_MAX);
         return ERRCODE_IP_LIMIT_EXCEEDED;
     }
 
@@ -174,7 +172,7 @@ static int _ip4_conf_manage_del_check(struct ip4_manage *manage, const struct ip
         exist = 0;
         one = &info[i];
 
-        idx = L3_IPv4_BUCKET_IDX(one->ip);
+        idx = IP4_BUCKET_IDX(one->ip);
         head = &manage->head[idx];
 
         list_for_each_entry(cur, head, node) {
@@ -199,7 +197,6 @@ static int _ip4_conf_manage_del_check(struct ip4_manage *manage, const struct ip
 // Initialize a fresh ipv4_manage object with default/empty values.
 static int _ip4_conf_manage_create(void **dst, int nic_count, int hw_numa_id)
 {
-    char name[CACHE_LINE] = "";
     struct ip4_manage *manage = NULL;
 
     // Avoid name conflicts when creating FIB objects
@@ -217,14 +214,13 @@ static int _ip4_conf_manage_create(void **dst, int nic_count, int hw_numa_id)
     manage->nic_count = nic_count;
 
     for (int i = 0; i < nic_count; i++) {
-        snprintf(name, sizeof(name), "IPv4_MANAGE_%u_%u_%u", hw_numa_id, i, s_fib_version[hw_numa_id]++);
-        manage->fib[i] = dpdk_fib_create(name, hw_numa_id, L3_IPv4_BUCKET_MAX);
+        manage->fib[i] = dpdk_fib_create(hw_numa_id, IP4_BUCKET_MAX);
         if (UNLIKELY(manage->fib[i] == NULL)) {
             goto _quit;
         }
     }
 
-    for (int i = 0; i < L3_IPv4_BUCKET_MAX; i++) {
+    for (int i = 0; i < IP4_BUCKET_MAX; i++) {
         INIT_LIST_HEAD(&manage->head[i]);
     }
 
@@ -300,7 +296,7 @@ bool ip4_conf_manage_ip_is_local(const void *arg, uint32_t ip, uint8_t port)
         return false;
     }
 
-    head = &ip4_manage->head[L3_IPv4_BUCKET_IDX(ip)];
+    head = &ip4_manage->head[IP4_BUCKET_IDX(ip)];
     list_for_each_entry(cur, head, node) {
         if (cur->ip == ip && cur->port == port) {
             return true;
@@ -328,11 +324,8 @@ int ip4_conf_manage_create_and_append(void **dst, void *src, const struct ip4_in
         return ret;
     }
 
-    dpdk_spinlock_lock(&s_spinlock[hw_numa_id]);
     // Only create the ipv4_manage structure.
     ret = _ip4_conf_manage_create(dst, one->nic_count, hw_numa_id);
-    dpdk_spinlock_unlock(&s_spinlock[hw_numa_id]);
-
     if (UNLIKELY(ret != 0)) {
         return ret;
     }
@@ -415,7 +408,7 @@ static INLINE void _ip4_is_local_bulk(void *data[], bool result[], int count)
         mbuf = data[i];
         ip4hdr = dpdk_pktmbuf_ip4_hdr(mbuf);
 
-        idx = L3_IPv4_BUCKET_IDX(ip4hdr->dst_addr);
+        idx = IP4_BUCKET_IDX(ip4hdr->dst_addr);
         head = &manage->head[idx];
 
         list_for_each_entry(cur, head, node) {
@@ -447,7 +440,7 @@ static INLINE void _ip4_is_local_bulk(void *data[], bool result[], int count)
 static INLINE void _ip4_icmp_echo_reply(struct dpdk_mbuf *mbuf, struct dpdk_icmp_hdr *icmp)
 {
     uint32_t tmp = 0;
-    struct dpdk_eth *eth = dpdk_pktmbuf_eth(mbuf);
+    struct dpdk_eth_hdr *eth = dpdk_pktmbuf_eth(mbuf);
     struct dpdk_ip4_hdr *ip4hdr = dpdk_pktmbuf_ip4_hdr(mbuf);
 
     // mac
@@ -465,12 +458,12 @@ static INLINE void _ip4_icmp_fragment(struct dpdk_mbuf *mbuf, uint16_t mtu)
     int rc = 0;
     int len = 0;
     struct pkt_tx *tx = NULL;
-    struct dpdk_eth *eth = NULL;
+    struct dpdk_eth_hdr *eth = NULL;
     struct dpdk_mbuf *pkt = NULL;
     struct dpdk_ip4_hdr *ip4hdr = NULL;
-    struct dpdk_eth *src_eth = dpdk_pktmbuf_eth(mbuf);
+    struct dpdk_eth_hdr *src_eth = dpdk_pktmbuf_eth(mbuf);
 
-    dpdk_pktmbuf_adj(mbuf, sizeof(struct dpdk_eth));
+    dpdk_pktmbuf_adj(mbuf, sizeof(struct dpdk_eth_hdr));
 
     tx = &tlv_tx[mbuf->port];
     rc = dpdk_ip4_mbuf_fragment(mbuf, &tx->data[tx->count], 64, mtu, tlv_dp->pktmbuf_pool, tlv_dp->indirect_pool);
@@ -484,10 +477,10 @@ static INLINE void _ip4_icmp_fragment(struct dpdk_mbuf *mbuf, uint16_t mtu)
 
         pkt->port = mbuf->port;
 
-        pkt->l2_len = sizeof(struct dpdk_eth);
+        pkt->l2_len = sizeof(struct dpdk_eth_hdr);
         pkt->l3_len = sizeof(struct dpdk_ip4_hdr);
 
-        eth = dpdk_pktmbuf_prepend(pkt, sizeof(struct dpdk_eth));
+        eth = dpdk_pktmbuf_prepend(pkt, sizeof(struct dpdk_eth_hdr));
         eth->ether_type = dpdk_cpu_to_be_16(DPDK_ETHER_TYPE_IPV4);
         eth->dst_addr = src_eth->dst_addr;
         eth->src_addr = src_eth->src_addr;
@@ -517,7 +510,7 @@ static void _ip4_icmp_process(struct dpdk_mbuf *data[], int count)
         mbuf = data[i];
         ip4hdr = dpdk_pktmbuf_ip4_hdr(mbuf);
         header_len = dpdk_ip4_header_len(ip4hdr);
-        icmp = dpdk_pktmbuf_icmp(mbuf, sizeof(struct dpdk_eth) + header_len);
+        icmp = dpdk_pktmbuf_icmp(mbuf, sizeof(struct dpdk_eth_hdr) + header_len);
         icmp_len = dpdk_be_to_cpu_16(ip4hdr->total_length) - header_len;
 
         if (LIKELY(dpdk_icmp_cksum_verify(mbuf, icmp, icmp_len))) {
@@ -567,7 +560,7 @@ void ip4_process(void *data[], int count)
         }
 
         if (dpdk_ip4_mbuf_is_fragmented(ip4hdr)) {
-            mbuf->l2_len = sizeof(struct dpdk_eth);
+            mbuf->l2_len = sizeof(struct dpdk_eth_hdr);
             mbuf->l3_len = dpdk_ip4_header_len(ip4hdr);
             mbuf = dpdk_ip4_mbuf_reassemble(tlv_dp->frag_handle, mbuf, tlv_dp->timer_cycles, ip4hdr);
 
@@ -598,7 +591,7 @@ void ip4_process(void *data[], int count)
     }
 }
 
-void l3_refresh(void)
+void ip4_arp_refresh(void)
 {
     l2_arp_refresh(_ip4_get_by_port);
 }
@@ -613,7 +606,7 @@ enum IP_LOCAL_CLASS ip4_local_class(uint16_t port, uint32_t ip)
     struct list_head *head = NULL;
     struct ip4_manage *manage = rcu_dereference(tlv_th_cfg->ip4_manage);
 
-    idx = L3_IPv4_BUCKET_IDX(ip);
+    idx = IP4_BUCKET_IDX(ip);
     head = &manage->head[idx];
 
     list_for_each_entry(cur, head, node) {
@@ -641,20 +634,17 @@ enum IP_LOCAL_CLASS ip4_local_class(uint16_t port, uint32_t ip)
     return IP_LOCAL_CLASS_LAN;
 }
 
-void *ip4_thread_startup(int hw_numa_id, int nic_count)
+void *ip4_startup(int nic_count, int hw_numa_id)
 {
     int ret = 0;
-    static void *ptr[NUMA_MAX] = {NULL};
+    void *dst = NULL;
 
-    dpdk_spinlock_lock(&s_spinlock[hw_numa_id]);
-
-    if (ptr[hw_numa_id] == NULL) {
-        _ip4_conf_manage_create(&ptr[hw_numa_id], nic_count, hw_numa_id);
+    ret = _ip4_conf_manage_create(&dst, nic_count, hw_numa_id);
+    if (UNLIKELY(ret != 0)) {
+        return NULL;
     }
 
-    dpdk_spinlock_unlock(&s_spinlock[hw_numa_id]);
-
-    return ptr[hw_numa_id];
+    return dst;
 }
 
 void ip4_manage_destroy(void *ptr)

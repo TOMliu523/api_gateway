@@ -10,19 +10,72 @@
 
 #include "l2.h"
 #include "ip6.h"
+#include "list.h"
 #include "type.h"
 #include "macro.h"
 #include "errcode.h"
+#include "protocol.h"
 #include "dpdk_rcu.h"
 #include "dpdk_hash.h"
 #include "dpdk_core.h"
 #include "dpdk_fib6.h"
 #include "dpdk_icmp6.h"
+#include "dpdk_bitops.h"
 
-#define L3_IPv6_BUCKET_MAX (1 << 16)
-#define L3_IPv6_ONLY_VERSION 0x60000000
+#define IP6_BUCKET_MAX (1 << 16)
+#define IP6_ONLY_VERSION 0x60000000
 
-#define L3_ETH_AND_IPv6_LEN (sizeof(struct dpdk_eth) + sizeof(struct dpdk_ip6_hdr))
+#define NDP_GC_MAX 64
+#define NDP_ITEM_MAX (65536)
+#define NDP_HASH_BUCKET_MAX (65536)
+
+#define NDP_SOLICT_NO_OPT_LEN (sizeof(struct dpdk_ndp_hdr))
+#define NDP_SOLICT_HAS_OPT_LEN (sizeof(struct dpdk_ndp_hdr) + 8)
+#define NDP_AD_NO_OPT_LEN (sizeof(struct dpdk_ndp_hdr))
+#define NDP_AD_HAS_OPT_LEN (sizeof(struct dpdk_ndp_hdr) + 8)
+
+#define NDP_TIMEOUT_DEFAULT (20 * 60)
+
+#define NDP_SEND_REQUEST_JUDGE(c, t) (((c)->expire_time - (5 - (c)->retry) * 60) > (t))
+
+enum NDP_FLAGS {
+    NDP_FLAGS_MANUAL,
+    NDP_FLAGS_COMPLETE,
+    NDP_FLAGS_INCOMPLETE,
+};
+
+struct ndp_item {
+    union {
+        struct {
+            struct list_head node;
+            union {
+                struct list_head man_node;
+                struct list_head lru_node;
+                struct list_head incomplete_node;
+            };
+            struct dpdk_ip6_addr ip6addr;
+            struct dpdk_mac mac;
+            uint16_t port : 8;
+            uint16_t flags : 4;
+            uint16_t retry : 4;
+            uint32_t expire_time;
+            uint32_t send_time;
+        };
+        uint8_t cache_line[CACHE_LINE];
+    };
+} ALIGN_CACHE_LINE;
+
+struct ndp_table {
+    void *pool;
+    int nic_count;
+    int ndp_count;
+    uint32_t timeout;
+    struct {
+        struct list_head man_head;
+        struct list_head lru_head;
+    };
+    struct dpdk_hash *hash[DPDK_ETHPORT_MAX];
+};
 
 struct ip6_manage {
     int ip_count;
@@ -30,7 +83,7 @@ struct ip6_manage {
     struct dpdk_fib6 *fib[DPDK_ETHPORT_MAX];
     struct dpdk_hash *hash[DPDK_ETHPORT_MAX];
     struct ip6_info *master[DPDK_ETHPORT_MAX];
-    struct ip6_info store[L3_IPv6_BUCKET_MAX];
+    struct ip6_info store[IP6_BUCKET_MAX];
 };
 
 static struct dpdk_mac s_ipv6_multicast_mac = {
@@ -133,8 +186,8 @@ static int _ip6_conf_manage_add_check(struct ip6_manage *manage, const struct ip
         return 0;
     }
 
-    if (UNLIKELY(manage->ip_count + count > L3_IPv6_BUCKET_MAX)) {
-        LOG_ERROR("Maximum supported IP address count(%d) exceeded", L3_IPv6_BUCKET_MAX);
+    if (UNLIKELY(manage->ip_count + count > IP6_BUCKET_MAX)) {
+        LOG_ERROR("Maximum supported IP address count(%d) exceeded", IP6_BUCKET_MAX);
         return ERRCODE_IP_LIMIT_EXCEEDED;
     }
 
@@ -174,14 +227,14 @@ static int _ip6_conf_manage_create(void **dst, int nic_count, int hw_numa_id)
     manage->nic_count = nic_count;
 
     for (int i = 0; i < nic_count; i++) {
-        manage->hash[i] = dpdk_hash_create(L3_IPv6_BUCKET_MAX, sizeof(struct dpdk_ip6_addr), hw_numa_id, _ip6_conf_info_cmp);
+        manage->hash[i] = dpdk_hash_create(IP6_BUCKET_MAX, sizeof(struct dpdk_ip6_addr), hw_numa_id, _ip6_conf_info_cmp);
         if (UNLIKELY(manage->hash[i] == NULL)) {
             goto _quit;
         }
     }
 
     for (int i = 0; i < nic_count; i++) {
-        manage->fib[i] = dpdk_fib6_create(hw_numa_id, L3_IPv6_BUCKET_MAX);
+        manage->fib[i] = dpdk_fib6_create(hw_numa_id, IP6_BUCKET_MAX);
         if (UNLIKELY(manage->fib[i] == NULL)) {
             goto _quit;
         }
@@ -276,12 +329,12 @@ bool ip6_conf_manage_ip_is_local(const void *arg, const struct dpdk_ip6_addr *ad
 
 int ip6_ndp_advertisement_gen(struct dpdk_mbuf *mbuf, uint16_t port, const struct dpdk_ip6_addr *addr, const struct dpdk_mac *mac)
 {
-    struct dpdk_eth *eth = NULL;
-    struct dpdk_ndp *ndp = NULL;
+    struct dpdk_eth_hdr *eth = NULL;
+    struct dpdk_ndp_hdr *ndp = NULL;
     struct dpdk_ndp_opt *opt = NULL;
     struct dpdk_ip6_hdr *ip6hdr = NULL;
 
-    eth = dpdk_append(mbuf, sizeof(struct dpdk_eth) + sizeof(struct dpdk_ip6_hdr) + sizeof(struct dpdk_ndp), void *);
+    eth = dpdk_append(mbuf, sizeof(struct dpdk_eth_hdr) + sizeof(struct dpdk_ip6_hdr) + sizeof(struct dpdk_ndp_hdr), void *);
     if (UNLIKELY(eth == NULL)) {
         LOG_ERROR("There is not enough tailroom space in the last segment.");
         return -1;
@@ -294,15 +347,15 @@ int ip6_ndp_advertisement_gen(struct dpdk_mbuf *mbuf, uint16_t port, const struc
     eth->ether_type = dpdk_cpu_to_be_16(DPDK_ETHER_IP6);
 
     ip6hdr = (struct dpdk_ip6_hdr *)(eth + 1);
-    ip6hdr->vtc_flow = dpdk_cpu_to_be_32(L3_IPv6_ONLY_VERSION);
-    ip6hdr->payload_len = dpdk_cpu_to_be_16(sizeof(struct dpdk_ndp) + 8);
+    ip6hdr->vtc_flow = dpdk_cpu_to_be_32(IP6_ONLY_VERSION);
+    ip6hdr->payload_len = dpdk_cpu_to_be_16(sizeof(struct dpdk_ndp_hdr) + 8);
     ip6hdr->proto = IPPROTO_ICMPV6;
     ip6hdr->hop_limits = DPDK_LOCAL_HOP_LIMITS;
     ip6hdr->src_addr = *addr;
     ip6hdr->dst_addr = s_ipv6_multicast_ip;
 
-    ndp = (struct dpdk_ndp *)(ip6hdr + 1);
-    ndp->icmp6_hdr.icmp6_type = DPDK_DNP_ADVERTISEMENT;
+    ndp = (struct dpdk_ndp_hdr *)(ip6hdr + 1);
+    ndp->icmp6_hdr.icmp6_type = DPDK_NDP_ADVERT;
     ndp->icmp6_hdr.icmp6_code = 0;
     ndp->icmp6_hdr.icmp6_cksum = 0;
     ndp->icmp6_hdr.icmp6_dataun.un_data32[0] = 0;
@@ -384,6 +437,16 @@ int ip6_conf_manage_create_and_delete(void **dst, void *src, const struct ip6_in
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
 // Data plane interface
 
+static INLINE bool _ip6_is_local(int port, const void *key)
+{
+    int ret = 0;
+    void *data = NULL;
+    struct ip6_manage *manage = rcu_dereference(tlv_th_cfg->ip6_manage);
+
+    ret = dpdk_hash_lookup(manage->hash[port], key, &data);
+    return (ret >= 0) ? true : false;
+}
+
 static INLINE int _ip6_is_local_bulk(void *data[], uint64_t result[], int count)
 {
     int n = 0;
@@ -415,13 +478,13 @@ static INLINE void _ip6_icmp_fragment(struct dpdk_mbuf *mbuf, uint16_t mtu)
     int len = 0;
     int tx_count = 0;
     struct pkt_tx *tx = NULL;
-    struct dpdk_eth *eth = NULL;
+    struct dpdk_eth_hdr *eth = NULL;
     struct dpdk_mbuf *pkt = NULL;
-    struct dpdk_eth *src_eth = dpdk_pktmbuf_eth(mbuf);
+    struct dpdk_eth_hdr *src_eth = dpdk_pktmbuf_eth(mbuf);
     struct dpdk_mac src_addr = src_eth->src_addr;
     struct dpdk_mac dst_addr = src_eth->dst_addr;
 
-    dpdk_pktmbuf_adj(mbuf, sizeof(struct dpdk_eth));
+    dpdk_pktmbuf_adj(mbuf, sizeof(struct dpdk_eth_hdr));
 
     tx = &tlv_tx[mbuf->port];
     tx_count = tx->count;
@@ -434,7 +497,7 @@ static INLINE void _ip6_icmp_fragment(struct dpdk_mbuf *mbuf, uint16_t mtu)
     for (int i = tx_count; i < len; i++) {
         pkt = tx->data[i];
 
-        pkt->l2_len = sizeof(struct dpdk_eth);
+        pkt->l2_len = sizeof(struct dpdk_eth_hdr);
         pkt->l3_len = sizeof(struct dpdk_ip6_hdr) + sizeof(struct dpdk_ip6_frag_ext);
 
         eth = dpdk_pktmbuf_prepend(pkt, pkt->l2_len);
@@ -448,7 +511,7 @@ static INLINE void _ip6_icmp_fragment(struct dpdk_mbuf *mbuf, uint16_t mtu)
 
 static INLINE void _ip6_icmp_echo_request_process(struct dpdk_mbuf *mbuf)
 {
-    struct dpdk_eth *eth = NULL;
+    struct dpdk_eth_hdr *eth = NULL;
     struct dpdk_ip6_hdr *ip6hdr = NULL;
     struct dpdk_icmp6_hdr *icmp6hdr = NULL;
 
@@ -472,21 +535,436 @@ static INLINE void _ip6_icmp_echo_request_process(struct dpdk_mbuf *mbuf)
     dpdk_icmp6_echo_reply_ckcum(icmp6hdr);
 }
 
-static INLINE bool _ip6_ndp_solict_process(struct dpdk_mbuf *mbuf)
+static INLINE bool _ip6_port_ip_get(int port, struct dpdk_ip6_addr *addr)
 {
-    struct dpdk_ip6_hdr *ip6hdr = DPDK_HEADROOM(mbuf)->l3;
-    struct dpdk_icmp6_hdr *icmp6hdr = DPDK_HEADROOM(mbuf)->l4;
+    struct ip6_manage *manage = rcu_dereference(tlv_th_cfg->ip6_manage);
 
-    if (UNLIKELY(ip6hdr->hop_limits != UINT8_MAX)) {
+    if (UNLIKELY(manage->master[port] == NULL)) {
         return false;
     }
 
-
+    *addr = manage->master[port]->addr;
+    return true;
 }
 
-static INLINE bool _ip6_ndp_advert_process(struct dpdk_mbuf *mbuf)
+static INLINE bool _ip6_ndp_solict_dad_adver(struct dpdk_mbuf *mbuf)
 {
+    struct dpdk_ndp_opt *opt = NULL;
+    struct dpdk_eth_hdr *ethhdr = DPDK_HEADROOM(mbuf)->l2;
+    struct dpdk_ip6_hdr *ip6hdr = DPDK_HEADROOM(mbuf)->l3;
+    struct dpdk_ndp_hdr *ndphdr = DPDK_HEADROOM(mbuf)->l4;
 
+    if (UNLIKELY(dpdk_append(mbuf, 8, void *) == NULL)) {
+        return false;
+    }
+
+    if (UNLIKELY(_ip6_port_ip_get(mbuf->port, &ip6hdr->src_addr))) {
+        return false;
+    }
+
+    dpdk_ip6_solnode_from_addr(&ip6hdr->dst_addr, &ndphdr->target);
+
+    dpdk_eth_mcast_from_ip6(&ethhdr->dst_addr, &ip6hdr->dst_addr);
+    l2_thread_port_mac(mbuf->port, &ethhdr->src_addr);
+
+    ndphdr->icmp6_hdr.icmp6_type = DPDK_NDP_ADVERT;
+    ndphdr->icmp6_hdr.icmp6_cksum = 0;
+    ndphdr->icmp6_hdr.icmp6_dataun.un_data32[0] = 0;
+    opt = (struct dpdk_ndp_opt *)(ndphdr + 1);
+    opt->type = DPDK_NDP_DST_LINK_OPT;
+    opt->len = 1;
+    *(struct dpdk_mac *)opt->data = ethhdr->src_addr;
+
+    ip6hdr->payload_len = dpdk_cpu_to_be_16(sizeof(struct dpdk_ndp_hdr) + 8);
+    ip6hdr->dst_addr = s_ipv6_multicast_ip;
+
+    return true;
+}
+
+static INLINE bool _ip6_target_is_solict_addr(int port, const struct dpdk_ip6_addr *ip6dst, const struct dpdk_ip6_addr *ndpdst)
+{
+    struct dpdk_ip6_addr target;
+
+    if (UNLIKELY(dpdk_ip6_addr_is_mcast(ndpdst))) {
+        return false;
+    }
+
+    dpdk_ip6_solnode_from_addr(&target, ndpdst);
+    if (dpdk_ip6_addr_eq(ip6dst, &target)) {
+        return false;
+    }
+
+    return true;
+}
+
+static INLINE void _ip6_ndp_init(struct ndp_item *item, const struct dpdk_ip6_addr *addr,
+                                 const struct dpdk_mac *mac, int port, uint32_t off_time)
+{
+    INIT_LIST_HEAD(&item->node);
+    INIT_LIST_HEAD(&item->lru_node);
+    item->ip6addr = *addr;
+    item->mac = *mac;
+    item->port = port;
+    item->flags = NDP_FLAGS_COMPLETE;
+    item->retry = 0;
+    item->expire_time = off_time;
+    item->send_time = 0;
+}
+
+static INLINE bool _ip6_ndp_update(int port, const struct dpdk_ip6_addr *addr, const struct dpdk_mac *mac, bool override)
+{
+    int ret = 0;
+    struct ndp_item *data = NULL;
+    struct ndp_table *table = ((struct proto_header *)tlv_dp->protocol)->nt;
+
+    static __thread int s_ndp_cache_count = 0;
+    static __thread void *s_ndp_cache[NDP_GC_MAX] = {NULL};
+
+    ret = dpdk_hash_lookup(table->hash[port], addr, (void **)&data);
+    if (ret >= 0) {
+        if (override) {
+            data->mac = *mac;
+        }
+        list_del(&data->lru_node);
+        list_add(&data->lru_node, &table->lru_head);
+        return true;
+    } else if (ret == -ENOENT) {
+        if (s_ndp_cache_count == 0) {
+            ret = dpdk_mempool_pop(table->pool, s_ndp_cache, ARR_NUMS(s_ndp_cache));
+            if (UNLIKELY(ret == 0)) {
+                s_ndp_cache_count = ARR_NUMS(s_ndp_cache);
+            } else {
+                ret = dpdk_mempool_pop(table->pool, s_ndp_cache, 1);
+                if (LIKELY(ret == 0)) {
+                    s_ndp_cache_count = 1;
+                }
+            }
+
+            if (UNLIKELY(s_ndp_cache_count == 0)) {
+                LOG_ERROR("The NDP table has reached its limit; no new entries can be added.");
+                return false;
+            }
+        }
+
+        data = s_ndp_cache[--s_ndp_cache_count];
+
+        _ip6_ndp_init(data, addr, mac, port, table->timeout + tlv_dp->off_time);
+        list_add(&data->lru_node, &table->lru_head);
+        dpdk_hash_add_kv(table->hash[port], addr, data);
+        return true;
+    } else {
+        return false;
+    }
+}
+
+static INLINE void _ip6_ndp_table_update(struct dpdk_mbuf *mbuf, const struct dpdk_ip6_addr *addr, const struct dpdk_mac *mac)
+{
+    bool flag = _ip6_ndp_update(mbuf->port, addr, mac, true);
+    if (flag) {
+        DPDK_HEADROOM(mbuf)->type = PKT_MBUF_NDP;
+        tlv_notify->data[tlv_notify->count++] = mbuf;
+    } else {
+        tlv_drop->data[tlv_drop->count++] = mbuf;
+    }
+}
+
+static INLINE struct dpdk_mbuf *_ip6_ndp_gen(struct dpdk_mbuf *mbuf, int port, struct dpdk_ip6_addr *src_addr,
+                                             struct dpdk_ip6_addr *dst_addr, struct dpdk_mac *mac)
+{
+    struct dpdk_eth_hdr *ethhdr = NULL;
+    struct dpdk_ip6_hdr *ip6hdr = NULL;
+    struct dpdk_ndp_hdr *ndphdr = NULL;
+
+    mbuf->port = port;
+
+    ethhdr = dpdk_append(mbuf, DPDK_NDP_BASE_LEN, struct dpdk_eth_hdr *);
+    if (UNLIKELY(ethhdr == NULL)) {
+        return NULL;
+    }
+
+    ethhdr->dst_addr = *mac;
+    l2_port_mac(port, &ethhdr->src_addr);
+    ethhdr->ether_type = dpdk_cpu_to_be_16(DPDK_ETHER_IP6);
+
+    ip6hdr = (struct dpdk_ip6_hdr *)(ethhdr + 1);
+    ip6hdr->vtc_flow = 0;
+    ip6hdr->version = 6;
+    ip6hdr->payload_len = sizeof(*ndphdr);
+    ip6hdr->proto = IPPROTO_ICMPV6;
+    ip6hdr->hop_limits = DPDK_LOCAL_HOP_LIMITS;
+    ip6hdr->src_addr = *src_addr;
+    ip6hdr->dst_addr = *dst_addr;
+
+    ndphdr = (struct dpdk_ndp_hdr *)(ip6hdr + 1);
+    ndphdr->icmp6_hdr.icmp6_type = DPDK_NDP_ADVERT;
+    ndphdr->icmp6_hdr.icmp6_code = 0;
+    ndphdr->icmp6_hdr.icmp6_cksum = 0;
+    ndphdr->icmp6_hdr.icmp6_dataun.un_data32[0] = 0;
+    ndphdr->target = *dst_addr;
+
+    ndphdr->icmp6_hdr.icmp6_cksum = dpdk_icmp6_cksum(mbuf, ip6hdr, sizeof(*ethhdr) + sizeof(*ip6hdr));
+
+    return mbuf;
+}
+
+static INLINE struct dpdk_mbuf *_ip6_ndp_nud_adver(const struct dpdk_mbuf *mbuf)
+{
+    int ret = 0;
+    struct dpdk_mbuf *one = NULL;
+    struct dpdk_eth_hdr *ethhdr = NULL;
+    struct dpdk_ip6_hdr *ip6hdr = NULL;
+    struct dpdk_ndp_hdr *ndphdr = NULL;
+
+    struct dpdk_eth_hdr *eth = DPDK_HEADROOM(mbuf)->l2;
+    struct dpdk_ip6_hdr *ip6 = DPDK_HEADROOM(mbuf)->l3;
+    struct dpdk_ndp_hdr *ndp = DPDK_HEADROOM(mbuf)->l4;
+
+    ret = dpdk_pktmbuf_pop(tlv_dp->pktmbuf_pool, (void **)&one, 1);
+    if (UNLIKELY(ret != 0)) {
+        return NULL;
+    }
+
+    ethhdr = dpdk_append(one, DPDK_NDP_BASE_LEN, struct dpdk_eth_hdr *);
+    if (UNLIKELY(ret != 0)) {
+        dpdk_pktmbuf_push((void **)&one, 1);
+        return NULL;
+    }
+
+    ethhdr->dst_addr = eth->dst_addr;
+    ethhdr->src_addr = eth->src_addr;
+    ethhdr->ether_type = eth->ether_type;
+
+    ip6hdr = (struct dpdk_ip6_hdr *)(ethhdr + 1);
+    ip6hdr->vtc_flow = ip6->vtc_flow;
+    ip6hdr->payload_len = dpdk_cpu_to_be_16(sizeof(*ndphdr));
+    ip6hdr->proto = ip6->proto;
+    ip6hdr->hop_limits = DPDK_LOCAL_HOP_LIMITS;
+    ip6hdr->src_addr = ip6->src_addr;
+    ip6hdr->dst_addr = ip6->dst_addr;
+
+    ndphdr = (struct dpdk_ndp_hdr *)(ip6hdr + 1);
+    ndphdr->icmp6_hdr.icmp6_code = DPDK_NDP_ADVERT;
+    ndphdr->icmp6_hdr.icmp6_type = 0;
+    ndphdr->icmp6_hdr.icmp6_cksum = 0;
+    ndphdr->icmp6_hdr.icmp6_dataun.un_data32[0] = 0;
+    ndphdr->icmp6_hdr.icmp6_dataun.u_nd_advt.solicited = 1;
+    ndphdr->target = ndp->target;
+
+    ndphdr->icmp6_hdr.icmp6_cksum = dpdk_icmp6_cksum(one, ip6hdr, sizeof(*ethhdr) + sizeof(*ip6hdr));
+
+    return one;
+}
+
+static INLINE struct dpdk_mbuf *_ip6_ndp_mcast_adver(const struct dpdk_mbuf *mbuf)
+{
+    int ret = 0;
+    struct dpdk_mbuf *one = NULL;
+    struct dpdk_eth_hdr *ethhdr = NULL;
+    struct dpdk_ip6_hdr *ip6hdr = NULL;
+    struct dpdk_ndp_hdr *ndphdr = NULL;
+    struct dpdk_ndp_opt *ndpopt = NULL;
+
+    struct dpdk_eth_hdr *eth = DPDK_HEADROOM(mbuf)->l2;
+    struct dpdk_ip6_hdr *ip6 = DPDK_HEADROOM(mbuf)->l3;
+    struct dpdk_ndp_hdr *ndp = DPDK_HEADROOM(mbuf)->l4;
+
+    size_t len = sizeof(*ethhdr) + sizeof(*ip6hdr) + sizeof(*ndphdr) + DPDK_NDP_DST_LINK_OPT_LEN;
+
+    ret = dpdk_pktmbuf_pop(tlv_dp->pktmbuf_pool, (void **)&one, 1);
+    if (UNLIKELY(ret != 0)) {
+        return NULL;
+    }
+
+    ethhdr = dpdk_append(one, len, struct dpdk_eth_hdr *);
+    if (UNLIKELY(ret != 0)) {
+        dpdk_pktmbuf_push((void **)&one, 1);
+        return NULL;
+    }
+
+    ip6hdr = (struct dpdk_ip6_hdr *)(ethhdr + 1);
+    if (UNLIKELY(_ip6_port_ip_get(mbuf->port, &ip6hdr->src_addr))) {
+        dpdk_pktmbuf_push((void **)&one, 1);
+        return NULL;
+    }
+
+    ethhdr->dst_addr = eth->src_addr;
+    l2_port_mac(mbuf->port, &ethhdr->src_addr);
+    ethhdr->ether_type = eth->ether_type;
+
+
+    ip6hdr->vtc_flow = ip6->vtc_flow;
+    ip6hdr->payload_len = dpdk_cpu_to_be_16(sizeof(*ndphdr) + DPDK_NDP_DST_LINK_OPT_LEN);
+    ip6hdr->proto = ip6->proto;
+    ip6hdr->hop_limits = DPDK_LOCAL_HOP_LIMITS;
+    ip6hdr->dst_addr = ip6->src_addr;
+
+    ndphdr = (struct dpdk_ndp_hdr *)(ip6hdr + 1);
+    ndphdr->icmp6_hdr.icmp6_code = DPDK_NDP_ADVERT;
+    ndphdr->icmp6_hdr.icmp6_type = 0;
+    ndphdr->icmp6_hdr.icmp6_cksum = 0;
+    ndphdr->icmp6_hdr.icmp6_dataun.un_data32[0] = 0;
+    ndphdr->icmp6_hdr.icmp6_dataun.u_nd_advt.override = 1;
+    ndphdr->icmp6_hdr.icmp6_dataun.u_nd_advt.override = 1;
+    ndphdr->target = ndp->target;
+
+    ndpopt = (struct dpdk_ndp_opt *)(ndphdr + 1);
+    ndpopt->type = DPDK_NDP_DST_LINK_OPT;
+    ndpopt->len = 1;
+    *(struct dpdk_mac *)ndpopt->data = ethhdr->src_addr;
+
+    ndphdr->icmp6_hdr.icmp6_cksum = dpdk_icmp6_cksum(one, ip6hdr, sizeof(*ethhdr) + sizeof(*ip6hdr));
+
+    return one;
+}
+
+static INLINE void _ip6_ndp_solict_process(struct dpdk_mbuf *mbuf)
+{
+    uint16_t port = mbuf->port;
+    struct dpdk_ip6_hdr *ip6hdr = DPDK_HEADROOM(mbuf)->l3;
+    struct dpdk_ndp_hdr *ndp = DPDK_HEADROOM(mbuf)->l4;
+
+    if (UNLIKELY(!dpdk_icmp6_cksum_verify(mbuf, ip6hdr))) {
+        goto _quit;
+    }
+
+    if (UNLIKELY(ip6hdr->hop_limits != UINT8_MAX)) {
+        goto _quit;
+    }
+
+    if (UNLIKELY(ndp->icmp6_hdr.icmp6_code != 0)) {
+        goto _quit;
+    }
+
+    switch (ip6hdr->payload_len) {
+    case NDP_SOLICT_NO_OPT_LEN: {
+        struct pkt_tx *tx = &tlv_tx[port];
+
+        if (LIKELY(!dpdk_ip6_addr_is_unspec(&ip6hdr->src_addr))) {
+            goto _quit;
+        }
+
+        if (UNLIKELY(!_ip6_target_is_solict_addr(port, &ip6hdr->dst_addr, &ndp->target))) {
+            goto _quit;
+        }
+
+        if (UNLIKELY(!_ip6_is_local(port, (const void *)&ndp->target))) {
+            goto _quit;
+        }
+
+        _ip6_ndp_solict_dad_adver(mbuf);
+        tx->data[tx->count++] = mbuf;
+        break;
+    }
+
+    case NDP_SOLICT_HAS_OPT_LEN: {
+        struct dpdk_mbuf *ad_mbuf = NULL;
+        struct pkt_tx *tx = &tlv_tx[port];
+        const struct dpdk_ndp_opt *opt = NULL;
+
+        if (UNLIKELY(!dpdk_ip6_addr_is_ucast(&ip6hdr->src_addr))) {
+            goto _quit;
+        }
+
+        if (UNLIKELY(!dpdk_ip6_addr_is_ucast(&ndp->target))) {
+            goto _quit;
+        }
+
+        opt = (const struct dpdk_ndp_opt *)(ndp + 1);
+        if (UNLIKELY(opt->type != DPDK_NDP_SRC_LINK_OPT || opt->len != 1)) {
+            goto _quit;
+        }
+
+        if (dpdk_ip6_addr_is_ucast(&ip6hdr->dst_addr)) {
+            if (dpdk_ip6_addr_eq(&ip6hdr->dst_addr, &ndp->target)) {
+                _ip6_ndp_table_update(mbuf, &ndp->target, (const struct dpdk_mac *)opt->data);
+                ad_mbuf = _ip6_ndp_nud_adver(mbuf);
+                if (LIKELY(ad_mbuf != NULL)) {
+                    tx->data[tx->count++] = mbuf;
+                }
+            }
+
+            goto _quit;
+        } else if (_ip6_target_is_solict_addr(port, &ip6hdr->dst_addr, &ndp->target)) {
+            _ip6_ndp_table_update(mbuf, &ndp->target, (const struct dpdk_mac *)opt->data);
+            ad_mbuf = _ip6_ndp_mcast_adver(mbuf);
+            if (LIKELY(ad_mbuf != NULL)) {
+                tx->data[tx->count++] = mbuf;
+            }
+        }
+
+        return;
+    }
+
+    default: goto _quit;
+    }
+
+    return;
+
+_quit:
+    tlv_drop->data[tlv_drop->count++] = mbuf;
+    return;
+}
+
+static INLINE void _ip6_ndp_advert_process(struct dpdk_mbuf *mbuf)
+{
+    uint8_t is_solict = 0;
+    uint8_t is_override = 0;
+    uint16_t port = mbuf->port;
+    enum IP6_ADDR_TYPE addr_type;
+    struct dpdk_ndp_opt *opt = NULL;
+    struct dpdk_ndp_hdr *ndp = DPDK_HEADROOM(mbuf)->l4;
+    struct dpdk_ip6_hdr *ip6hdr = DPDK_HEADROOM(mbuf)->l3;
+
+    if (UNLIKELY(!dpdk_icmp6_cksum_verify(mbuf, ip6hdr))) {
+        goto _quit;
+    }
+
+    if (UNLIKELY(ip6hdr->hop_limits != UINT8_MAX)) {
+        goto _quit;
+    }
+
+    if (UNLIKELY(ndp->icmp6_hdr.icmp6_code != 0)) {
+        goto _quit;
+    }
+
+    if (UNLIKELY(ip6hdr->payload_len < NDP_AD_HAS_OPT_LEN)) {
+        goto _quit;
+    }
+
+    if (UNLIKELY(opt->type != DPDK_NDP_DST_LINK_OPT || opt->len != 1)) {
+        goto _quit;
+    }
+
+    if (UNLIKELY(!dpdk_ip6_addr_is_ucast(&ndp->target))) {
+        goto _quit;
+    }
+
+    is_override = ndp->icmp6_hdr.icmp6_dataun.u_nd_advt.override;
+    is_solict = ndp->icmp6_hdr.icmp6_dataun.u_nd_advt.solicited;
+
+    if (UNLIKELY(is_solict && dpdk_ip6_addr_is_mcast(&ip6hdr->dst_addr))) {
+        goto _quit;
+    }
+
+    addr_type = dpdk_ip6_addr_type(&ip6hdr->src_addr);
+    switch (addr_type) {
+    case IP6_ADDR_UNSPEC: // DAD reponse
+    case IP6_ADDR_UNICAST:
+        if (_ip6_ndp_update(port, &ndp->target, (struct dpdk_mac *)opt->data, is_override)) {
+            DPDK_HEADROOM(mbuf)->type = PKT_MBUF_NDP;
+            tlv_notify->data[tlv_notify->count++] = mbuf;
+        } else {
+            tlv_drop->data[tlv_drop->count++] = mbuf;
+        }
+        break;
+    default: goto _quit; break;
+    }
+
+    return;
+
+_quit:
+    tlv_drop->data[tlv_drop->count++] = mbuf;
+    return;
 }
 
 static void _ip6_icmp_process(struct dpdk_mbuf *data[], int count)
@@ -496,14 +974,15 @@ static void _ip6_icmp_process(struct dpdk_mbuf *data[], int count)
     struct pkt_tx *tx = NULL;
     struct dpdk_icmp6_hdr *icmp6hdr;
 
-    mtu = tlv_dp->mtu;
-    tx = &tlv_tx[mbuf->port];
     for (int i = 0; i < count; i++) {
         mbuf = data[i];
         icmp6hdr = DPDK_HEADROOM(mbuf)->l4;
 
         switch (icmp6hdr->icmp6_type) {
         case ICMPV6_ECHO_REQUEST:
+            mtu = tlv_dp->mtu;
+            tx = &tlv_tx[mbuf->port];
+
             _ip6_icmp_echo_request_process(mbuf);
             if (mbuf->pkt_len <= mtu) {
                 tx->data[tx->count++] = mbuf;
@@ -513,18 +992,10 @@ static void _ip6_icmp_process(struct dpdk_mbuf *data[], int count)
             }
             break;
         case DPDK_NDP_SOLICT:
-            if (_ip6_ndp_solict_process(mbuf)) {
-                tx->data[tx->count++] = mbuf;
-            } else {
-                tlv_drop->data[tlv_drop->count++] = mbuf;
-            }
+            _ip6_ndp_solict_process(mbuf);
             break;
         case DPDK_NDP_ADVERT:
-            if (_ip6_ndp_advert_process(mbuf)) {
-                tx->data[tx->count++] = mbuf;
-            } else {
-                tlv_drop->data[tlv_drop->count++] = mbuf;
-            }
+            _ip6_ndp_advert_process(mbuf);
             break;
         default:
             tlv_drop->data[tlv_drop->count++] = mbuf;
@@ -533,8 +1004,116 @@ static void _ip6_icmp_process(struct dpdk_mbuf *data[], int count)
     }
 }
 
+static void _ip6_ndp_gen_bulk(void *data[], int count)
+{
+    int ret = 0;
+    struct pkt_tx *tx = NULL;
+    struct dpdk_ip6_addr ip6addr;
+    struct ndp_item *item = NULL;
+    struct dpdk_mbuf *mbuf = NULL;
+
+    ret = dpdk_pktmbuf_pop(tlv_dp->pktmbuf_pool, tlv_cache->data, count);
+    if (UNLIKELY(ret != 0)) {
+        LOG_ERROR("pktmbuf no enough.");
+        return;
+    }
+
+    for (int i = 0; i < count; i++) {
+        uint16_t port = 0;
+        item = data[i];
+
+        port = item->port;
+        tx = &tlv_tx[port];
+
+        if (UNLIKELY(!_ip6_port_ip_get(port, &ip6addr))) {
+            continue;
+        }
+
+        if (UNLIKELY(!_ip6_ndp_gen(mbuf, port, &ip6addr, &item->ip6addr, &item->mac))) {
+            dpdk_pktmbuf_push(tlv_cache->data, count);
+            return;
+        }
+
+        tx->data[tx->count++] = mbuf;
+    }
+}
+
+void ip6_thread_ndp_table_destroy(void *nt)
+{
+    struct ndp_table *table = nt;
+
+    if (table == NULL) {
+        return;
+    }
+
+    if (table->pool != NULL) {
+        dpdk_pool_destroy(table->pool);
+    }
+
+    for (int i = 0; i < table->nic_count; i++) {
+        if (table->hash[i] != NULL) {
+            dpdk_hash_destroy(table->hash[i]);
+        }
+    }
+
+    dpdk_free(nt);
+}
+
+void *ip6_thread_ndp_table_create(int nic_count, int cpu_id, int hw_numa_id)
+{
+    char name[CACHE_LINE] = "";
+    struct ndp_table *nt = NULL;
+
+    nt = dpdk_malloc_numa(sizeof(struct ndp_table), hw_numa_id);
+    if (UNLIKELY(nt == NULL)) {
+        LOG_ERROR("OOM");
+        return NULL;
+    }
+
+    memset(nt, 0, sizeof(struct ndp_table));
+
+    snprintf(name, sizeof(name), "NDP_POOL_THREAD_%u_%u", hw_numa_id, cpu_id);
+    nt->pool = dpdk_pool_ss_create(name, NDP_ITEM_MAX, sizeof(struct ndp_item), hw_numa_id);
+    if (UNLIKELY(nt->pool == NULL)) {
+        goto _quit;
+    }
+
+    nt->nic_count = nic_count;
+    nt->ndp_count = 0;
+    nt->timeout = NDP_TIMEOUT_DEFAULT;
+    INIT_LIST_HEAD(&nt->man_head);
+    INIT_LIST_HEAD(&nt->lru_head);
+
+    for (int i = 0; i < nic_count; i++) {
+        nt->hash[i] = dpdk_hash_create(NDP_ITEM_MAX, 16, hw_numa_id, dpdk_ip6_addr_cmp);
+        if (UNLIKELY(nt->hash[i] == NULL)) {
+            goto _quit;
+        }
+    }
+
+    return nt;
+
+_quit:
+    ip6_thread_ndp_table_destroy(nt);
+    return NULL;
+}
+
+void *ip6_startup(int nic_count, int hw_numa_id)
+{
+    int ret = 0;
+    void *dst = NULL;
+
+    ret = _ip6_conf_manage_create(&dst, nic_count, hw_numa_id);
+    if (UNLIKELY(ret != 0)) {
+        return NULL;
+    }
+
+    return dst;
+}
+
 void ip6_process(void *data[], int count)
 {
+    int icmp6_count = 0;
     uint64_t *result = 0;
     int ip_check_count = 0;
     struct dpdk_mbuf *mbuf = NULL;
@@ -547,7 +1126,7 @@ void ip6_process(void *data[], int count)
         mbuf = data[i];
 
         ip6hdr = dpdk_pktmbuf_ip6_hdr(mbuf);
-        if (UNLIKELY((result[i >> 6] & (i & 63)) == 0 && !dpdk_ip6_addr_is_mcast(&ip6hdr->dst_addr))) {
+        if (UNLIKELY(!dpdk_bit_test_u64(result[i / 64], i & 63) && !dpdk_ip6_addr_is_mcast(&ip6hdr->dst_addr))) {
             tlv_drop->data[tlv_drop->count++] = mbuf;
             continue;
         }
@@ -563,7 +1142,7 @@ void ip6_process(void *data[], int count)
                 continue;
             }
 
-            mbuf->l2_len = sizeof(struct dpdk_eth);
+            mbuf->l2_len = sizeof(struct dpdk_eth_hdr);
             mbuf->l3_len = sizeof(struct dpdk_ip6_hdr) + sizeof(struct dpdk_ip6_frag_ext);
             mbuf = dpdk_ip6_mbuf_reassemble(tlv_dp->frag_handle, mbuf, tlv_dp->timer_cycles, ip6hdr, ip6hdr + 1);
 
@@ -598,13 +1177,66 @@ void ip6_process(void *data[], int count)
         }
     }
 
-    if (tlv_icmp6->count != 0) {
-        _ip6_icmp_process((struct dpdk_mbuf **)tlv_icmp6->data, tlv_icmp->count);
+    icmp6_count = tlv_icmp6->count;
+    if (icmp6_count != 0) {
+        _ip6_icmp_process((struct dpdk_mbuf **)tlv_icmp6->data, icmp6_count);
         tlv_icmp6->count = 0;
     }
 }
 
-void ip6_manage_destroy(void *ptr)
+void ip6_destroy(void *ptr)
 {
     _ip6_conf_manage_destroy(ptr);
+}
+
+void ip6_ndp_refresh(void)
+{
+    int count = 0;
+    struct ndp_item *cur = NULL;
+    struct ndp_item *next = NULL;
+    uint32_t cur_time = tlv_dp->off_time;
+    struct ndp_table *nt = ((struct proto_header *)tlv_dp->protocol)->nt;
+
+    static __thread void *s_ndp_gc[NDP_GC_MAX] = {NULL};
+
+    list_for_each_entry_safe_reverse(cur, next, &nt->lru_head, lru_node) {
+        if (cur->expire_time > cur_time) {
+            if (NDP_SEND_REQUEST_JUDGE(cur, cur_time)) {
+                break;
+            } else {
+                cur->retry += 1;
+                cur->send_time = cur_time;
+                tlv_pending->data[tlv_pending->count++] = cur;
+            }
+        } else {
+            list_del_init(&cur->lru_node);
+            list_del_init(&cur->node);
+            nt->ndp_count -= 1;
+            s_ndp_gc[count++] = cur;
+            if (UNLIKELY(count == NDP_GC_MAX)) {
+                break;
+            }
+        }
+    }
+
+    if (tlv_pending->count != 0) {
+        _ip6_ndp_gen_bulk(tlv_pending->data, tlv_pending->count);
+        tlv_pending->count = 0;
+    }
+
+    if (count != 0) {
+        dpdk_mempool_push(nt->pool, s_ndp_gc, count);
+    }
+}
+
+void ip6_ndp_update_or_create(void *data)
+{
+    struct dpdk_mbuf *mbuf = data;
+
+    struct dpdk_eth_hdr *ethhdr = DPDK_HEADROOM(mbuf)->l2;
+    struct dpdk_ndp_hdr *ndphdr = DPDK_HEADROOM(mbuf)->l4;
+    struct dpdk_ndp_opt *ndpopt = (struct dpdk_ndp_opt *)(ndphdr + 1);
+    int override = ndphdr->icmp6_hdr.icmp6_dataun.u_nd_advt.override;
+
+    _ip6_ndp_update(mbuf->port, &ndphdr->target, (struct dpdk_mac *)ndpopt->data, override);
 }

@@ -64,7 +64,7 @@ static int _route4_conf_create(void **out, int hw_numa_id)
     route4->default_id = L3_ROUTE4_DEFAULT_INVALID_ID;
 
     snprintf(name, sizeof(name), "ROUTE_%d_%lu", hw_numa_id, s_route_version[hw_numa_id]++);
-    route4->fib = dpdk_fib_create(name, hw_numa_id, L3_ROUTE4_ITEM_MAX);
+    route4->fib = dpdk_fib_create(hw_numa_id, L3_ROUTE4_ITEM_MAX);
     if (UNLIKELY(route4->fib == NULL)) {
         dpdk_free(route4);
         return ERRCODE_OOM;
