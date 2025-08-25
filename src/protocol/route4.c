@@ -15,9 +15,9 @@
 #include "dpdk_common.h"
 #include "dpdk_spinlock.h"
 
-#define L3_DIRECT_ROUTE_ITEM_MAX 2000
-#define L3_ROUTE4_ITEM_MAX 20000
-#define L3_ROUTE4_DEFAULT_INVALID_ID (UINT32_MAX)
+#define ROUTE4_DIRECT_ITEM_MAX 2000
+#define ROUTE4_ITEM_MAX 20000
+#define ROUTE4_DEFAULT_INVALID_ID (UINT32_MAX)
 
 // Route table structure definition
 struct route4_table {
@@ -29,10 +29,9 @@ struct route4_table {
 	int store_count;
     // Array storing all route entries (up to 20,000 entries)
     // Lookup is done via LPM, access is via index into this array
-	struct route4_item store[L3_ROUTE4_ITEM_MAX];
+	struct route4_item store[ROUTE4_ITEM_MAX];
 };
 
-static __thread struct route4_table *tlv_route4 = NULL;
 // Lock protecting concurrent writes by config thread & per-NUMA threads
 // Read operations are lockless
 static dpdk_spinlock_t s_route_conf_spinlock;
@@ -48,10 +47,7 @@ static INLINE bool _route4_conf_is_broadcast_ip(uint32_t local_ip_be, uint8_t ma
 
 static int _route4_conf_create(void **out, int hw_numa_id)
 {
-    char name[CACHE_LINE] = "";
     struct route4_table *route4 = NULL;
-
-    static uint64_t s_route_version[DPDK_ETHPORT_MAX] = {0};
 
     route4 = dpdk_malloc_numa(sizeof(*route4), hw_numa_id);
     if (UNLIKELY(route4 == NULL)) {
@@ -61,10 +57,8 @@ static int _route4_conf_create(void **out, int hw_numa_id)
 
     memset(route4, 0, sizeof(*route4));
 
-    route4->default_id = L3_ROUTE4_DEFAULT_INVALID_ID;
-
-    snprintf(name, sizeof(name), "ROUTE_%d_%lu", hw_numa_id, s_route_version[hw_numa_id]++);
-    route4->fib = dpdk_fib_create(hw_numa_id, L3_ROUTE4_ITEM_MAX);
+    route4->default_id = ROUTE4_DEFAULT_INVALID_ID;
+    route4->fib = dpdk_fib_create(hw_numa_id, ROUTE4_ITEM_MAX);
     if (UNLIKELY(route4->fib == NULL)) {
         dpdk_free(route4);
         return ERRCODE_OOM;
@@ -203,7 +197,7 @@ static int _route4_conf_add_check(struct route4_table *route, const struct route
                 break;
             }
 
-            if (UNLIKELY(ip == 0 && mask == 0 && route->default_id != L3_ROUTE4_DEFAULT_INVALID_ID)) {
+            if (UNLIKELY(ip == 0 && mask == 0 && route->default_id != ROUTE4_DEFAULT_INVALID_ID)) {
                 LOG_ERROR("Multiple default routes are not allowed.");
                 return ERRCODE_ROUTE_MULTI_DEFAULT;
             }
@@ -431,6 +425,8 @@ void route4_conf_table_get(void *src, struct route4_item **item, int *count)
 
     *item = route->store;
     *count = route->store_count;
+
+    return;
 }
 
 void route4_conf_update_lock(void)

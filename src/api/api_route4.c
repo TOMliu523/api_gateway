@@ -16,7 +16,7 @@
 #include "dpdk_common.h"
 #include "route4_conf.h"
 
-static INLINE void *_api_route4_item_free(struct route4_item *item)
+static INLINE void _api_route4_item_free(struct route4_item *item)
 {
     if (item != NULL) {
         dpdk_free(item);
@@ -56,7 +56,6 @@ static INLINE bool _api_route4_is_valid_subnet(uint32_t ip_be, uint8_t mask)
 
 static int _api_route4_post_parse(struct route4_item **pp_item, int *p_count, void *json)
 {
-    int af= 0;
     int code = 0;
     int count = 0;
     void *array = NULL;
@@ -125,8 +124,6 @@ _quit:
 
 static int _api_route4_del_parse(struct route4_item **pp_item, int *p_count, void *json)
 {
-    int af = 0;
-    int ret = 0;
     int count = 0;
     void *array = NULL;
     struct route4_item *item = NULL;
@@ -160,10 +157,6 @@ static int _api_route4_del_parse(struct route4_item **pp_item, int *p_count, voi
     *pp_item = item;
     *p_count = count;
     return 0;
-
-_quit:
-    _api_route4_item_free(item);
-    return ret;
 }
 
 static int _api_route4_table_add(struct root *root, void *route[], struct route4_item *item, int count)
@@ -262,7 +255,7 @@ API_POST(/v1/network/route4, route4)
         thread_route[i] = route[root->dpdk_thread[i]->numa_id];
     }
 
-    api_config_update(cfg, position, thread_route, _api_route4_numa_free);
+    api_numa_config_update(cfg, position, thread_route, _api_route4_numa_free);
     _api_route4_item_free(item);
 
     return api_succ(NULL);
@@ -303,7 +296,7 @@ API_DEL(/v1/network/route4, route4)
         thread_route[i] = route[root->dpdk_thread[i]->numa_id];
     }
 
-    api_config_update(cfg, position, thread_route, _api_route4_numa_free);
+    api_numa_config_update(cfg, position, thread_route, _api_route4_numa_free);
 
     _api_route4_item_free(item);
     return api_succ(NULL);

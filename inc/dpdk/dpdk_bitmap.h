@@ -13,6 +13,10 @@
 
 #define dpdk_bitmap rte_bitmap
 
+extern struct dpdk_bitmap *dpdk_bitmap_init(uint32_t bit_count, int hw_numa_id);
+extern struct dpdk_bitmap *dpdk_bitmap_init_with_all_set(uint32_t bit_count, int hw_numa_id);
+extern void dpdk_bitmap_fini(struct dpdk_bitmap *bitmap);
+
 static INLINE uint32_t dpdk_bitmap_memory_calc(uint32_t bit_count)
 {
     return rte_bitmap_get_memory_footprint(bit_count);

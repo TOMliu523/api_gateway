@@ -101,14 +101,14 @@ static INLINE void dpdk_icmp6_echo_reply_ckcum(struct dpdk_icmp6_hdr *icmp6hdr)
  * The IPv6 header must not be followed by extension headers. The layer 4
  * checksum must be set to 0 in the L4 header by the caller.
  */
-static INLINE uint16_t dpdk_icmp6_cksum(const struct dpdk_mbuf *mbuf, const struct dpdk_ip6_hdr *ip6hdr, uint16_t l4_off)
+static INLINE uint16_t dpdk_icmp6_cksum(const struct dpdk_mbuf *mbuf, const struct dpdk_ip6_hdr *ip6hdr, uint32_t l4_off)
 {
     uint32_t sum;
     uint16_t raw_cksum;
     uint16_t icmp_len = dpdk_be_to_cpu_16(ip6hdr->payload_len);
 
     if (mbuf->nb_segs == 1) {
-        raw_cksum = rte_raw_cksum(mbuf->buf_addr + l4_off, icmp_len);
+        raw_cksum = rte_raw_cksum(ip6hdr + 1, icmp_len);
     } else {
         rte_raw_cksum_mbuf(mbuf, l4_off, icmp_len, &raw_cksum);
     }
@@ -117,9 +117,7 @@ static INLINE uint16_t dpdk_icmp6_cksum(const struct dpdk_mbuf *mbuf, const stru
     sum = (sum & 0xFFFF) + (sum >> 16);
     sum = (sum & 0xFFFF) + (sum >> 16);
 
-    uint16_t cksum = (uint16_t) ~sum;
-
-    return cksum;
+    return (uint16_t) ~sum;
 }
 
 #endif // __DPDK_ICMP6_H__

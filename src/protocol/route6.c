@@ -12,18 +12,16 @@
 #include "dpdk_common.h"
 #include "route6_conf.h"
 
-#define L3_DIRECT_ROUTE6_ITEM_MAX 2000
-#define L3_ROUTE6_ITEM_MAX 20000
-#define L3_ROUTE6_DEFAULT_INVALID_ID (UINT32_MAX)
+#define ROUTE6_DIRECT_ITEM_MAX 2000
+#define ROUTE6_ITEM_MAX 20000
+#define ROUTE6_DEFAULT_INVALID_ID (UINT32_MAX)
 
 struct route6_table {
     struct dpdk_fib6 *fib;
     uint32_t default_id;
     int store_count;
-    struct route6_item store[L3_ROUTE6_ITEM_MAX];
+    struct route6_item store[ROUTE6_ITEM_MAX];
 };
-
-static __thread struct route6_table *tlv_route = NULL;
 
 static int _route6_conf_add_check(struct route6_table *route6, const struct route6_item *item, int count, const void *arg)
 {
@@ -93,7 +91,7 @@ static int _route6_conf_add_check(struct route6_table *route6, const struct rout
             }
 
             if (UNLIKELY(dpdk_ip6_addr_is_unspec(&one->dst_subnet) && one->mask == 0
-                && route6->default_id != L3_ROUTE6_DEFAULT_INVALID_ID)) {
+                && route6->default_id != ROUTE6_DEFAULT_INVALID_ID)) {
                 LOG_ERROR("Multiple default routes are not allowed.");
                 return ERRCODE_ROUTE_MULTI_DEFAULT;
             }
@@ -128,7 +126,6 @@ static int _route6_conf_add_check(struct route6_table *route6, const struct rout
 
 static int _route6_conf_del_check(struct route6_table *route6, const struct route6_item *item, int count, bool is_route)
 {
-    int ret = 0;
     bool hit = false;
     char ip_str[CACHE_LINE] = "";
     const struct route6_item *one = NULL;
@@ -190,7 +187,7 @@ static int _route6_conf_create(void **dst, int hw_numa_id)
     memset(route6, 0, sizeof(*route6));
 
     route6->default_id = DPDK_FIB6_DEFAULT;
-    route6->fib = dpdk_fib6_create(hw_numa_id, L3_ROUTE6_ITEM_MAX);
+    route6->fib = dpdk_fib6_create(hw_numa_id, ROUTE6_ITEM_MAX);
     if (UNLIKELY(route6->fib == NULL)) {
         return ERRCODE_OOM;
     }
@@ -237,19 +234,19 @@ static int _route6_conf_add_item(struct route6_table *route6, const struct route
     return 0;
 }
 
-static int _route6_conf_append(void *dst, struct route6_table *route6, const struct route6_item *item, int count)
+static int _route6_conf_append(void *dst, struct route6_table *route, const struct route6_item *item, int count)
 {
     int ret = 0;
 
-    for (int i = 0; i < route6->store_count; i++) {
-        ret = _route6_conf_add_item(dst, &route6->store[i]);
+    for (int i = 0; route != NULL && i < route->store_count; i++) {
+        ret = _route6_conf_add_item(dst, &route->store[i]);
         if (UNLIKELY(ret != 0)) {
             return ret;
         }
     }
 
     for (int i = 0; i < count; i++) {
-        ret = _route6_conf_add_item(dst, &route6->store[i]);
+        ret = _route6_conf_add_item(dst, &item[i]);
         if (UNLIKELY(ret != 0)) {
             return ret;
         }

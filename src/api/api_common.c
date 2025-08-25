@@ -156,13 +156,13 @@ void *api_fail(int errcode)
     return api_fail_msg(errcode, s_errcode_msg[errcode]);
 }
 
-int api_account_desensitize(unsigned char *dst, size_t max, const char *passwd, size_t len)
+int api_account_desensitize(char *dst, size_t max, const char *passwd, size_t len)
 {
     int rc = 0;
     size_t nbytes = 0;
     unsigned char binary[64] = "";
-    const char *salt = ACCOUNT_SALT;
     size_t salt_len = sizeof(ACCOUNT_SALT) - 1;
+    const unsigned char *salt = (const unsigned char *)ACCOUNT_SALT;
 
     rc = PKCS5_PBKDF2_HMAC(passwd, len, salt, salt_len, 200000, EVP_sha256(), sizeof(binary), binary);
     if (rc != 1) {
@@ -177,7 +177,6 @@ int api_account_desensitize(unsigned char *dst, size_t max, const char *passwd, 
 
 int api_string_to_json(const char *string, void **json)
 {
-    int ret = 0;
     void *obj = NULL;
     json_error_t error = {0};
 
@@ -252,7 +251,7 @@ int api_json_add_integer(void *json, const char *name, json_int_t value)
     return 0;
 }
 
-void api_config_update(void *cfg, void **position[], void *update[], void (*free_post)(void *[], int))
+void api_numa_config_update(void *cfg, void **position[], void *update[], void (*free_post)(void *[], int))
 {
     struct root *root = cfg;
     struct dataplane *dp = NULL;

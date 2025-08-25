@@ -51,7 +51,9 @@
     } while (0)
 
 // Thread-Local Storage
+__thread uint8_t tlv_numa_id;
 __thread uint8_t tlv_thread_id;
+__thread uint8_t tlv_hw_numa_id;
 __thread struct dataplane *tlv_dp;
 __thread struct pkt_store *tlv_arp;
 __thread struct pkt_store *tlv_ip4;
@@ -166,7 +168,9 @@ static void *_dp_pkt_classifier_create(int nic_count)
 
 static INLINE void _dp_thread_local_var_init(void)
 {
+    tlv_numa_id = tlv_dp->numa_id;
     tlv_thread_id = tlv_dp->cpu_id;
+    tlv_hw_numa_id = tlv_dp->hw_numa_id;
     tlv_arp = &tlv_dp->pc->arp;
     tlv_ip4 = &tlv_dp->pc->ip4;
     tlv_ip6 = &tlv_dp->pc->ip6;
@@ -192,7 +196,6 @@ static INLINE void _dp_thread_local_var_init(void)
 
 static INLINE void _dp_init(void *arg)
 {
-    void * const*pool = NULL;
     struct root *root = arg;
     char name[NOTICE_NAME_MAX] = "";
 

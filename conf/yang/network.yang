@@ -9,7 +9,7 @@ submodule network {
 
     container ip4 {
         list entrys {
-            key "name ip";
+            key "name ip mask";
             leaf name {
                 mandatory true;
                 type string {
@@ -43,7 +43,7 @@ submodule network {
 
     container ip6 {
         list entrys {
-            key "name ip";
+            key "name ip mask";
             leaf name {
                 mandatory true;
                 type string {

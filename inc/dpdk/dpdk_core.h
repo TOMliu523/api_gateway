@@ -174,7 +174,7 @@ static INLINE char *dpdk_pktmbuf_adj(struct dpdk_mbuf *mbuf, size_t len)
     return rte_pktmbuf_adj(mbuf, len);
 }
 
-static void *dpdk_pktmbuf_prepend(struct dpdk_mbuf *mbuf, size_t len)
+static INLINE void *dpdk_pktmbuf_prepend(struct dpdk_mbuf *mbuf, size_t len)
 {
     return rte_pktmbuf_prepend(mbuf, len);
 }

@@ -277,14 +277,12 @@ const struct port_name *dpdk_port_name_get(void)
 int dpdk_port_startup(int port)
 {
     int ret = 0;
-    int retry = 0;
     uint16_t mtu = 0;
     int max_queues = 0;
     int max_rx_desc = 0;
     int max_tx_desc = 0;
     void * const *pool = NULL;
     struct numa_cpu *nc = NULL;
-    struct rte_eth_link link = {0};
     struct rte_eth_conf conf = {0};
     struct rte_eth_rxconf rx = {0};
     struct rte_eth_txconf tx = {0};
@@ -351,7 +349,6 @@ int dpdk_port_startup(int port)
     tx.offloads = 0;
 
     for (int i = 0; i < nc->cpu_count; i++) {
-        int numa_id = nc->c2n[i].numa_id;
         int hw_numa_id = nc->c2n[i].hw_numa_id;
 
         ret = rte_eth_tx_queue_setup(port, i, max_tx_desc, hw_numa_id, &tx);

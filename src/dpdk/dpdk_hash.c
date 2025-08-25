@@ -37,7 +37,6 @@ struct dpdk_hash *dpdk_hash_create(uint32_t max_entries, uint32_t key_len, int h
     snprintf(name, sizeof(name), "DPDK_HASH_%u_%u", hw_numa_id, s_seq);
 
     hash = rte_hash_create(&param);
-    LOG_WARN("%s", name);
     if (hash == NULL) {
         LOG_ERROR("Hash error: %s", strerror(rte_errno));
         return NULL;

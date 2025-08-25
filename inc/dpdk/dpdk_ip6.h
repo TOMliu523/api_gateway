@@ -96,7 +96,7 @@ static INLINE bool dpdk_ip6_addr_is_ucast(const struct dpdk_ip6_addr *addr)
     return ((addr->a[0] != 0xFF) && !(DPDK_IP6_ADDR0(addr) == 0 && DPDK_IP6_ADDR1(addr) == 0));
 }
 
-static enum IP6_ADDR_TYPE dpdk_ip6_addr_type(const struct dpdk_ip6_addr *addr)
+static INLINE enum IP6_ADDR_TYPE dpdk_ip6_addr_type(const struct dpdk_ip6_addr *addr)
 {
     switch (addr->a[0]) {
     case 0xFF: return IP6_ADDR_MULTICAST;

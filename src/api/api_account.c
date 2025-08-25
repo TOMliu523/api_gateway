@@ -28,8 +28,8 @@ static void *_api_account(void *cfg, const char *url, void *json, void *sess, bo
     const char *passwd = NULL;
     sr_val_t *modify_id = NULL;
 
+    char dst[128] = "";
     char path[256] = "";
-    unsigned char dst[128] = "";
 
     obj = json_object_get(json, "v1:account");
     user_obj = json_object_get(obj, "users");
@@ -47,7 +47,7 @@ static void *_api_account(void *cfg, const char *url, void *json, void *sess, bo
         const char *username = json_string_value(json_object_get(subobj, "username"));
         snprintf(path, sizeof(path), "/v1:account/users[username='%s']/password", username);
 
-        ret = sr_set_item_str(sess, path, dst, NULL, SR_EDIT_DEFAULT);
+        ret = sr_set_item_str(sess, path, (const char *)dst, NULL, SR_EDIT_DEFAULT);
         if (ret != 0) {
             LOG_ERROR("sr_set_item_str failure: %s", sr_strerror(ret));
             return api_fail(ERRCODE_ACCOUNT);

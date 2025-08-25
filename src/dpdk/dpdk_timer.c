@@ -20,7 +20,6 @@ static struct dpdk_timer_ctl s_timer_ctl;
 
 int dpdk_timer_start(void)
 {
-    int ret = 0;
     char name[CACHE_LINE] = "";
     struct numa_cpu *nc = NULL;
     struct dpdk_timer_ctl *ctl = &s_timer_ctl;

@@ -183,13 +183,13 @@ extern enum API_STATUS api_store_delete(const struct api_method_node *api, const
 
 extern int api_db_query(const char *path, void **obj);
 
-extern int api_account_desensitize(unsigned char *dst, size_t max, const char *passwd, size_t len);
+extern int api_account_desensitize(char *dst, size_t max, const char *passwd, size_t len);
 extern int api_string_to_json(const char *string, void **json);
 extern int api_json_to_string(void *json, char **string);
 extern int api_json_add_string(void *json, const char *name, const char *value);
 extern int api_json_add_integer(void *json, const char *name, json_int_t value);
 
-extern void api_config_update(void *, void **[], void *[], void (*)(void *[], int));
+extern void api_numa_config_update(void *, void **[], void *[], void (*)(void *[], int));
 
 static INLINE void *api_v1_modify_list(void *json, const char *module_name, const char *list_name)
 {

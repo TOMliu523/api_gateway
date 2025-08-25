@@ -285,7 +285,6 @@ static INLINE void _l2_arp_gen(int (*func)(uint32_t *, uint32_t, int))
     uint32_t src_ip = 0;
     struct pkt_tx *tx = NULL;
     struct dpdk_mbuf *mbuf = NULL;
-    struct ipv4_manage *ipv4 = NULL;
 
     count = dpdk_pktmbuf_pop(tlv_dp->pktmbuf_pool, tlv_cache->data, tlv_pending->count);
     if (UNLIKELY(count != 0)) {

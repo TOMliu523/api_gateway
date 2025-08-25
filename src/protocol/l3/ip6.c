@@ -109,24 +109,14 @@ static void _ip6_conf_manage_destroy(struct ip6_manage *manage)
     dpdk_free(manage);
 }
 
-static int _ip6_conf_info_cmp(const void *key1, const void *key2, size_t len)
+static int _ip6_conf_info_cmp(const void *first, const void *second, size_t len)
 {
-    const __uint128_t ip1 = *(const __uint128_t *)&key1;
-    const __uint128_t ip2 = *(const __uint128_t *)&key2;
-
-    if (ip1 == ip2) {
-        return 0;
-    } else if (ip1 < ip2) {
-        return -1;
-    } else {
-        return 1;
-    }
+    return memcmp(first, second, len);
 }
 
 static int _ip6_conf_manage_del_check(struct ip6_manage *manage, const struct ip6_info *info, int count)
 {
     int ret = 0;
-    bool hit = false;
     char ip_str[CACHE_LINE] = "";
     struct ip6_info *data = NULL;
 
@@ -135,11 +125,13 @@ static int _ip6_conf_manage_del_check(struct ip6_manage *manage, const struct ip
         return ERRCODE_INNER;
     }
 
-    // ret = dpdk_hash_lookup_data(manage->hash[info->port], (const void *)&info->ipv6, (void **)&data);
-    if (UNLIKELY(ret != 0)) {
-        inet_ntop(AF_INET6, &info->addr, ip_str, sizeof(ip_str));
-        LOG_ERROR("IP: %s, port: %d not exists", ip_str, info->port);
-        return ERRCODE_IP_NOT_EXIST;
+    for (int i = 0; i < count; i++) {
+        ret = dpdk_hash_lookup(manage->hash[info->port], (const void *)&info[i].addr, (void **)&data);
+        if (UNLIKELY(ret < 0)) {
+            inet_ntop(AF_INET6, &info->addr, ip_str, sizeof(ip_str));
+            LOG_ERROR("IP: %s, port: %d not exists", ip_str, info->port);
+            return ERRCODE_IP_NOT_EXIST;
+        }
     }
 
     return 0;
@@ -251,7 +243,6 @@ _quit:
 static int _ip6_conf_manage_append(struct ip6_manage *dst, const struct ip6_manage *src, const struct ip6_info *info, int count)
 {
     int ret = 0;
-    int nums = 0;
 
     for (int i = 0; i < src->ip_count; i++) {
         ret = _ip6_conf_manage_add(dst, &src->store[i]);
@@ -273,7 +264,6 @@ static int _ip6_conf_manage_append(struct ip6_manage *dst, const struct ip6_mana
 static int _ip6_conf_manage_delete(struct ip6_manage *dst, const struct ip6_manage *src, const struct ip6_info *info, int count)
 {
     int ret = 0;
-    int nums = 0;
     bool need_delete = false;
     const struct ip6_info *one = NULL;
     const struct ip6_info *store = NULL;
@@ -312,7 +302,6 @@ bool ip6_conf_manage_ip_is_local(const void *arg, const struct dpdk_ip6_addr *ad
 {
     int ret = 0;
     void *data = NULL;
-    const struct ip6_info *cur = NULL;
     const struct ip6_manage *manage = (const struct ip6_manage *)arg;
 
     if (manage == NULL) {
@@ -327,14 +316,18 @@ bool ip6_conf_manage_ip_is_local(const void *arg, const struct dpdk_ip6_addr *ad
     return true;
 }
 
-int ip6_ndp_advertisement_gen(struct dpdk_mbuf *mbuf, uint16_t port, const struct dpdk_ip6_addr *addr, const struct dpdk_mac *mac)
+int ip6_ndp_unsolicited_na_gen(struct dpdk_mbuf *mbuf, uint16_t port, const struct dpdk_ip6_addr *addr, const struct dpdk_mac *mac)
 {
     struct dpdk_eth_hdr *eth = NULL;
     struct dpdk_ndp_hdr *ndp = NULL;
     struct dpdk_ndp_opt *opt = NULL;
     struct dpdk_ip6_hdr *ip6hdr = NULL;
 
-    eth = dpdk_append(mbuf, sizeof(struct dpdk_eth_hdr) + sizeof(struct dpdk_ip6_hdr) + sizeof(struct dpdk_ndp_hdr), void *);
+    const uint16_t l2_len = sizeof(struct dpdk_eth_hdr);
+    const uint16_t l3_len = sizeof(struct dpdk_ip6_hdr);
+    const uint16_t l4_len = sizeof(struct dpdk_ndp_hdr) + 8;
+
+    eth = dpdk_append(mbuf, l2_len + l3_len + l4_len, void *);
     if (UNLIKELY(eth == NULL)) {
         LOG_ERROR("There is not enough tailroom space in the last segment.");
         return -1;
@@ -449,10 +442,6 @@ static INLINE bool _ip6_is_local(int port, const void *key)
 
 static INLINE int _ip6_is_local_bulk(void *data[], uint64_t result[], int count)
 {
-    int n = 0;
-    bool hit = false;
-    struct ip6_info *cur = NULL;
-    struct list_head *head = NULL;
     struct dpdk_mbuf *mbuf = NULL;
 
     void **keys = tlv_cache1->data;
@@ -1115,7 +1104,6 @@ void ip6_process(void *data[], int count)
 {
     int icmp6_count = 0;
     uint64_t *result = 0;
-    int ip_check_count = 0;
     struct dpdk_mbuf *mbuf = NULL;
     struct dpdk_ip6_hdr *ip6hdr = NULL;
 
@@ -1233,7 +1221,6 @@ void ip6_ndp_update_or_create(void *data)
 {
     struct dpdk_mbuf *mbuf = data;
 
-    struct dpdk_eth_hdr *ethhdr = DPDK_HEADROOM(mbuf)->l2;
     struct dpdk_ndp_hdr *ndphdr = DPDK_HEADROOM(mbuf)->l4;
     struct dpdk_ndp_opt *ndpopt = (struct dpdk_ndp_opt *)(ndphdr + 1);
     int override = ndphdr->icmp6_hdr.icmp6_dataun.u_nd_advt.override;

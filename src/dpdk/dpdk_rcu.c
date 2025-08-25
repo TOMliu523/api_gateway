@@ -59,7 +59,6 @@ int dpdk_rcu_create(void)
 void dpdk_rcu_destroy(void)
 {
     struct numa_cpu *nc = NULL;
-    struct dpdk_rcu *rcu = NULL;
 
     nc = dpdk_numa_cpu_get();
     for (int i = 0; i < nc->numa_count; i++) {

@@ -36,7 +36,6 @@ struct dpdk_fib *dpdk_fib_create(int hw_numa_id, int max_item)
     };
 
     int ret = 0;
-    int hw_numa = 0;
     struct dpdk_fib *fib = NULL;
 
     static uint32_t s_seq = 0;

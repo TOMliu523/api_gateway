@@ -162,7 +162,6 @@ static int _api_jwt(struct mg_http_message *msg, const struct db_login *db)
     int bearer_len = 0;
     size_t header_len = 0;
     size_t payload_len = 0;
-    size_t sign_len = 0;
     char buf[256] = "";
     struct mg_str *header = NULL;
 
@@ -173,12 +172,12 @@ static int _api_jwt(struct mg_http_message *msg, const struct db_login *db)
     bearer_len = nbytes = sizeof(API_AUTH_BEARER) - 1;
     t = time(NULL);
 
-    header_len = mg_base64_encode(API_AUTH_HEADER, sizeof(API_AUTH_HEADER), auth + nbytes, sizeof(auth) - nbytes);
+    header_len = mg_base64_encode((const unsigned char *)API_AUTH_HEADER, sizeof(API_AUTH_HEADER), auth + nbytes, sizeof(auth) - nbytes);
     nbytes += header_len;
     auth[nbytes++] = '.';
 
     ret = snprintf(buf, sizeof(buf), API_AUTH_PAYLOAD, t, t + API_AUTH_EXP, id, db->username, db->role_type, db->modify_id);
-    payload_len = mg_base64_encode(buf, ret, auth + nbytes, sizeof(auth) - nbytes);
+    payload_len = mg_base64_encode((const unsigned char *)buf, ret, auth + nbytes, sizeof(auth) - nbytes);
     nbytes += payload_len;
     auth[nbytes++] = '.';
 
@@ -296,7 +295,6 @@ _quit:
 enum ERRCODE api_login(void *arg)
 {
     int ret = 0;
-    char data[192] = "";
     struct db_login db = {
         .username = "admin",
         .encrypt_data = "Tmlake@2025",
@@ -327,10 +325,7 @@ enum ERRCODE api_login(void *arg)
 enum ERRCODE api_refresh_login(void *arg)
 {
     int ret = 0;
-    size_t len = 0;
     char buf[1024] = "";
-    const char *tmp = NULL;
-    const char *sign = NULL;
     const char *header = NULL;
     const char *first = NULL;
     const char *second = NULL;

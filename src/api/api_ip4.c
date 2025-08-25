@@ -25,7 +25,10 @@
 #include "dpdk_common.h"
 #include "route4_conf.h"
 
-#define API_INTERFACE_FORMAT "/v1:ip4/entrys[name='%s']/*"
+#define IP4_MODULE_NAME "ip4"
+#define IP4_LIST_NAME "entrys"
+
+#define API_INTERFACE_FORMAT "/v1:" IP4_MODULE_NAME "/" IP4_LIST_NAME "[name='%s']/*"
 
 struct api_ip4 {
     const char *name;
@@ -152,7 +155,6 @@ static enum ERRCODE _api_ip4_broadcast_gen(struct root *root, void **arp, struct
 {
     int id = 0;
     int ret = 0;
-    enum ERRCODE code = 0;
     struct api_ip4 *one = NULL;
 
     id = (s_arp_thread_id + 1) % root->hw_info.cpu_count;
@@ -183,7 +185,7 @@ static INLINE int _api_ip4_post_parse_count(void *json)
 {
     void *array = NULL;
 
-    array = api_v1_modify_list(json, "ip4", "entrys");
+    array = api_v1_modify_list(json, IP4_MODULE_NAME, IP4_LIST_NAME);
     return json_array_size(array);
 }
 
@@ -191,24 +193,24 @@ static INLINE int _api_ip4_del_parse_count(void *json)
 {
     void *array = NULL;
 
-    array = api_v1_delete_list(json, "ip4", "entrys");
+    array = api_v1_delete_list(json, IP4_MODULE_NAME, IP4_LIST_NAME);
     return json_array_size(array);
 }
 
 static enum ERRCODE _api_ip4_post_parse(struct root *root, void *json, struct api_ip4 *iface, int count)
 {
-    int af = 0;
     int ret = 0;
     void *array = NULL;
     struct api_ip4 *one = NULL;
 
-    array = api_v1_modify_list(json, "ip", "entrys");
+    array = api_v1_modify_list(json, IP4_MODULE_NAME, IP4_LIST_NAME);
     for (int i = 0; i < count; i++) {
         json_t *obj = NULL;
         const char *ip = NULL;
         const char *ip_type = NULL;
 
         one = &iface[i];
+
         obj = json_array_get(array, i);
         one->name = json_string_value(json_object_get(obj, "name"));
         one->port = dpdk_port_by_name_get(one->name);
@@ -242,13 +244,12 @@ static enum ERRCODE _api_ip4_post_parse(struct root *root, void *json, struct ap
     return 0;
 }
 
-static int _api_ip4_del_parse(struct root *root, void *json, struct api_ip4 *iface, int count)
+static int _api_ip4_del_parse(void *json, struct api_ip4 *iface, int count)
 {
-    int ret = 0;
     void *array = NULL;
     struct api_ip4 *one = NULL;
 
-    array = api_v1_delete_list(json, "ip4", "entrys");
+    array = api_v1_delete_list(json, IP4_MODULE_NAME, IP4_LIST_NAME);
     for (int i = 0; i < count; i++) {
         json_t *obj = NULL;
         const char *ip = NULL;
@@ -264,6 +265,8 @@ static int _api_ip4_del_parse(struct root *root, void *json, struct api_ip4 *ifa
 
         ip = json_string_value(json_object_get(obj, "ip"));
         inet_pton(AF_INET, ip, &one->ip);
+
+        one->mask = json_integer_value(json_object_get(obj, "mask"));
     }
 
     return 0;
@@ -546,7 +549,7 @@ API_POST(/v1/network/ip4, ip4)
         thread_ip4_manage[i] = ip4_manage[root->dpdk_thread[i]->numa_id];
     }
 
-    api_config_update(cfg, position, thread_ip4_manage, _api_ip4_manage_numa_free);
+    api_numa_config_update(cfg, position, thread_ip4_manage, _api_ip4_manage_numa_free);
 
     for (int i = 0; i < root->hw_info.cpu_count; i++) {
         struct proto_header *proto = root->dpdk_thread[i]->protocol;
@@ -554,7 +557,7 @@ API_POST(/v1/network/ip4, ip4)
         thread_route[i] = route[root->dpdk_thread[i]->numa_id];
     }
 
-    api_config_update(cfg, position, thread_route, _api_ip4_route_numa_free);
+    api_numa_config_update(cfg, position, thread_route, _api_ip4_route_numa_free);
 
     _api_ip4_arp_send(cfg, arp, count);
     _api_ip4_free(api_iface);
@@ -597,12 +600,12 @@ API_DEL(/v1/network/ip4, ip4)
         return api_fail(ERRCODE_INVALID);
     }
 
-    api_iface = _api_ip4_alloc(count);
+    api_iface = _api_ip4_alloc(count * sizeof(*api_iface));
     if (api_iface == NULL) {
         return api_fail(ERRCODE_OOM);
     }
 
-    code = _api_ip4_del_parse(cfg, json, api_iface, count);
+    code = _api_ip4_del_parse(json, api_iface, count);
     if (code != 0) {
         goto _quit;
     }
@@ -622,7 +625,7 @@ API_DEL(/v1/network/ip4, ip4)
         thread_ip4_manage[i] = ip4_manage[root->dpdk_thread[i]->numa_id];
     }
 
-    api_config_update(cfg, position, thread_ip4_manage, _api_ip4_manage_numa_free);
+    api_numa_config_update(cfg, position, thread_ip4_manage, _api_ip4_manage_numa_free);
 
     for (int i = 0; i < root->hw_info.cpu_count; i++) {
         struct proto_header *proto = root->dpdk_thread[i]->protocol;
@@ -630,7 +633,7 @@ API_DEL(/v1/network/ip4, ip4)
         thread_route[i] = route[root->dpdk_thread[i]->numa_id];
     }
 
-    api_config_update(cfg, position, thread_route, _api_ip4_route_numa_free);
+    api_numa_config_update(cfg, position, thread_route, _api_ip4_route_numa_free);
 
     _api_ip4_free(api_iface);
     return api_succ(NULL);

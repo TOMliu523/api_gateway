@@ -58,6 +58,7 @@ static void _api_store_db_log(sr_log_level_t level, const char *message)
     case SR_LL_WRN: LOG_WARN("%s", message); break;
     case SR_LL_INF: LOG_INFO("%s", message); break;
     case SR_LL_DBG: LOG_DEBUG("%s", message); break;
+    default: break;
     }
 }
 
@@ -77,7 +78,6 @@ static void _api_store_yang_log(LY_LOG_LEVEL level,
 
 static int _api_store_exec_call(api_action_fn_t action, void *root, const char *url, void *input, void *session, void **output)
 {
-    int ret = 0;
     json_t *req = NULL;
     json_t *retcode = NULL;
 
@@ -109,7 +109,6 @@ static int _api_store_update_cb(sr_session_ctx_t *session,
                                 uint32_t operation_id,
                                 void *private_data)
 {
-    json_t *req = NULL;
     struct private_data *data = private_data;
 
     switch (event) {
@@ -388,7 +387,6 @@ static enum API_STATUS _api_store_apply( struct api_db *db, const struct api_met
 
 static int _api_store_to_json(void **obj, const char *buf, size_t len)
 {
-    json_t *json = NULL;
     json_error_t error = {0};
 
     if (len != 0) {
@@ -655,7 +653,6 @@ enum API_STATUS api_store_delete(const struct api_method_node *api, const char *
     void *input = NULL;
     json_t *value = NULL;
     const char *key = NULL;
-    LY_ERR err = LY_SUCCESS;
     enum API_STATUS code = 0;
     struct api_db *db = &s_api_db;
 
@@ -763,7 +760,6 @@ int api_db_query(const char *path, void **obj)
     LY_ERR err = 0;
     json_t *json = NULL;
     char *json_str = NULL;
-    json_error_t error = {0};
     sr_data_t *subtree = NULL;
     struct api_db *db = &s_api_db;
 
@@ -810,12 +806,10 @@ int api_store_init(void *arg)
     int ret = 0;
     pthread_t thid = {0};
     char buffer[1024] = "";
-    LY_ERR err = LY_SUCCESS;
     char search_dir[1024] = "";
     const char *yang_path = NULL;
     struct api_db *db = &s_api_db;
     const char *module_name = "v1";
-    struct lys_module *module = NULL;
     const char *schema_path[20] = {NULL};
 
     sr_log_stderr(SR_LL_DBG);

@@ -46,7 +46,7 @@ struct api_method {
 };
 
 static struct api_method s_method;
-static const char *s_tlv_ca =
+static UNUSED const char *s_tlv_ca =
     "-----BEGIN CERTIFICATE-----\n"
     "MIIBFTCBvAIJAMNTFtpfcq8NMAoGCCqGSM49BAMCMBMxETAPBgNVBAMMCE1vbmdv\n"
     "b3NlMB4XDTI0MDUwNzE0MzczNloXDTM0MDUwNTE0MzczNlowEzERMA8GA1UEAwwI\n"
@@ -55,7 +55,7 @@ static const char *s_tlv_ca =
     "epsRMAoGCCqGSM49BAMCA0gAMEUCIQCwb2CxuAKm51s81S6BIoy1IcandXSohnqs\n"
     "us64BAA7QgIgGGtUrpkgFSS0oPBlCUG6YPHFVw42vTfpTC0ySwAS0M4=\n"
     "-----END CERTIFICATE-----\n";
-static const char *s_tlv_cert =
+static UNUSED const char *s_tlv_cert =
     "-----BEGIN CERTIFICATE-----\n"
     "MIIBMTCB2aADAgECAgkAluqkgeuV/zUwCgYIKoZIzj0EAwIwEzERMA8GA1UEAwwI\n"
     "TW9uZ29vc2UwHhcNMjQwNTA3MTQzNzM2WhcNMzQwNTA1MTQzNzM2WjARMQ8wDQYD\n"
@@ -65,7 +65,7 @@ static const char *s_tlv_cert =
     "RAIgTXW9MITQSwzqbNTxUUdt9DcB+8pPUTbWZpiXcA26GMYCIBiYw+DSFMLHmkHF\n"
     "+5U3NXW3gVCLN9ntD5DAx8LTG8sB\n"
     "-----END CERTIFICATE-----\n";
-static const char *s_tlv_key =
+static UNUSED const char *s_tlv_key =
     "-----BEGIN EC PRIVATE KEY-----\n"
     "MHcCAQEEIAVdo8UAScxG7jiuNY2UZESNX/KPH8qJ0u0gOMMsAzYWoAoGCCqGSM49\n"
     "AwEHoUQDQgAEqN6BIhvgbk7ecmUcn8Da9Avkj/uDNERtqWJG9r/or26X4u9jR5Jl\n"
@@ -339,11 +339,9 @@ static void _api_response(struct mg_connection *c, struct mg_http_message *msg, 
     }
 }
 
-static int _api_login(struct mg_connection *c, struct mg_http_message *msg)
+static UNUSED int _api_login(struct mg_connection *c, struct mg_http_message *msg)
 {
-    int ret = 0;
     enum ERRCODE code = 0;
-    struct api_user user = {0};
 
     switch (msg->uri.len) {
     case 1:
@@ -387,7 +385,6 @@ static int _api_login(struct mg_connection *c, struct mg_http_message *msg)
 static void _api_load_cb(struct mg_connection *c, int event, void *event_data)
 {
     int ret = 0;
-    int nbytes = 0;
     void *rep = NULL;
     enum API_STATUS status = 0;
     static char s_param[BUFSIZ] = "";

@@ -37,7 +37,6 @@ static void single_instance(const char *filename)
 {
     int fd = -1;
     int ret = 0;
-    off_t off = 0;
     int nbytes = 0;
     struct flock lock = {0};
     char buffer[BUFSIZ] = "";
@@ -144,9 +143,7 @@ static INLINE struct root *root_init(struct hw_info *info)
 int main(int argc, char *argv[])
 {
     int ret = 0;
-    int fd = -1;
     pthread_t tid = {0};
-    struct root *root = NULL;
     struct hw_info info = {0};
 
     ret = daemon(0, 0);

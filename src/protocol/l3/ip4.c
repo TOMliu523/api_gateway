@@ -25,6 +25,7 @@
 // Big Endian ip
 #define IP4_BUCKET_IDX(x) ((x) >> 16)
 #define IP4_BUCKET_MAX (1 << 16)
+#define IP4_INFO_MAX IP4_BUCKET_MAX
 
 struct ip4_manage {
     int ip_count;
@@ -37,7 +38,7 @@ struct ip4_manage {
      */
     struct list_head head[IP4_BUCKET_MAX];
     struct ip4_info *master[DPDK_ETHPORT_MAX];
-    struct ip4_info store[IP4_BUCKET_MAX];
+    struct ip4_info store[IP4_INFO_MAX];
 };
 
 // Release the ipv4_manage structure.
@@ -125,8 +126,8 @@ static int _ip4_conf_manage_add_check(struct ip4_manage *manage, const struct ip
         return 0;
     }
 
-    if (UNLIKELY(manage->ip_count + count > IP4_BUCKET_MAX)) {
-        LOG_ERROR("Maximum supported IP address count(%d) exceeded", IP4_BUCKET_MAX);
+    if (UNLIKELY(manage->ip_count + count > IP4_INFO_MAX)) {
+        LOG_ERROR("Maximum supported IP address count(%d) exceeded", IP4_INFO_MAX);
         return ERRCODE_IP_LIMIT_EXCEEDED;
     }
 
@@ -199,9 +200,6 @@ static int _ip4_conf_manage_create(void **dst, int nic_count, int hw_numa_id)
 {
     struct ip4_manage *manage = NULL;
 
-    // Avoid name conflicts when creating FIB objects
-    static uint32_t s_fib_version[DPDK_ETHPORT_MAX] = {0};
-
     manage = dpdk_malloc_numa(sizeof(*manage), hw_numa_id);
     if (UNLIKELY(manage == NULL)) {
         LOG_ERROR("HW NUMA(%d) OOM.", hw_numa_id);
@@ -214,7 +212,7 @@ static int _ip4_conf_manage_create(void **dst, int nic_count, int hw_numa_id)
     manage->nic_count = nic_count;
 
     for (int i = 0; i < nic_count; i++) {
-        manage->fib[i] = dpdk_fib_create(hw_numa_id, IP4_BUCKET_MAX);
+        manage->fib[i] = dpdk_fib_create(hw_numa_id, IP4_INFO_MAX);
         if (UNLIKELY(manage->fib[i] == NULL)) {
             goto _quit;
         }
@@ -256,7 +254,6 @@ static int _ip4_conf_manage_append(struct ip4_manage *dst, const struct ip4_mana
 static int _ip4_conf_manage_delete(struct ip4_manage *dst, const struct ip4_manage *src, const struct ip4_info *info, int count)
 {
     int ret = 0;
-    int nums = 0;
     bool need_delete = false;
     const struct ip4_info *one = NULL;
     const struct ip4_info *store = NULL;
@@ -439,7 +436,6 @@ static INLINE void _ip4_is_local_bulk(void *data[], bool result[], int count)
 
 static INLINE void _ip4_icmp_echo_reply(struct dpdk_mbuf *mbuf, struct dpdk_icmp_hdr *icmp)
 {
-    uint32_t tmp = 0;
     struct dpdk_eth_hdr *eth = dpdk_pktmbuf_eth(mbuf);
     struct dpdk_ip4_hdr *ip4hdr = dpdk_pktmbuf_ip4_hdr(mbuf);
 
@@ -495,9 +491,7 @@ static INLINE void _ip4_icmp_fragment(struct dpdk_mbuf *mbuf, uint16_t mtu)
 
 static void _ip4_icmp_process(struct dpdk_mbuf *data[], int count)
 {
-    int nums = 0;
     uint16_t mtu = 0;
-    uint32_t mask = 0;
     uint16_t icmp_len = 0;
     uint8_t header_len = 0;
     struct pkt_tx *tx = NULL;
@@ -549,7 +543,7 @@ void ip4_process(void *data[], int count)
         }
 
         ip4hdr = dpdk_pktmbuf_ip4_hdr(mbuf);
-        if (UNLIKELY(dpdk_ip4_header_cksum_verify(mbuf, ip4hdr))) {
+        if (UNLIKELY(!dpdk_ip4_header_cksum_verify(mbuf, ip4hdr))) {
             tlv_drop->data[tlv_drop->count++] = mbuf;
             continue;
         }

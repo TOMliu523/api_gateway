@@ -15,7 +15,7 @@
 #include "dpdk_common.h"
 #include "route6_conf.h"
 
-static INLINE void *_api_route6_item_free(struct route6_item *item)
+static INLINE void _api_route6_item_free(struct route6_item *item)
 {
     if (item != NULL) {
         dpdk_free(item);
@@ -54,7 +54,6 @@ static INLINE bool _api_route6_is_valid_subnet(const struct dpdk_ip6_addr *addr,
 
 static int _api_route6_post_parse(struct route6_item **pp_item, int *p_count, void *json)
 {
-    int af= 0;
     int code = 0;
     int count = 0;
     void *array = NULL;
@@ -123,8 +122,6 @@ _quit:
 
 static int _api_route6_del_parse(struct route6_item **pp_item, int *p_count, void *json)
 {
-    int af = 0;
-    int ret = 0;
     int count = 0;
     void *array = NULL;
     struct route6_item *item = NULL;
@@ -158,10 +155,6 @@ static int _api_route6_del_parse(struct route6_item **pp_item, int *p_count, voi
     *pp_item = item;
     *p_count = count;
     return 0;
-
-_quit:
-    _api_route6_item_free(item);
-    return ret;
 }
 
 static int _api_route6_table_add(struct root *root, void *route6[], struct route6_item *item, int count)
@@ -260,7 +253,7 @@ API_POST(/v1/network/route6, route6)
         thread_route[i] = route[root->dpdk_thread[i]->numa_id];
     }
 
-    api_config_update(cfg, position, thread_route, _api_route6_numa_free);
+    api_numa_config_update(cfg, position, thread_route, _api_route6_numa_free);
     _api_route6_item_free(item);
 
     return api_succ(NULL);
@@ -301,7 +294,7 @@ API_DEL(/v1/network/route6, route6)
         thread_route[i] = route[root->dpdk_thread[i]->numa_id];
     }
 
-    api_config_update(cfg, position, thread_route, _api_route6_numa_free);
+    api_numa_config_update(cfg, position, thread_route, _api_route6_numa_free);
 
     _api_route6_item_free(item);
     return api_succ(NULL);
@@ -333,10 +326,6 @@ API_GET(/v1/network/route6, route6)
     route = proto->route6;
     route6_conf_table_get(route, &items, &count);
 
-    if (count == 0) {
-        return api_succ(NULL);
-    }
-
     array = json_array();
     for (int i = 0; i < count; i++) {
         void *one = NULL;
@@ -353,11 +342,11 @@ API_GET(/v1/network/route6, route6)
             goto _quit;
         }
 
-        inet_ntop(AF_INET, &item->dst_subnet, ip_str, sizeof(ip_str));
+        inet_ntop(AF_INET6, &item->dst_subnet, ip_str, sizeof(ip_str));
         api_json_add_string(one, "dst_subnet", ip_str);
         api_json_add_integer(one, "mask", item->mask);
 
-        inet_ntop(AF_INET, &item->nexthop, ip_str, sizeof(ip_str));
+        inet_ntop(AF_INET6, &item->nexthop, ip_str, sizeof(ip_str));
         api_json_add_string(one, "nexthop", ip_str);
 
         name = dpdk_port_id_to_name(item->interface);

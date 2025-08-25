@@ -23,6 +23,6 @@ extern bool ip6_conf_manage_ip_is_local(const void *arg, const struct dpdk_ip6_a
 
 extern void ip6_conf_manage_destroy(void *);
 
-extern int ip6_ndp_advertisement_gen(struct dpdk_mbuf *, uint16_t port, const struct dpdk_ip6_addr *, const struct dpdk_mac *);
+extern int ip6_ndp_unsolicited_na_gen(struct dpdk_mbuf *, uint16_t port, const struct dpdk_ip6_addr *, const struct dpdk_mac *);
 
 #endif // __IP6_CONF_H__

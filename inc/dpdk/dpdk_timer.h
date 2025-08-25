@@ -30,7 +30,7 @@ static INLINE int dpdk_timer_pop(void *pool, void *data[], int max)
     return dpdk_mempool_pop(pool, (void **)data, max);
 }
 
-static INLINE int dpdk_timer_push(void *pool, void *data[], int max)
+static INLINE void dpdk_timer_push(void *pool, void *data[], int max)
 {
     dpdk_mempool_push(pool, (void **)data, max);
 }
