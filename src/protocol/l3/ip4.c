@@ -454,10 +454,12 @@ static INLINE void _ip4_icmp_fragment(struct dpdk_mbuf *mbuf, uint16_t mtu)
     int rc = 0;
     int len = 0;
     struct pkt_tx *tx = NULL;
-    struct dpdk_eth_hdr *eth = NULL;
     struct dpdk_mbuf *pkt = NULL;
+    struct dpdk_eth_hdr *eth = NULL;
     struct dpdk_ip4_hdr *ip4hdr = NULL;
     struct dpdk_eth_hdr *src_eth = dpdk_pktmbuf_eth(mbuf);
+    struct dpdk_mac src_addr = src_eth->src_addr;
+    struct dpdk_mac dst_addr = src_eth->dst_addr;
 
     dpdk_pktmbuf_adj(mbuf, sizeof(struct dpdk_eth_hdr));
 
@@ -478,8 +480,8 @@ static INLINE void _ip4_icmp_fragment(struct dpdk_mbuf *mbuf, uint16_t mtu)
 
         eth = dpdk_pktmbuf_prepend(pkt, sizeof(struct dpdk_eth_hdr));
         eth->ether_type = dpdk_cpu_to_be_16(DPDK_ETHER_TYPE_IPV4);
-        eth->dst_addr = src_eth->dst_addr;
-        eth->src_addr = src_eth->src_addr;
+        eth->dst_addr = src_addr;
+        eth->src_addr = dst_addr;
 
         ip4hdr = dpdk_pktmbuf_ip4_hdr(pkt);
         ip4hdr->hdr_checksum = 0;

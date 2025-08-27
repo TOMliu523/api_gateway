@@ -92,21 +92,13 @@ submodule network {
                 description "A mask value from 0 to 32 inclusive.";
             }
 
-            choice nexthop-or-interface { 
-                mandatory true;
+            leaf nexthop {
+                type inet:ipv4-address;
+            }
 
-                case via-nexthop {
-                    leaf nexthop {
-                        type inet:ipv4-address;
-                    }
-                }
-
-                case via-interface {
-                    leaf interface_name {
-                        type string {
-                            pattern '[-0-9a-zA-Z.]{3,63}';
-                        }
-                    }
+            leaf interface_name {
+                type string {
+                    pattern '[-0-9a-zA-Z.]{3,63}';
                 }
             }
         }
@@ -129,21 +121,13 @@ submodule network {
                 description "A mask value from 0 to 128 inclusive.";
             }
 
-            choice nexthop-or-interface {
-                mandatory true;
+            leaf nexthop {
+                type inet:ipv6-address;
+            }
 
-                case via-nexthop {
-                    leaf nexthop {
-                        type inet:ipv4-address;
-                    }
-                }
-
-                case via-interface {
-                    leaf interface_name {
-                        type string {
-                            pattern '[-0-9a-zA-Z.]{3,63}';
-                        }
-                    }
+            leaf interface_name {
+                type string {
+                    pattern '[-0-9a-zA-Z.]{3,63}';
                 }
             }
         }

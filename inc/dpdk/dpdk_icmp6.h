@@ -19,6 +19,10 @@
 #define DPDK_NDP_SOLICT 135
 #define DPDK_NDP_ADVERT 136
 
+#define DPDK_NDP_NA_FLAG_ROUTER 0x80000000
+#define DPDK_NDP_NA_FLAG_SOLICT 0x40000000
+#define DPDK_NDP_NA_FLAG_OVERRIDE 0x20000000
+
 #define DPDK_NDP_SRC_LINK_OPT_LEN 8
 #define DPDK_NDP_DST_LINK_OPT_LEN 8
 
@@ -42,6 +46,16 @@ struct dpdk_ndp_hdr {
     struct dpdk_ip6_addr target;
     __u8 opt[];
 } ALIGN_PACKED;
+
+static INLINE struct dpdk_icmp6_hdr *dpdk_pktmbuf_icmp6_hdr(struct dpdk_mbuf *m)
+{
+    return rte_pktmbuf_mtod_offset(m, struct dpdk_icmp6_hdr *, sizeof(struct dpdk_eth_hdr) + sizeof(struct dpdk_ip6_hdr));
+}
+
+static INLINE struct dpdk_ndp_hdr *dpdk_pktmbuf_ndp_hdr(struct dpdk_mbuf *m)
+{
+    return rte_pktmbuf_mtod_offset(m, struct dpdk_ndp_hdr *, sizeof(struct dpdk_eth_hdr) + sizeof(struct dpdk_ip6_hdr));
+}
 
 /**
  * Verify the ICMPv6 checksum of a received IPv6 packet.

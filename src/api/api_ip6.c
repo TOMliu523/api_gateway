@@ -170,11 +170,11 @@ static int _api_ip6_del_parse(void *json, struct api_ip6 *ip6, int count)
         const char *ip = NULL;
 
         one = &ip6[i];
-        json = json_array_get(array, i);
+        obj = json_array_get(array, i);
         one->name = json_string_value(json_object_get(obj, "name"));
         one->port = dpdk_port_by_name_get(one->name);
         if (one->port == (USHRT_MAX) -1) {
-            LOG_ERROR("Not exists(%s)", ip6->name);
+            LOG_ERROR("Not exists(%s)", one->name ? one->name : "NULL");
             return ERRCODE_PORT_NOT_EXIST;
         }
 
@@ -251,7 +251,7 @@ static int _api_ip6_ndp_gen(struct root *root, void *ndp[], struct api_ip6 ip6[]
     for (int i = 0; i < count; i++) {
         one = &ip6[i];
 
-        ret = ip6_ndp_unsolicited_na_gen(ndp[i], one->port, &one->addr, &one->mac);
+        ret = ip6_ndp_na_mcast_gen(ndp[i], one->port, &one->addr, &one->mac);
         if (ret != 0) {
             _api_ip6_ndp_free(ndp, count);
             return ERRCODE_INNER;

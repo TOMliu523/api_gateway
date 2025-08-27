@@ -22,6 +22,8 @@
 #define DPDK_IP6_INIT(a, b, c, d, e, f, g, h) RTE_IPV6(a, b, c, d, e, f, g, h)
 #define DPDK_IP6_UNSPEC() DPDK_IP6_INIT(0, 0, 0, 0, 0, 0, 0, 0)
 
+#define DPDK_TX_IP_TX_IP6_CKSUM (RTE_MBUF_F_TX_IP_CKSUM | RTE_MBUF_F_TX_IPV6)
+
 #if defined(__ORDER_LITTLE_ENDIAN__)
 #define DPDK_IP6_LOOKBACK_BYTE0 (uint64_t) 0
 #define DPDK_IP6_LOOKBACK_BYTE1 (uint64_t) 0x1000000000000
@@ -96,6 +98,11 @@ static INLINE bool dpdk_ip6_addr_is_ucast(const struct dpdk_ip6_addr *addr)
     return ((addr->a[0] != 0xFF) && !(DPDK_IP6_ADDR0(addr) == 0 && DPDK_IP6_ADDR1(addr) == 0));
 }
 
+static INLINE bool dpdk_ip6_version_check(const struct dpdk_ip6_hdr *ip6hdr)
+{
+    return (!rte_ipv6_check_version(ip6hdr));
+}
+
 static INLINE enum IP6_ADDR_TYPE dpdk_ip6_addr_type(const struct dpdk_ip6_addr *addr)
 {
     switch (addr->a[0]) {
@@ -137,7 +144,7 @@ static INLINE bool dpdk_ip6_addr_subnet_eq(const struct dpdk_ip6_addr *first, co
     return dpdk_ip6_addr_eq(first, second);
 }
 
-static INLINE void dpdk_eth_mcast_from_ip6(struct dpdk_mac *mac, const struct dpdk_ip6_addr *ip)
+static INLINE void dpdk_ip6_to_eth_mcast(struct dpdk_mac *mac, const struct dpdk_ip6_addr *ip)
 {
     rte_ether_mcast_from_ipv6(mac, ip);
 }

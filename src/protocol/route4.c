@@ -17,7 +17,6 @@
 
 #define ROUTE4_DIRECT_ITEM_MAX 2000
 #define ROUTE4_ITEM_MAX 20000
-#define ROUTE4_DEFAULT_INVALID_ID (UINT32_MAX)
 
 // Route table structure definition
 struct route4_table {
@@ -57,7 +56,7 @@ static int _route4_conf_create(void **out, int hw_numa_id)
 
     memset(route4, 0, sizeof(*route4));
 
-    route4->default_id = ROUTE4_DEFAULT_INVALID_ID;
+    route4->default_id = DPDK_FIB_DEFAULT;
     route4->fib = dpdk_fib_create(hw_numa_id, ROUTE4_ITEM_MAX);
     if (UNLIKELY(route4->fib == NULL)) {
         dpdk_free(route4);
@@ -113,7 +112,7 @@ static int _route4_conf_add_item(struct route4_table *route, const struct route4
         return ERRCODE_INNER;
     }
 
-    if (item->dst_subnet == 0 && item->mask == 0) {
+    if (item->dst_subnet == 0 && item->mask == 0 && route->default_id == DPDK_FIB_DEFAULT) {
         route->default_id = route->store_count;
     }
 
@@ -197,7 +196,7 @@ static int _route4_conf_add_check(struct route4_table *route, const struct route
                 break;
             }
 
-            if (UNLIKELY(ip == 0 && mask == 0 && route->default_id != ROUTE4_DEFAULT_INVALID_ID)) {
+            if (UNLIKELY(ip == 0 && mask == 0 && route->default_id != DPDK_FIB_DEFAULT)) {
                 LOG_ERROR("Multiple default routes are not allowed.");
                 return ERRCODE_ROUTE_MULTI_DEFAULT;
             }

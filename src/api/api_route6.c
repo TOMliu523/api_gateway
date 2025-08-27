@@ -82,22 +82,23 @@ static int _api_route6_post_parse(struct route6_item **pp_item, int *p_count, vo
         net = json_string_value(json_object_get(obj, "net"));
         mask = json_integer_value(json_object_get(obj, "mask"));
 
-        inet_pton(AF_INET, net, &one->dst_subnet);
+        inet_pton(AF_INET6, net, &one->dst_subnet);
         one->mask = mask;
 
-        if (json_object_get(obj, "nexthop")) {
-            nexthop = json_string_value(json_object_get(obj, "nexthop"));
-            inet_pton(AF_INET, nexthop, &one->nexthop);
-            one->interface = UINT8_MAX;
-        } else {
-            name = json_string_value(json_object_get(obj, "interface_name"));
-            one->interface = dpdk_port_by_name_get(name);
+        nexthop = json_string_value(json_object_get(obj, "nexthop"));
+        inet_pton(AF_INET6, nexthop, &one->nexthop);
+
+        name = json_string_value(json_object_get(obj, "interface"));
+        one->interface = dpdk_port_by_name_get(name);
+        if (one->interface == (UINT16_MAX) -1) {
+            code = ERRCODE_PORT_NOT_EXIST;
+            goto _quit;
         }
 
         one->route_type = ROUTE6_MANUAL;
 
         if (!_api_route6_is_valid_subnet(&one->dst_subnet, one->mask)) {
-            inet_ntop(AF_INET, &one->dst_subnet, ip_str, sizeof(ip_str));
+            inet_ntop(AF_INET6, &one->dst_subnet, ip_str, sizeof(ip_str));
             LOG_ERROR("Invalid subnet(%s).", ip_str);
             code = ERRCODE_SUBNET_INVALID;
             goto _quit;
@@ -146,7 +147,7 @@ static int _api_route6_del_parse(struct route6_item **pp_item, int *p_count, voi
         net = json_string_value(json_object_get(obj, "net"));
         mask = json_integer_value(json_object_get(obj, "mask"));
 
-        inet_pton(AF_INET, net, &one->dst_subnet);
+        inet_pton(AF_INET6, net, &one->dst_subnet);
 
         item->mask = mask;
         item->route_type = ROUTE6_MANUAL;
@@ -160,7 +161,7 @@ static int _api_route6_del_parse(struct route6_item **pp_item, int *p_count, voi
 static int _api_route6_table_add(struct root *root, void *route6[], struct route6_item *item, int count)
 {
     int ret = 0;
-    int numa_id = 0;
+    int hw_numa_id = 0;
     int numa_count = 0;
     struct dataplane *dp = NULL;
     struct proto_header *proto = NULL;
@@ -178,8 +179,8 @@ static int _api_route6_table_add(struct root *root, void *route6[], struct route
             continue;
         }
 
-        numa_id = root->dpdk_thread[i]->numa_id;
-        ret = route6_conf_create_and_append(&route6[i], route6[dp->numa_id], NULL, 0, numa_id, dp->tc->ip6_manage);
+        hw_numa_id = root->dpdk_thread[i]->hw_numa_id;
+        ret = route6_conf_create_and_append(&route6[i], route6[dp->numa_id], NULL, 0, hw_numa_id, dp->tc->ip6_manage);
         if (ret != 0) {
             goto _quit;
         }
@@ -256,6 +257,7 @@ API_POST(/v1/network/route6, route6)
     api_numa_config_update(cfg, position, thread_route, _api_route6_numa_free);
     _api_route6_item_free(item);
 
+    LOG_DEBUG("CONFIG ROUTE6 SUCCESS.");
     return api_succ(NULL);
 
 _quit:

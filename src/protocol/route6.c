@@ -14,7 +14,6 @@
 
 #define ROUTE6_DIRECT_ITEM_MAX 2000
 #define ROUTE6_ITEM_MAX 20000
-#define ROUTE6_DEFAULT_INVALID_ID (UINT32_MAX)
 
 struct route6_table {
     struct dpdk_fib6 *fib;
@@ -90,8 +89,7 @@ static int _route6_conf_add_check(struct route6_table *route6, const struct rout
                 break;
             }
 
-            if (UNLIKELY(dpdk_ip6_addr_is_unspec(&one->dst_subnet) && one->mask == 0
-                && route6->default_id != ROUTE6_DEFAULT_INVALID_ID)) {
+            if (UNLIKELY(dpdk_ip6_addr_is_unspec(&one->dst_subnet) && one->mask == 0 && route6->default_id != DPDK_FIB6_DEFAULT)) {
                 LOG_ERROR("Multiple default routes are not allowed.");
                 return ERRCODE_ROUTE_MULTI_DEFAULT;
             }
@@ -226,7 +224,7 @@ static int _route6_conf_add_item(struct route6_table *route6, const struct route
         return ERRCODE_INNER;
     }
 
-    if (dpdk_ip6_addr_is_unspec(&store->dst_subnet) && item->mask == 0) {
+    if (dpdk_ip6_addr_is_unspec(&store->dst_subnet) && item->mask == 0 && route6->default_id == DPDK_FIB6_DEFAULT) {
         route6->default_id = route6->store_count;
     }
 

@@ -19,6 +19,14 @@ int notify_init(void *arg)
     return 0;
 }
 
+static INLINE void _notify_headroom_copy(struct dpdk_mbuf *mbuf, struct dpdk_mbuf *one)
+{
+    struct dpdk_headroom *src = &((struct dpdk_data *)one)->headroom;
+    struct dpdk_headroom *dst = &((struct dpdk_data *)mbuf)->headroom;
+
+    dst->type = src->type;
+}
+
 static void _notify_other_thread(void)
 {
     int count = 0;
@@ -26,30 +34,18 @@ static void _notify_other_thread(void)
     int drop_count = 0;
     struct dpdk_mbuf *one = NULL;
     struct dpdk_mbuf *mbuf = NULL;
-    struct dpdk_headroom *headroom = NULL;
 
     count = tlv_notify->count;
-    drop_count = tlv_drop->count;
-
-    for (int i = 0; i < count; i++) {
-        mbuf = tlv_notify->data[i];
-        headroom = &((struct dpdk_data *)mbuf)->headroom;
-        headroom->type = PKT_MBUF_ARP;
-
-        tlv_drop->data[drop_count++] = mbuf;
-    }
-
-    tlv_drop->count = drop_count;
-
     cpu_count = root->hw_info.cpu_count;
     for (int i = 0; i < cpu_count; i++) {
+        int j = 0;
         struct dataplane *other = root->dpdk_thread[i];
 
         if (i == tlv_thread_id) {
             continue;
         }
 
-        for (int j = 0; j < count; j++) {
+        for (j = 0; j < count; j++) {
             one = tlv_notify->data[j];
             mbuf = dpdk_pktmbuf_clone(one, other->pktmbuf_pool);
             if (UNLIKELY(mbuf == NULL)) {
@@ -58,12 +54,27 @@ static void _notify_other_thread(void)
                 break;
             }
 
-            DPDK_HEADROOM(mbuf)->type = DPDK_HEADROOM(one)->type;
+            mbuf->port = one->port;
+            _notify_headroom_copy(mbuf, one);
+
             tlv_cache->data[j] = mbuf;
         }
 
-        dpdk_ring_mp_push(other->notice_ring, (void *const *)tlv_cache->data, count);
+        if (LIKELY(j == count)) {
+            dpdk_ring_mp_push(other->notice_ring, (void *const *)tlv_cache->data, count);
+        } else {
+            break;
+        }
     }
+
+    drop_count = tlv_drop->count;
+
+    UNROLL_LOOP_8(i, count, {
+        mbuf = tlv_notify->data[i];
+        tlv_drop->data[drop_count++] = mbuf;
+    });
+
+    tlv_drop->count = drop_count;
 }
 
 static INLINE void _notify_accept_and_handle(void)

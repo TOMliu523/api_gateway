@@ -87,13 +87,14 @@ static int _api_route4_post_parse(struct route4_item **pp_item, int *p_count, vo
         inet_pton(AF_INET, net, &one->dst_subnet);
         one->mask = mask;
 
-        if (json_object_get(obj, "nexthop")) {
-            nexthop = json_string_value(json_object_get(obj, "nexthop"));
-            inet_pton(AF_INET, nexthop, &one->nexthop);
-            one->interface = UINT8_MAX;
-        } else {
-            name = json_string_value(json_object_get(obj, "interface_name"));
-            one->interface = dpdk_port_by_name_get(name);
+        nexthop = json_string_value(json_object_get(obj, "nexthop"));
+        inet_pton(AF_INET, nexthop, &one->nexthop);
+
+        name = json_string_value(json_object_get(obj, "interface"));
+        one->interface = dpdk_port_by_name_get(name);
+        if (one->interface == (UINT16_MAX)-1) {
+            code = ERRCODE_PORT_NOT_EXIST;
+            goto _quit;
         }
 
         one->route_type = ROUTE4_MANUAL;
@@ -162,7 +163,7 @@ static int _api_route4_del_parse(struct route4_item **pp_item, int *p_count, voi
 static int _api_route4_table_add(struct root *root, void *route[], struct route4_item *item, int count)
 {
     int ret = 0;
-    int numa_id = 0;
+    int hw_numa_id = 0;
     int numa_count = 0;
     struct dataplane *dp = NULL;
     struct proto_header *proto = NULL;
@@ -180,8 +181,8 @@ static int _api_route4_table_add(struct root *root, void *route[], struct route4
             continue;
         }
 
-        numa_id = root->dpdk_thread[i]->numa_id;
-        ret = route4_conf_create_and_append(&route[i], route[dp->numa_id], NULL, 0, numa_id, dp->tc->ip4_manage);
+        hw_numa_id = root->dpdk_thread[i]->hw_numa_id;
+        ret = route4_conf_create_and_append(&route[i], route[dp->numa_id], NULL, 0, hw_numa_id, dp->tc->ip4_manage);
         if (ret != 0) {
             goto _quit;
         }
@@ -258,6 +259,7 @@ API_POST(/v1/network/route4, route4)
     api_numa_config_update(cfg, position, thread_route, _api_route4_numa_free);
     _api_route4_item_free(item);
 
+    LOG_DEBUG("CONFIG ROUTE4 SUCCESS.");
     return api_succ(NULL);
 
 _quit:

@@ -89,6 +89,12 @@ struct dpdk_headroom {
             void *l3;
             void *l4;
         };
+
+        // fragment
+        struct {
+            struct dpdk_eth_hdr ethhdr;
+        };
+
         uint8_t reserve[2 * CACHE_LINE];
     };
 } ALIGNED(CACHE_LINE);
