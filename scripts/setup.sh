@@ -21,6 +21,7 @@ export LD_LIBRARY_PATH=${APP_DIR}/lib:${APP_DIR}/lib64:${LD_LIBRARY_PATH}
 pid=`pidof "${TARGET}"`
 if [[ -n "${pid}" ]]; then
     kill -9 ${pid}
+    sleep 3 # 
 fi
 
 # cpu list

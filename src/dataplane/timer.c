@@ -45,9 +45,5 @@ void timer_check(void)
         dpdk_ip_mbuf_recall(tlv_dp->frag_handle, tlv_dp->timer_cycles);
     }
 
-    if (context->off_time_ms + 10 <= tlv_dp->off_time_ms) {
-        context->off_time_ms = tlv_dp->off_time_ms;
-    }
-
     context->off_time = tlv_dp->off_time;
 }

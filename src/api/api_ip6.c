@@ -212,7 +212,7 @@ static int _api_ip6_post_parse(struct root *root, void *json, struct api_ip6 ip6
         inet_pton(AF_INET6, ip, &one->addr);
 
         one->mask = json_integer_value(json_object_get(obj, "mask"));
-        ret = l2_port_mac(one->port, &one->mac);
+        ret = l2_conf_port_mac(one->port, &one->mac);
         if (ret != 0) {
             return ERRCODE_INNER;
         }

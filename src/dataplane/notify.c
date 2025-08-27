@@ -25,6 +25,7 @@ static INLINE void _notify_headroom_copy(struct dpdk_mbuf *mbuf, struct dpdk_mbu
     struct dpdk_headroom *dst = &((struct dpdk_data *)mbuf)->headroom;
 
     dst->type = src->type;
+    dst->target = src->target;
 }
 
 static void _notify_other_thread(void)
@@ -88,7 +89,7 @@ static INLINE void _notify_accept_and_handle(void)
     count = dpdk_ring_sc_pop(tlv_dp->notice_ring, mbufs, ARR_NUMS(mbufs));
     for (unsigned i = 0; i < count; i++) {
         mbuf = mbufs[i];
-        type = ((struct dpdk_data *)mbuf)->headroom.type;
+        type = DPDK_HEADROOM(mbuf)->type;
 
         switch (type) {
         case PKT_MBUF_GARP:

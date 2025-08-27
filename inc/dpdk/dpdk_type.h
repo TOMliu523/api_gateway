@@ -88,6 +88,9 @@ struct dpdk_headroom {
             void *l2;
             void *l3;
             void *l4;
+
+            // ndp update
+            const void *target;
         };
 
         // fragment

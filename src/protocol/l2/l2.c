@@ -112,6 +112,19 @@ static __thread struct dpdk_mac s_broadcast = {
     .addr_bytes = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF},
 };
 
+int l2_conf_port_mac(uint16_t port, struct dpdk_mac *mac)
+{
+    int ret = 0;
+
+    ret = dpdk_port_mac(port, mac);
+    if (ret != 0) {
+        LOG_ERROR("Failure port(%d) dpdk_port_mac: %s", port, strerror(-ret));
+        return -1;
+    }
+
+    return ret;
+}
+
 static INLINE void _l2_arp_part_init(struct arp_item *item, struct dpdk_mac *mac, uint32_t expire_time)
 {
     item->mac = *mac;
@@ -670,17 +683,4 @@ void l2_thread_mac_destroy(void *ptr)
 void l2_thread_port_mac(uint16_t port, struct dpdk_mac *mac)
 {
     *mac = s_mac[port];
-}
-
-int l2_port_mac(uint16_t port, struct dpdk_mac *mac)
-{
-    int ret = 0;
-
-    ret = dpdk_port_mac(port, mac);
-    if (ret != 0) {
-        LOG_ERROR("Failure port(%d) dpdk_port_mac: %s", port, strerror(-ret));
-        return -1;
-    }
-
-    return ret;
 }

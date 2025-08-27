@@ -194,6 +194,11 @@ static INLINE int dpdk_pktmbuf_trim(struct dpdk_mbuf *mbuf, uint16_t len)
     return rte_pktmbuf_trim(mbuf, len);
 }
 
+static INLINE bool dpdk_pktmbuf_is_continue(const struct dpdk_mbuf *mbuf)
+{
+    return rte_pktmbuf_is_contiguous(mbuf);
+}
+
 #define DPDK_PKTMBUF_TO_TYPE(m, type, offset) rte_pktmbuf_mtod_offset(m, type, offset)
 
 /**********************************************************************/

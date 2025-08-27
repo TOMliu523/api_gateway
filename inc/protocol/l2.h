@@ -28,7 +28,7 @@ struct iface {
     uint16_t port[];
 };
 
-extern int l2_port_mac(uint16_t port, struct dpdk_mac *mac);
+extern int l2_conf_port_mac(uint16_t port, struct dpdk_mac *mac);
 
 extern void *l2_thread_mac_create(int);
 extern void l2_thread_mac_destroy(void *);

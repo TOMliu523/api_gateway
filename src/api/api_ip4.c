@@ -223,7 +223,7 @@ static enum ERRCODE _api_ip4_post_parse(struct root *root, void *json, struct ap
         inet_pton(AF_INET, ip, &one->ip);
 
         one->mask = json_integer_value(json_object_get(obj, "mask"));
-        ret = l2_port_mac(one->port, &one->mac);
+        ret = l2_conf_port_mac(one->port, &one->mac);
         if (ret != 0) {
             return ERRCODE_INNER;
         }
