@@ -700,7 +700,7 @@ static INLINE void _ip6_icmp_fragment(struct dpdk_mbuf *mbuf, uint16_t mtu)
 
 _quit:
     for (int i = 0; i < rc; i++) {
-        tlv_drop->data[tlv_drop->count++] = tx->data[i];
+        tlv_drop->data[tlv_drop->count++] = tx->data[tx_count + i];
     }
     return;
 }
@@ -1157,7 +1157,7 @@ void ip6_process(void *data[], int count)
         }
 
         if (UNLIKELY(dpdk_pktmbuf_ip6_frag_hdr(ip6hdr) != NULL)) {
-            if (UNLIKELY(ip6hdr->payload_len <= sizeof(struct dpdk_ip6_frag_ext))) {
+            if (UNLIKELY(dpdk_be_to_cpu_16(ip6hdr->payload_len) <= sizeof(struct dpdk_ip6_frag_ext))) {
                 tlv_drop->data[tlv_drop->count++] = mbuf;
                 continue;
             }
