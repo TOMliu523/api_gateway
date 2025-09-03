@@ -44,8 +44,6 @@
 #define dpdk_arp_hdr_data rte_arp_ipv4
 
 // Ethernet frame types
-#define DPDK_ETHER_IP4 RTE_ETHER_TYPE_IPV4
-#define DPDK_ETHER_IP6 RTE_ETHER_TYPE_IPV6
 #define DPDK_ETHER_ARP RTE_ETHER_TYPE_ARP
 #define DPDK_ETHER_RARP RTE_ETHER_TYPE_RARP
 #define DPDK_ETHER_VLAN RTE_ETHER_TYPE_VLAN

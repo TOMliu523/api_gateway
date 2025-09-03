@@ -30,10 +30,10 @@
      uint8_t route_type;          // Route protocol type (see ROUTE_TYPE enum)
      uint8_t priority;            // Route priority (lower value means higher priority)
      uint8_t interface;           // Egress interface ID
+     uint8_t valid;               // Route validity flag (1 = valid, 0 = invalid)
      uint32_t last_access_time;   // Timestamp of last access (used for aging/LRU)
      uint32_t last_probe_time;    // Timestamp of last probe or activity (e.g., ARP)
-     uint8_t valid;               // Route validity flag (1 = valid, 0 = invalid)
-     uint16_t direct_id;          // Reference to associated direct route for recursive resolution
+     uint32_t direct_id;          // Reference to associated direct route for recursive resolution
  };
 
  extern int route4_conf_create_and_append(void **dst,
@@ -50,7 +50,5 @@
                                          bool is_route);
  extern void route4_conf_table_get(void *src, struct route4_item **item, int *count);
  extern void route4_conf_destroy(void *ptr);
- extern void route4_conf_update_lock(void);
- extern void route4_conf_update_unlock(void);
 
  #endif // __ROUTE4_CONF_H__

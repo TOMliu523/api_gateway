@@ -12,6 +12,8 @@
 #include "log.h"
 #include "type.h"
 #include "list.h"
+#include "dpdk_ip4.h"
+#include "dpdk_ip6.h"
 #include "protocol.h"
 #include "dpdk_port.h"
 #include "dpdk_core.h"

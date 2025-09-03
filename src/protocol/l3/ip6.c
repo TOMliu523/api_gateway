@@ -119,6 +119,7 @@ static int _ip6_conf_manage_del_check(struct ip6_manage *manage, const struct ip
     int ret = 0;
     char ip_str[CACHE_LINE] = "";
     struct ip6_info *data = NULL;
+    const struct ip6_info *one = NULL;
 
     if (UNLIKELY(manage->ip_count - count < 0)) {
         LOG_ERROR("Parameter exception: origin %d, delete %d", manage->ip_count, count);
@@ -126,10 +127,11 @@ static int _ip6_conf_manage_del_check(struct ip6_manage *manage, const struct ip
     }
 
     for (int i = 0; i < count; i++) {
-        ret = dpdk_hash_lookup(manage->hash[info->port], (const void *)&info[i].addr, (void **)&data);
+        one = &info[i];
+        ret = dpdk_hash_lookup(manage->hash[one->port], (const void *)&one->addr, (void **)&data);
         if (UNLIKELY(ret < 0)) {
-            inet_ntop(AF_INET6, &info->addr, ip_str, sizeof(ip_str));
-            LOG_ERROR("IP: %s, port: %d not exists", ip_str, info->port);
+            inet_ntop(AF_INET6, &one->addr, ip_str, sizeof(ip_str));
+            LOG_ERROR("IP: %s, port: %d not exists", ip_str, one->port);
             return ERRCODE_IP_NOT_EXIST;
         }
     }
@@ -566,7 +568,7 @@ static INLINE struct dpdk_mbuf *_ip6_ndp_nud_na_gen(const struct dpdk_mbuf *mbuf
     }
 
     ethhdr = dpdk_append(one, DPDK_NDP_BASE_LEN + DPDK_NDP_DST_LINK_OPT_LEN, struct dpdk_eth_hdr *);
-    if (UNLIKELY(ret != 0)) {
+    if (UNLIKELY(ethhdr == NULL)) {
         dpdk_pktmbuf_push((void **)&one, 1);
         return NULL;
     }
@@ -690,7 +692,7 @@ static INLINE void _ip6_icmp_fragment(struct dpdk_mbuf *mbuf, uint16_t mtu)
             goto _quit;
         }
 
-        eth->ether_type = dpdk_cpu_to_be_16(DPDK_ETHER_TYPE_IP6);
+        eth->ether_type = dpdk_cpu_to_be_16(DPDK_ETHER_IP6);
         eth->src_addr = dst_addr;
         eth->dst_addr = src_addr;
     }
@@ -1048,8 +1050,8 @@ static void _ip6_ndp_gen_bulk(void *data[], int count)
 
         mbuf = tlv_cache->data[i];
         if (UNLIKELY(!_ip6_ndp_nud_ns_gen(mbuf, port, &item->target, &item->mac))) {
-            dpdk_pktmbuf_push(tlv_cache->data, count);
-            return;
+            dpdk_pktmbuf_push(&tlv_cache->data[i], 1);
+            continue;
         }
 
         tx = &tlv_tx[port];

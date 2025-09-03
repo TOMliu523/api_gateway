@@ -19,6 +19,8 @@
 
 #define dpdk_ip4_hdr rte_ipv4_hdr
 
+#define DPDK_ETHER_IP4 RTE_ETHER_TYPE_IPV4
+
 #define DPDK_RX_IP_CKSUM_GOOD RTE_MBUF_F_RX_IP_CKSUM_GOOD
 #define DPDK_RX_IP_CKSUM_BAD RTE_MBUF_F_RX_IP_CKSUM_BAD
 

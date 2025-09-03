@@ -12,7 +12,6 @@
 #include "dpdk_common.h"
 #include "route6_conf.h"
 
-#define ROUTE6_DIRECT_ITEM_MAX 2000
 #define ROUTE6_ITEM_MAX 20000
 
 struct route6_table {

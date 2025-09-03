@@ -1,5 +1,5 @@
 /*****************************************************************************
- * filename: api_ip.c
+ * filename: api_ip4.c
  * function:
  * description:
  ****************************************************************************/
@@ -214,7 +214,7 @@ static enum ERRCODE _api_ip4_post_parse(struct root *root, void *json, struct ap
         obj = json_array_get(array, i);
         one->name = json_string_value(json_object_get(obj, "name"));
         one->port = dpdk_port_by_name_get(one->name);
-        if (one->port == (USHRT_MAX)-1) {
+        if (one->port == (uint16_t)-1) {
             LOG_ERROR("Not exists(%s)", one->name);
             return ERRCODE_PORT_NOT_EXIST;
         }
@@ -258,8 +258,8 @@ static int _api_ip4_del_parse(void *json, struct api_ip4 *iface, int count)
         obj = json_array_get(array, i);
         one->name = json_string_value(json_object_get(obj, "name"));
         one->port = dpdk_port_by_name_get(one->name);
-        if (one->port == (USHRT_MAX) -1) {
-            LOG_ERROR("Not exists(%s)", iface->name);
+        if (one->port == (uint16_t) -1) {
+            LOG_ERROR("Not exists(%s)", one->name);
             return ERRCODE_PORT_NOT_EXIST;
         }
 
@@ -313,7 +313,7 @@ static INLINE void *_api_ip4_to_route_item(const struct api_ip4 *iface, int coun
         return NULL;
     }
 
-    memset(item, 0, sizeof(*item));
+    memset(item, 0, count * sizeof(*item));
 
     for (int i = 0; i < count; i++) {
         INIT_LIST_HEAD(&item[i].lru_head);
@@ -471,12 +471,13 @@ static int _api_ip4_route_table_del(struct root *root, void *route[], const stru
         goto _quit;
     }
 
+    numa_count = root->hw_info.numa_count;
     for (int i = 0; i < numa_count; i++) {
         if (i == dp->numa_id) {
             continue;
         }
 
-        ret = route4_conf_create_and_append(&route[i], &route[dp->numa_id], NULL, 0, root->dpdk_thread[i]->hw_numa_id, arg);
+        ret = route4_conf_create_and_append(&route[i], route[dp->numa_id], NULL, 0, root->dpdk_thread[i]->hw_numa_id, arg);
         if (ret != 0) {
             goto _quit;
         }
@@ -516,11 +517,13 @@ API_POST(/v1/network/ip4, ip4)
 
     arp = _api_ip4_alloc(count * sizeof(*arp));
     if (arp == NULL) {
+        code = ERRCODE_OOM;
         goto _quit;
     }
 
     api_iface = _api_ip4_alloc(count * sizeof(*api_iface));
     if (api_iface == NULL) {
+        code = ERRCODE_OOM;
         goto _quit;
     }
 
@@ -572,7 +575,7 @@ _quit:
     }
     _api_ip4_free(arp);
     _api_ip4_free(api_iface);
-    // _api_ip_route_numa_free(route, root->hw_info.numa_count);
+    _api_ip4_route_numa_free(route, root->hw_info.numa_count);
     _api_ip4_manage_numa_free(ip4_manage, root->hw_info.numa_count);
     return api_fail(code);
 }
@@ -666,7 +669,7 @@ API_GET(/v1/network/ip4, ip4)
         snprintf(path, sizeof(path), API_INTERFACE_FORMAT, one->name);
         ret = sr_get_items(sess, path, 0, 0, &val, &val_cnt);
         if (ret != 0 && ret != SR_ERR_NOT_FOUND) {
-            LOG_ERROR("Failure path(%s) sr_get_item: %s", path, strerror(-ret));
+            LOG_ERROR("Failure path(%s) sr_get_item: %s", path, strerror(ret));
             goto _quit;
         }
 

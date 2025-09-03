@@ -31,10 +31,6 @@ struct route4_table {
 	struct route4_item store[ROUTE4_ITEM_MAX];
 };
 
-// Lock protecting concurrent writes by config thread & per-NUMA threads
-// Read operations are lockless
-static dpdk_spinlock_t s_route_conf_spinlock;
-
 static INLINE bool _route4_conf_is_broadcast_ip(uint32_t local_ip_be, uint8_t mask, uint32_t next_hop_be)
 {
     uint32_t local_ip = dpdk_be_to_cpu_32(local_ip_be);
@@ -90,6 +86,7 @@ static int _route4_conf_add_item(struct route4_table *route, const struct route4
     store = &route->store[route->store_count];
     *store = *item;
     INIT_LIST_HEAD(&store->lru_head);
+    store->direct_id = DPDK_FIB_DEFAULT;
 
     if (store->route_type == ROUTE4_DIRECT) {
         store->direct_id = 0;
@@ -123,6 +120,7 @@ static int _route4_conf_add_item(struct route4_table *route, const struct route4
 static int _route4_conf_add_check(struct route4_table *route, const struct route4_item *item, int count, const void *arg)
 {
     int ret = 0;
+    int existed = 0;
     uint8_t mask1 = 0;
     uint8_t mask2 = 0;
     uint64_t next_hop = 0;
@@ -131,6 +129,24 @@ static int _route4_conf_add_check(struct route4_table *route, const struct route
     char ip_str[CACHE_LINE] = "";
     struct route4_item *next_item = NULL;
     struct route4_item *direct_item = NULL;
+
+    existed = route ? route->store_count : 0;
+    if (UNLIKELY(existed + count > ROUTE4_ITEM_MAX)) {
+        LOG_ERROR("IP4 route item more than %d", ROUTE4_ITEM_MAX);
+        return ERRCODE_OOM;
+    }
+
+    if (route == NULL) {
+        if (count > ROUTE4_ITEM_MAX) {
+            LOG_ERROR("IP4 route item more than %d", ROUTE4_ITEM_MAX);
+            return ERRCODE_OOM;
+        }
+    } else {
+        if (route->store_count + count > ROUTE4_ITEM_MAX) {
+            LOG_ERROR("IP4 route item more than %d", ROUTE4_ITEM_MAX);
+            return ERRCODE_OOM;
+        }
+    }
 
     // unique prefix
     for (int i = 0; i < count; i++) {
@@ -210,10 +226,8 @@ static int _route4_conf_add_check(struct route4_table *route, const struct route
                 break;
             }
 
-            uint32_t nexthop = dpdk_be_to_cpu_32(one->nexthop);
-
             // check multicast address
-            if (*(uint8_t *)&nexthop >= 0xE0 && *(uint8_t *)&nexthop <= 0xEF) {
+            if (*(uint8_t *)&one->nexthop >= 0xE0 && *(uint8_t *)&one->nexthop <= 0xEF) {
                 inet_ntop(AF_INET, &one->nexthop, ip_str, sizeof(ip_str));
                 LOG_ERROR("Nexthop(%s) is multicast", ip_str);
                 return ERRCODE_ROUTE_NEXTHOP_INVALID;
@@ -328,6 +342,7 @@ static int _route4_conf_append(struct route4_table *dst, struct route4_table *ro
 
 static int _route4_conf_delete(struct route4_table *dst, struct route4_table *src, const struct route4_item *item, int count, bool is_route)
 {
+    int code = 0;
     bool hit = false;
     struct route4_item *one = NULL;
 
@@ -352,7 +367,10 @@ static int _route4_conf_delete(struct route4_table *dst, struct route4_table *sr
         }
 
         if (!hit) {
-            _route4_conf_add_item(dst, one);
+            code = _route4_conf_add_item(dst, one);
+            if (UNLIKELY(code != 0)) {
+                return code;
+            }
         }
     }
 
@@ -426,16 +444,6 @@ void route4_conf_table_get(void *src, struct route4_item **item, int *count)
     *count = route->store_count;
 
     return;
-}
-
-void route4_conf_update_lock(void)
-{
-    dpdk_spinlock_lock(&s_route_conf_spinlock);
-}
-
-void route4_conf_update_unlock(void)
-{
-    dpdk_spinlock_unlock(&s_route_conf_spinlock);
 }
 
 // Config plane interface

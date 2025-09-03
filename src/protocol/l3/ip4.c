@@ -4,6 +4,7 @@
  * description:
  *****************************************************************************/
 
+#include <string.h>
 #include <stdbool.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -122,7 +123,7 @@ static int _ip4_conf_manage_add_check(struct ip4_manage *manage, const struct ip
     char ip_str[CACHE_LINE] = "";
     const struct ip4_info *one = NULL;
 
-    if (UNLIKELY(manage == NULL || manage->ip_count == 0)) {
+    if (UNLIKELY(manage == NULL || manage->ip_count == 0) && count <= IP4_INFO_MAX) {
         return 0;
     }
 
@@ -134,7 +135,7 @@ static int _ip4_conf_manage_add_check(struct ip4_manage *manage, const struct ip
     for (int i = 0; i < count; i++) {
         one = &info[i];
 
-        ret = dpdk_fib_lookup(manage->fib[one->port], (uint32_t *)&info->ip, &next_hop, 1);
+        ret = dpdk_fib_lookup(manage->fib[one->port], (uint32_t *)&one->ip, &next_hop, 1);
         if (UNLIKELY(ret != 0)) {
             LOG_ERROR("Inner error.");
             return ERRCODE_INNER;
@@ -392,9 +393,7 @@ static int _ip4_get_by_port(uint32_t *ip, uint32_t target_ip, int port)
 
 static INLINE void _ip4_is_local_bulk(void *data[], bool result[], int count)
 {
-    int nums = 0;
     uint16_t idx = 0;
-    bool hit = false;
     struct ip4_info *cur = NULL;
     struct list_head *head = NULL;
     struct dpdk_mbuf *mbuf = NULL;
@@ -402,6 +401,8 @@ static INLINE void _ip4_is_local_bulk(void *data[], bool result[], int count)
     struct ip4_manage *manage = rcu_dereference(tlv_th_cfg->ip4_manage);
 
     for (int i = 0; i < count; i++) {
+        bool hit = false;
+
         mbuf = data[i];
         ip4hdr = dpdk_pktmbuf_ip4_hdr(mbuf);
 
@@ -412,7 +413,6 @@ static INLINE void _ip4_is_local_bulk(void *data[], bool result[], int count)
             if (ip4hdr->dst_addr == cur->ip) {
                 if (mbuf->port == cur->port) {
                     hit = true;
-                    result[nums++] = true;
                     break;
                 } else if (mbuf->port < cur->port) {
                     continue;
@@ -426,11 +426,7 @@ static INLINE void _ip4_is_local_bulk(void *data[], bool result[], int count)
             }
         }
 
-        if (!hit) {
-            result[nums++] = false;
-        } else {
-            hit = false;
-        }
+        result[i] = hit;
     }
 }
 

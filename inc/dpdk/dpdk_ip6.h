@@ -36,7 +36,7 @@
 #define dpdk_ip6_addr rte_ipv6_addr
 #define dpdk_ip6_frag_ext rte_ipv6_fragment_ext
 
-#define DPDK_ETHER_TYPE_IP6 RTE_ETHER_TYPE_IPV6
+#define DPDK_ETHER_IP6 RTE_ETHER_TYPE_IPV6
 
 #define DPDK_IP6_MASK_MAX RTE_IPV6_MAX_DEPTH
 #define DPDK_IP6_ADDR_SIZE RTE_IPV6_ADDR_SIZE

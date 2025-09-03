@@ -203,7 +203,7 @@ static int _api_ip6_post_parse(struct root *root, void *json, struct api_ip6 ip6
         obj = json_array_get(array, i);
         one->name = json_string_value(json_object_get(obj, "name"));
         one->port = dpdk_port_by_name_get(one->name);
-        if (one->port == (USHRT_MAX)-1) {
+        if (one->port == (uint16_t)-1) {
             LOG_ERROR("Not exists(%s)", one->name);
             return ERRCODE_PORT_NOT_EXIST;
         }
@@ -353,6 +353,7 @@ _quit:
 static int _api_ip6_manage_add(struct root *root, void *ip6_manage[], struct api_ip6 *ip6, int count)
 {
     int ret = 0;
+    int numa_count = 0;
     struct dataplane *dp = NULL;
     struct dataplane *one = NULL;
     struct ip6_info *info = NULL;
@@ -369,7 +370,8 @@ static int _api_ip6_manage_add(struct root *root, void *ip6_manage[], struct api
         return ret;
     }
 
-    for (int i = 0; i < root->hw_info.numa_count; i++) {
+    numa_count = root->hw_info.numa_count;
+    for (int i = 0; i < numa_count; i++) {
         if (i == dp->numa_id) {
             continue;
         }
@@ -384,13 +386,13 @@ static int _api_ip6_manage_add(struct root *root, void *ip6_manage[], struct api
     return 0;
 
 _quit:
-    _api_ip6_manage_numa_free(ip6_manage, count);
+    _api_ip6_manage_numa_free(ip6_manage, numa_count);
     return ret;
 }
 
 static int _api_ip6_route_table_del(struct root *root, void *route6[], const struct api_ip6 ip6[], int count, const void *arg)
 {
-   int ret = 0;
+    int ret = 0;
     int numa_count = 0;
     struct dataplane *dp = NULL;
     struct route6_item *item = NULL;
@@ -409,12 +411,13 @@ static int _api_ip6_route_table_del(struct root *root, void *route6[], const str
         goto _quit;
     }
 
+    numa_count = root->hw_info.numa_count;
     for (int i = 0; i < numa_count; i++) {
         if (i == dp->numa_id) {
             continue;
         }
 
-        ret = route6_conf_create_and_append(&route6[i], &route6[dp->numa_id], NULL, 0, root->dpdk_thread[i]->hw_numa_id, arg);
+        ret = route6_conf_create_and_append(&route6[i], route6[dp->numa_id], NULL, 0, root->dpdk_thread[i]->hw_numa_id, arg);
         if (ret != 0) {
             goto _quit;
         }
@@ -496,11 +499,13 @@ API_POST(/v1/network/ip6, ip6)
 
     ip6 = _api_ip6_alloc(count * sizeof(*ip6));
     if (ip6 == NULL) {
+        code = ERRCODE_OOM;
         goto _quit;
     }
 
     ndp = _api_ip6_alloc(count * sizeof(*ndp));
     if (ndp == NULL) {
+        code = ERRCODE_OOM;
         goto _quit;
     }
 
@@ -644,7 +649,7 @@ API_GET(/v1/network/ip6, ip6)
         snprintf(path, sizeof(path), API_INTERFACE_FORMAT, one->name);
         ret = sr_get_items(sess, path, 0, 0, &val, &val_cnt);
         if (ret != 0 && ret != SR_ERR_NOT_FOUND) {
-            LOG_ERROR("Failure path(%s) sr_get_item: %s", path, strerror(-ret));
+            LOG_ERROR("Failure path(%s) sr_get_item: %s", path, strerror(ret));
             goto _quit;
         }
 
