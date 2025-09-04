@@ -96,7 +96,7 @@ submodule network {
                 type inet:ipv4-address;
             }
 
-            leaf interface_name {
+            leaf interface {
                 type string {
                     pattern '[-0-9a-zA-Z.]{3,63}';
                 }
@@ -125,7 +125,7 @@ submodule network {
                 type inet:ipv6-address;
             }
 
-            leaf interface_name {
+            leaf interface {
                 type string {
                     pattern '[-0-9a-zA-Z.]{3,63}';
                 }
