@@ -177,9 +177,10 @@ static INLINE void _l2_arp_reply(struct dpdk_mbuf *mbuf, uint16_t port)
 
 static INLINE void _l2_arp_probe_reply(struct dpdk_mbuf *mbuf, uint16_t port)
 {
+    uint32_t old_sip = 0;
+    struct dpdk_mac *mac = NULL;
     struct dpdk_eth_hdr *eth = NULL;
     struct dpdk_arp_hdr *arp = NULL;
-    struct dpdk_mac *mac = NULL;
     struct dpdk_arp_hdr_data *arp_data = NULL;
 
     eth = dpdk_pktmbuf_eth(mbuf);
@@ -195,8 +196,9 @@ static INLINE void _l2_arp_probe_reply(struct dpdk_mbuf *mbuf, uint16_t port)
     arp_data = &arp->arp_data;
     arp_data->arp_tha = arp_data->arp_sha;
     arp_data->arp_sha = *mac;
+    old_sip = arp_data->arp_sip;
     arp_data->arp_sip = arp_data->arp_tip;
-    arp_data->arp_tip = arp_data->arp_sip;
+    arp_data->arp_tip = old_sip;
 }
 
 static INLINE int __l2_arp_gen(struct dpdk_mbuf *mbuf, uint16_t port, uint32_t src_ip, uint32_t target_ip)
@@ -253,12 +255,12 @@ static void _arp_update_or_create(struct arp_table *at, uint16_t port, uint32_t 
             case ARP_FLAGS_INCOMPLETE:
                 _l2_arp_part_init(cur_item, mac, t + at->timeout);
                 list_del_init(&cur_item->incomplete_node);
-                list_add(&cur_item->incomplete_node, lru_head);
+                list_add(&cur_item->lru_node, lru_head);
                 return;
 
             default:
-                LOG_ERROR("Manual ARP entries cannot be updated.");
-                break;
+                LOG_WARN("Manual ARP entries cannot be updated.");
+                return;
             }
         } else if (cur_item->ip < ip) {
             continue;
@@ -492,7 +494,7 @@ void *l2_thread_arp_table_create(int nic_count, int cpu_id, int numa_id)
     struct arp_table *table = NULL;
     char name[BUFSIZ] = "";
 
-    len = sizeof(*table) + nic_count * (sizeof(table->hash) + sizeof(**table->hash));
+    len = sizeof(*table);
     table = dpdk_malloc(len);
     if (table == NULL) {
         LOG_ERROR("OOM.");

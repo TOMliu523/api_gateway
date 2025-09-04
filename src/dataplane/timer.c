@@ -36,14 +36,16 @@ void timer_check(void)
 {
     struct timer_context *context = &s_context;
 
-    if (tlv_thread_id == context->arp_cpu_id && tlv_dp->off_time > context->off_time) {
-        ip4_arp_refresh();
-        ip6_ndp_refresh();
-    }
+    if (tlv_dp->off_time > context->off_time) {
+        if (tlv_thread_id == context->arp_cpu_id) {
+            ip4_arp_refresh();
+            ip6_ndp_refresh();
+        }
 
-    if (tlv_dp->off_time > context->off_time && dpdk_ip_mbuf_need_recall(tlv_dp->frag_handle)) {
-        dpdk_ip_mbuf_recall(tlv_dp->frag_handle, tlv_dp->timer_cycles);
-    }
+        if (dpdk_ip_mbuf_need_recall(tlv_dp->frag_handle)) {
+            dpdk_ip_mbuf_recall(tlv_dp->frag_handle, tlv_dp->timer_cycles);
+        }
 
-    context->off_time = tlv_dp->off_time;
+        context->off_time = tlv_dp->off_time;
+    }
 }

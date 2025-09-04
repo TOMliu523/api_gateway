@@ -214,6 +214,21 @@ static INLINE void dpdk_mempool_push(struct dpdk_pool *pool, void *const obj, un
     rte_mempool_put_bulk(pool, obj, n);
 }
 
+static INLINE uint16_t dpdk_mbuf_refcnt_read(const struct dpdk_mbuf *m)
+{
+    return rte_mbuf_refcnt_read(m);
+}
+
+static INLINE void dpdk_mbuf_refcnt_set(struct dpdk_mbuf *m, uint16_t new_value)
+{
+    return rte_mbuf_refcnt_set(m, new_value);
+}
+
+static INLINE uint16_t dpdk_mbuf_refcnt_update(struct dpdk_mbuf *m, int16_t value)
+{
+    return rte_mbuf_refcnt_update(m, value);
+}
+
 /**********************************************************************/
 /****************************** COUNT *********************************/
 /**********************************************************************/

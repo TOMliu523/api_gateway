@@ -10,62 +10,37 @@
 #include "dpdk_core.h"
 #include "dpdk_common.h"
 
-static __thread struct root *root;
+static __thread uint16_t s_cpu_count;
+static __thread struct root *s_root;
 
 int notify_init(void *arg)
 {
-    root = arg;
+    s_root = arg;
+    s_cpu_count = s_root->hw_info.cpu_count;
 
     return 0;
-}
-
-static INLINE void _notify_headroom_copy(struct dpdk_mbuf *mbuf, struct dpdk_mbuf *one)
-{
-    struct dpdk_headroom *src = &((struct dpdk_data *)one)->headroom;
-    struct dpdk_headroom *dst = &((struct dpdk_data *)mbuf)->headroom;
-
-    dst->type = src->type;
-    dst->target = src->target;
 }
 
 static void _notify_other_thread(void)
 {
     int count = 0;
-    int cpu_count = 0;
     int drop_count = 0;
-    struct dpdk_mbuf *one = NULL;
     struct dpdk_mbuf *mbuf = NULL;
+    struct dataplane *other = NULL;
 
     count = tlv_notify->count;
-    cpu_count = root->hw_info.cpu_count;
-    for (int i = 0; i < cpu_count; i++) {
-        int j = 0;
-        struct dataplane *other = root->dpdk_thread[i];
 
+    for (int i = 0; i < count; i++) {
+        dpdk_mbuf_refcnt_set(tlv_notify->data[i], s_cpu_count);
+    }
+
+    for (int i = 0; i < s_cpu_count; i++) {
         if (i == tlv_thread_id) {
             continue;
         }
 
-        for (j = 0; j < count; j++) {
-            one = tlv_notify->data[j];
-            mbuf = dpdk_pktmbuf_clone(one, other->pktmbuf_pool);
-            if (UNLIKELY(mbuf == NULL)) {
-                LOG_ERROR("Notify CPU(%d) failure", i);
-                dpdk_pktmbuf_push(tlv_cache->data, j);
-                break;
-            }
-
-            mbuf->port = one->port;
-            _notify_headroom_copy(mbuf, one);
-
-            tlv_cache->data[j] = mbuf;
-        }
-
-        if (LIKELY(j == count)) {
-            dpdk_ring_mp_push(other->notice_ring, (void *const *)tlv_cache->data, count);
-        } else {
-            break;
-        }
+        other = s_root->dpdk_thread[i];
+        dpdk_ring_mp_push(other->notice_ring, (void *const *)tlv_notify->data, count);
     }
 
     drop_count = tlv_drop->count;
@@ -101,7 +76,8 @@ static INLINE void _notify_accept_and_handle(void)
             l2_arp_update_or_create(mbuf);
             tlv_drop->data[tlv_drop->count++] = mbuf;
             break;
-        case PKT_MBUF_NDP:
+        case PKT_MBUF_NDP_SRC:
+        case PKT_MBUF_NDP_TARGET:
             ip6_ndp_update_or_create(mbuf);
             tlv_drop->data[tlv_drop->count++] = mbuf;
             break;

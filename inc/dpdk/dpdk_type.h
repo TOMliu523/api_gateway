@@ -74,7 +74,8 @@ enum PKT_MBUF_TYPE {
     PKT_MBUF_GARP,
     PKT_MBUF_ARP,
     PKT_MBUF_NDP_AD,
-    PKT_MBUF_NDP,
+    PKT_MBUF_NDP_SRC,
+    PKT_MBUF_NDP_TARGET,
 };
 
 struct dpdk_headroom {
@@ -86,9 +87,6 @@ struct dpdk_headroom {
             void *l2;
             void *l3;
             void *l4;
-
-            // ndp update
-            const void *target;
         };
 
         // fragment

@@ -103,6 +103,7 @@ static INLINE int dpdk_hash_lookup_bulk(const struct dpdk_hash *hash, const void
     int total_count = 0;
 
     while (num_keys > 0) {
+        result[round] = 0;
         n = MIN(num_keys, DPDK_HASH_LOOKUP_MAX);
         count = rte_hash_lookup_bulk_data(hash, keys + off, n, &result[round++], data + off);
         assert(count >= 0);

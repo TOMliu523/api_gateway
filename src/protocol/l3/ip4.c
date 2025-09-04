@@ -476,8 +476,8 @@ static INLINE void _ip4_icmp_fragment(struct dpdk_mbuf *mbuf, uint16_t mtu)
 
         eth = dpdk_pktmbuf_prepend(pkt, sizeof(struct dpdk_eth_hdr));
         eth->ether_type = dpdk_cpu_to_be_16(DPDK_ETHER_TYPE_IPV4);
-        eth->dst_addr = src_addr;
-        eth->src_addr = dst_addr;
+        eth->dst_addr = dst_addr;
+        eth->src_addr = src_addr;
 
         ip4hdr = dpdk_pktmbuf_ip4_hdr(pkt);
         ip4hdr->hdr_checksum = 0;

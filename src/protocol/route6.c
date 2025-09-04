@@ -24,8 +24,15 @@ struct route6_table {
 static int _route6_conf_add_check(struct route6_table *route6, const struct route6_item *item, int count, const void *arg)
 {
     int ret = 0;
+    int old_cnt = 0;
     uint64_t next_hop = 0;
     char ip_str[CACHE_LINE] = "";
+
+    old_cnt = (route6 == NULL) ? 0 : route6->store_count;
+    if (UNLIKELY(old_cnt + count > ROUTE6_ITEM_MAX)) {
+        LOG_ERROR("IPv6 route table item more than %d.", ROUTE6_ITEM_MAX);
+        return ERRCODE_OOM;
+    }
 
     for (int i = 0; i < count; i++) {
         const struct route6_item *cur = NULL;
@@ -186,6 +193,7 @@ static int _route6_conf_create(void **dst, int hw_numa_id)
     route6->default_id = DPDK_FIB6_DEFAULT;
     route6->fib = dpdk_fib6_create(hw_numa_id, ROUTE6_ITEM_MAX);
     if (UNLIKELY(route6->fib == NULL)) {
+        route6_conf_destroy(route6);
         return ERRCODE_OOM;
     }
 
@@ -206,7 +214,7 @@ static int _route6_conf_add_item(struct route6_table *route6, const struct route
     if (store->route_type == ROUTE6_DIRECT) {
         store->direct_id = 0;
     } else {
-        ret = dpdk_fib6_lookup(route6->fib, &store->dst_subnet, &next_hop, 1);
+        ret = dpdk_fib6_lookup(route6->fib, &store->nexthop, &next_hop, 1);
         if (UNLIKELY(ret == 0 && next_hop != DPDK_FIB6_DEFAULT)) {
             struct route6_item *next_hop_item = &route6->store[next_hop];
             if (next_hop_item->route_type == ROUTE6_DIRECT) {
@@ -254,6 +262,7 @@ static int _route6_conf_append(void *dst, struct route6_table *route, const stru
 
 static int _route6_conf_delete(void *dst, struct route6_table *src, const struct route6_item *item, int count, bool is_route)
 {
+    int code = 0;
     bool hit = false;
     struct route6_item *one = NULL;
 
@@ -278,7 +287,10 @@ static int _route6_conf_delete(void *dst, struct route6_table *src, const struct
         }
 
         if (!hit) {
-            _route6_conf_add_item(dst, one);
+            code = _route6_conf_add_item(dst, one);
+            if (UNLIKELY(code != 0)) {
+                return code;
+            }
         }
     }
 

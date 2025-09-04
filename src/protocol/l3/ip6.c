@@ -36,7 +36,7 @@
 
 #define NDP_TIMEOUT_DEFAULT (20 * 60)
 
-#define NDP_SEND_REQUEST_JUDGE(c, t) (((c)->expire_time - (5 - (c)->retry) * 60) > (t))
+#define NDP_TIME_TO_SEND(c, t) ((t) >= ((c)->expire_time - (5 - (c)->retry) * 60))
 
 enum NDP_FLAGS {
     NDP_FLAGS_MANUAL,
@@ -189,7 +189,7 @@ static int _ip6_conf_manage_add_check(struct ip6_manage *manage, const struct ip
     for (int i = 0; i < count; i++) {
         one = &info[i];
 
-        ret = dpdk_fib6_lookup(manage->fib[one->port], &info->addr, &next_hop, 1);
+        ret = dpdk_fib6_lookup(manage->fib[one->port], &one->addr, &next_hop, 1);
         if (UNLIKELY(ret != 0)) {
             LOG_ERROR("Inner error.");
             return ERRCODE_INNER;
@@ -355,7 +355,6 @@ int ip6_ndp_na_mcast_gen(struct dpdk_mbuf *mbuf, uint16_t port, const struct dpd
     ndp->icmp6_hdr.icmp6_code = 0;
     ndp->icmp6_hdr.icmp6_cksum = 0;
     ndp->icmp6_hdr.icmp6_dataun.un_data32[0] = 0;
-    ndp->icmp6_hdr.icmp6_dataun.u_nd_advt.override = 1;
     ndp->target = *addr;
 
     opt = (struct dpdk_ndp_opt *)(ndp + 1);
@@ -460,6 +459,7 @@ static INLINE int _ip6_is_local_bulk(void *data[], uint64_t result[], int count)
         keys[i] = &ip6hdr->dst_addr;
     });
 
+    // The caller must ensure that the incoming mbuf belongs to a single port.
     mbuf = data[0];
     return dpdk_hash_lookup_bulk(manage->hash[mbuf->port], (const void **)keys, count, result, outs);
 }
@@ -589,7 +589,7 @@ static INLINE struct dpdk_mbuf *_ip6_ndp_nud_na_gen(const struct dpdk_mbuf *mbuf
     ndphdr->icmp6_hdr.icmp6_type = DPDK_NDP_ADVERT;
     ndphdr->icmp6_hdr.icmp6_code = 0;
     ndphdr->icmp6_hdr.icmp6_cksum = 0;
-    ndphdr->icmp6_hdr.icmp6_dataun.un_data32[0] = dpdk_cpu_to_be_32(DPDK_NDP_NA_FLAG_SOLICT);
+    ndphdr->icmp6_hdr.icmp6_dataun.un_data32[0] = dpdk_cpu_to_be_32(DPDK_NDP_NA_FLAG_SOLICT | DPDK_NDP_NA_FLAG_OVERRIDE);
     ndphdr->target = ndp->target;
 
     ndpopt = (struct dpdk_ndp_opt *)(ndphdr + 1);
@@ -709,23 +709,22 @@ _quit:
 
 static INLINE int _ip6_icmp_reply(struct dpdk_mbuf *mbuf)
 {
+    struct dpdk_eth_hdr *eth = NULL;
     struct dpdk_ip6_hdr *ip6hdr = NULL;
     struct dpdk_icmp6_hdr *icmp6hdr = NULL;
 
-    icmp6hdr = DPDK_HEADROOM(mbuf)->l4;
+    icmp6hdr = dpdk_pktmbuf_icmp6_hdr(mbuf);
     if (UNLIKELY(icmp6hdr->icmp6_code != 0)) {
         return -1;
     }
 
-    ip6hdr = DPDK_HEADROOM(mbuf)->l3;
+    ip6hdr = dpdk_pktmbuf_ip6_hdr(mbuf);
     if (UNLIKELY(!dpdk_icmp6_cksum_verify(mbuf, ip6hdr))) {
         return -1;
     }
 
-    if (mbuf->nb_segs == 1) {
-        struct dpdk_eth_hdr *eth = DPDK_HEADROOM(mbuf)->l2;
-        SWAP(eth->src_addr, eth->dst_addr);
-    }
+    eth = dpdk_pktmbuf_eth(mbuf);
+    SWAP(eth->src_addr, eth->dst_addr);
 
     SWAP(ip6hdr->src_addr, ip6hdr->dst_addr);
 
@@ -822,12 +821,11 @@ static INLINE bool _ip6_ndp_table_update(int port, const struct dpdk_ip6_addr *a
 }
 
 static INLINE void _ip6_ndp_table_update_and_notify(struct dpdk_mbuf *mbuf, const struct dpdk_ip6_addr *addr,
-                                                    const struct dpdk_mac *mac, bool override)
+                                                    const struct dpdk_mac *mac, bool override, int ndp_type)
 {
     bool flag = _ip6_ndp_table_update(mbuf->port, addr, mac, override);
     if (flag) {
-        DPDK_HEADROOM(mbuf)->type = PKT_MBUF_NDP;
-        DPDK_HEADROOM(mbuf)->target = addr;
+        DPDK_HEADROOM(mbuf)->type = ndp_type;
         tlv_notify->data[tlv_notify->count++] = mbuf;
     } else {
         tlv_drop->data[tlv_drop->count++] = mbuf;
@@ -899,14 +897,14 @@ static INLINE void _ip6_ndp_solict_process(struct dpdk_mbuf *mbuf)
 
         if (dpdk_ip6_addr_is_ucast(&ip6hdr->dst_addr)) {
             if (LIKELY(dpdk_ip6_addr_eq(&ip6hdr->dst_addr, &ndp->target))) {
-                _ip6_ndp_table_update_and_notify(mbuf, &ip6hdr->src_addr, (const struct dpdk_mac *)opt->data, true);
+                _ip6_ndp_table_update_and_notify(mbuf, &ip6hdr->src_addr, (const struct dpdk_mac *)opt->data, true, PKT_MBUF_NDP_SRC);
                 ad_mbuf = _ip6_ndp_nud_na_gen(mbuf);
                 if (LIKELY(ad_mbuf != NULL)) {
                     tx->data[tx->count++] = ad_mbuf;
                 }
             }
         } else if (_ip6_target_is_solict_addr(&ip6hdr->dst_addr, &ndp->target)) {
-            _ip6_ndp_table_update_and_notify(mbuf, &ip6hdr->src_addr, (const struct dpdk_mac *)opt->data, true);
+            _ip6_ndp_table_update_and_notify(mbuf, &ip6hdr->src_addr, (const struct dpdk_mac *)opt->data, true, PKT_MBUF_NDP_SRC);
             ad_mbuf = _ip6_ndp_ns_mcast_na_ucast_gen(mbuf);
             if (LIKELY(ad_mbuf != NULL)) {
                 tx->data[tx->count++] = ad_mbuf;
@@ -969,7 +967,7 @@ static INLINE void _ip6_ndp_advert_process(struct dpdk_mbuf *mbuf)
     switch (addr_type) {
     case IP6_ADDR_UNICAST:
         is_override = ndp->icmp6_hdr.icmp6_dataun.u_nd_advt.override;
-        _ip6_ndp_table_update_and_notify(mbuf, &ndp->target, (struct dpdk_mac *)opt->data, is_override);
+        _ip6_ndp_table_update_and_notify(mbuf, &ndp->target, (struct dpdk_mac *)opt->data, is_override, PKT_MBUF_NDP_TARGET);
         break;
     case IP6_ADDR_UNSPEC: // DAD reponse
     default: goto _quit; break;
@@ -1136,9 +1134,7 @@ void ip6_process(void *data[], int count)
 {
     int icmp6_count = 0;
     uint64_t *result = 0;
-    struct dpdk_eth_hdr save;
     struct dpdk_mbuf *mbuf = NULL;
-    struct dpdk_eth_hdr *ethhdr = NULL;
     struct dpdk_ip6_hdr *ip6hdr = NULL;
 
     result = (uint64_t *)tlv_cache->data;
@@ -1164,8 +1160,6 @@ void ip6_process(void *data[], int count)
                 continue;
             }
 
-            ethhdr = dpdk_pktmbuf_eth(mbuf);
-            save = *ethhdr;
             mbuf->l2_len = sizeof(struct dpdk_eth_hdr);
             mbuf->l3_len = sizeof(struct dpdk_ip6_hdr) + sizeof(struct dpdk_ip6_frag_ext);
             mbuf = dpdk_ip6_mbuf_reassemble(tlv_dp->frag_handle, mbuf, tlv_dp->timer_cycles, ip6hdr, ip6hdr + 1);
@@ -1173,7 +1167,6 @@ void ip6_process(void *data[], int count)
             if (mbuf != NULL) {
                 dpdk_ip_reassemble_finish(tlv_dp->frag_handle, mbuf->nb_segs);
                 ip6hdr = dpdk_pktmbuf_ip6_hdr(mbuf);
-                DPDK_HEADROOM(mbuf)->ethhdr = save;
             } else {
                 dpdk_ip_reassemble_pending(tlv_dp->frag_handle, tlv_dp->timer_cycles);
                 continue;
@@ -1226,12 +1219,12 @@ void ip6_ndp_refresh(void)
 
     list_for_each_entry_safe_reverse(cur, next, &nt->lru_head, lru_node) {
         if (cur->expire_time > cur_time) {
-            if (NDP_SEND_REQUEST_JUDGE(cur, cur_time)) {
-                break;
-            } else {
+            if (NDP_TIME_TO_SEND(cur, cur_time)) {
                 cur->retry += 1;
                 cur->send_time = cur_time;
                 tlv_pending->data[tlv_pending->count++] = cur;
+            } else {
+                break;
             }
         } else {
             list_del_init(&cur->lru_node);
@@ -1259,9 +1252,21 @@ void ip6_ndp_update_or_create(void *data)
 {
     struct dpdk_mbuf *mbuf = data;
 
+    struct dpdk_ip6_addr *addr = NULL;
+    struct dpdk_ip6_hdr *ip6hdr = dpdk_pktmbuf_ip6_hdr(mbuf);
     struct dpdk_ndp_hdr *ndphdr = dpdk_pktmbuf_ndp_hdr(mbuf);
     struct dpdk_ndp_opt *ndpopt = (struct dpdk_ndp_opt *)(ndphdr + 1);
     int override = ndphdr->icmp6_hdr.icmp6_dataun.u_nd_advt.override;
 
-    _ip6_ndp_table_update(mbuf->port, DPDK_HEADROOM(mbuf)->target, (struct dpdk_mac *)ndpopt->data, override);
+    switch (DPDK_HEADROOM(mbuf)->type) {
+    case PKT_MBUF_NDP_SRC:
+        addr = &ip6hdr->src_addr;
+        break;
+    case PKT_MBUF_NDP_TARGET:
+        addr = &ndphdr->target;
+        break;
+    default: return;
+    }
+
+    _ip6_ndp_table_update(mbuf->port, addr, (struct dpdk_mac *)ndpopt->data, override);
 }

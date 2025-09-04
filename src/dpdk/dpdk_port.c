@@ -19,6 +19,7 @@
 #include "dpdk_core.h"
 #include "dpdk_inner.h"
 #include "dpdk_common.h"
+#include "dpdk_bitops.h"
 
 #define DPDK_SPEED_NUMS_MAX 32
 #define DPDK_RX_DESC_DEFAULT 4096
@@ -81,22 +82,24 @@ static struct dpdk_port_st s_dpdk_port = {
     },
     .speed = {
         .nums = 16,
-        .ex[0] = { .prefix = "NONE", },
-        .ex[1] = { .prefix = "10ME", },
-        .ex[2] = { .prefix = "100ME", },
-        .ex[3] = { .prefix = "GE", },
-        .ex[4] = { .prefix = "2.5GE", },
-        .ex[5] = { .prefix = "5GE", },
-        .ex[6] = { .prefix = "10GE", },
-        .ex[7] = { .prefix = "20GE", },
-        .ex[8] = { .prefix = "25GE", },
-        .ex[9] = { .prefix = "40GE", },
-        .ex[10] = { .prefix = "50GE", },
-        .ex[11] = { .prefix = "56GE", },
-        .ex[12] = { .prefix = "100GE", },
-        .ex[13] = { .prefix = "200GE", },
-        .ex[14] = { .prefix = "400GE", },
-        .ex[15] = { .prefix = "UNKNOWN", },
+        .ex[0] = { .prefix = "UNKNOWN", },
+        .ex[1] = { .prefix = "FIXED", },
+        .ex[2] = { .prefix = "10MH", },
+        .ex[3] = { .prefix = "10M", },
+        .ex[4] = { .prefix = "100MH", },
+        .ex[5] = { .prefix = "100M", },
+        .ex[6] = { .prefix = "GE", },
+        .ex[7] = { .prefix = "2.5GE", },
+        .ex[8] = { .prefix = "5GE", },
+        .ex[9] = { .prefix = "10GE", },
+        .ex[10] = { .prefix = "20GE", },
+        .ex[11] = { .prefix = "25GE", },
+        .ex[12] = { .prefix = "40GE", },
+        .ex[13] = { .prefix = "50GE", },
+        .ex[14] = { .prefix = "56GE", },
+        .ex[15] = { .prefix = "100GE", },
+        .ex[16] = { .prefix = "200GE", },
+        .ex[17] = { .prefix = "400GE", },
     },
 };
 
@@ -218,7 +221,8 @@ static int dpdk_port_name_init(void)
     int port = 0;
     int nbytes = 0;
     int speed_nums = 0;
-    struct rte_eth_link link = {0};
+    uint32_t speed_capa = 0;
+    struct rte_eth_dev_info dev = {0};
     struct port_name *pn = &s_dpdk_port.port_name;
 
     RTE_ETH_FOREACH_DEV(port) {
@@ -232,29 +236,32 @@ static int dpdk_port_name_init(void)
             return -1;
         }
 
-        ret = rte_eth_link_get_nowait(port, &link);
+        ret = rte_eth_dev_info_get(port, &dev);
         if (ret != 0) {
             LOG_ERROR("Failure port(%d) rte_eth_link_get_nowait: %s", port, strerror(-ret));
             return -1;
         }
 
-        switch (link.link_speed) {
-        case RTE_ETH_SPEED_NUM_NONE: speed_nums = 0; break;
-        case RTE_ETH_SPEED_NUM_10M: speed_nums = 1; break;
-        case RTE_ETH_SPEED_NUM_100M: speed_nums = 2; break;
-        case RTE_ETH_SPEED_NUM_1G: speed_nums = 3; break;
-        case RTE_ETH_SPEED_NUM_2_5G: speed_nums = 4; break;
-        case RTE_ETH_SPEED_NUM_5G: speed_nums = 5; break;
-        case RTE_ETH_SPEED_NUM_10G: speed_nums = 6; break;
-        case RTE_ETH_SPEED_NUM_20G: speed_nums = 7; break;
-        case RTE_ETH_SPEED_NUM_25G: speed_nums = 8; break;
-        case RTE_ETH_SPEED_NUM_40G: speed_nums = 9; break;
-        case RTE_ETH_SPEED_NUM_50G: speed_nums = 10; break;
-        case RTE_ETH_SPEED_NUM_56G: speed_nums = 11; break;
-        case RTE_ETH_SPEED_NUM_100G: speed_nums = 12; break;
-        case RTE_ETH_SPEED_NUM_200G: speed_nums = 13; break;
-        case RTE_ETH_SPEED_NUM_400G: speed_nums = 14; break;
-        case RTE_ETH_SPEED_NUM_UNKNOWN: speed_nums = 15; break;
+        speed_capa = dpdk_prev_32_pow2(dev.speed_capa);
+        switch (speed_capa) {
+        case RTE_ETH_LINK_SPEED_FIXED: speed_nums = 1; break;
+        case RTE_ETH_LINK_SPEED_10M_HD: speed_nums = 2; break;
+        case RTE_ETH_LINK_SPEED_10M: speed_nums = 3; break;
+        case RTE_ETH_LINK_SPEED_100M_HD: speed_nums = 4; break;
+        case RTE_ETH_LINK_SPEED_100M: speed_nums = 5; break;
+        case RTE_ETH_LINK_SPEED_1G: speed_nums = 6; break;
+        case RTE_ETH_LINK_SPEED_2_5G: speed_nums = 7; break;
+        case RTE_ETH_LINK_SPEED_5G: speed_nums = 8; break;
+        case RTE_ETH_LINK_SPEED_10G: speed_nums = 9; break;
+        case RTE_ETH_LINK_SPEED_20G: speed_nums = 9; break;
+        case RTE_ETH_LINK_SPEED_25G: speed_nums = 9; break;
+        case RTE_ETH_LINK_SPEED_40G: speed_nums = 9; break;
+        case RTE_ETH_LINK_SPEED_50G: speed_nums = 9; break;
+        case RTE_ETH_LINK_SPEED_56G: speed_nums = 9; break;
+        case RTE_ETH_LINK_SPEED_100G: speed_nums = 9; break;
+        case RTE_ETH_LINK_SPEED_200G: speed_nums = 9; break;
+        case RTE_ETH_LINK_SPEED_400G: speed_nums = 9; break;
+        default: speed_nums = 0; break;
         }
 
         ex = &s_dpdk_port.speed.ex[speed_nums];
@@ -468,16 +475,16 @@ int dpdk_port_init(void)
         return -1;
     }
 
-    ret = dpdk_port_name_init();
-    if (ret != 0) {
-        return -1;
-    }
-
     RTE_ETH_FOREACH_DEV(port) {
         ret = dpdk_port_startup(port);
         if (ret != 0) {
             return -1;
         }
+    }
+
+    ret = dpdk_port_name_init();
+    if (ret != 0) {
+        return -1;
     }
 
     return 0;
