@@ -1,7 +1,7 @@
 # cmake
 cmake_minimum_required(VERSION 3.20.2)
 
-set(NAME ${L4})
+set(NAME ${L3})
 project(${NAME})
 
 aux_source_directory(. NO_SRC_LIST)

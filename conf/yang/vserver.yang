@@ -1,0 +1,114 @@
+submodule vserver {
+    belongs-to v1 {
+        prefix "v1";
+    }
+
+    import ietf-inet-types {
+        prefix "inet";
+    }
+
+    typedef vserver-type {
+        type enumeration {
+            enum VSERVER_TCP {
+                description "TCP virtual server";
+            }
+            enum VSERVER_UDP {
+                description "UDP virtual server";
+            }
+            enum VSERVER_HTTP {
+                description "HTTP virtual server";
+            }
+            enum VSERVER_HTTPS {
+                description "HTTPS virtual server";
+            }
+            enum VSERVER_HTTP2 {
+                description "HTTP/2 virtual server";
+            }
+            enum VSERVER_HTTP3 {
+                description "HTTP/3 virtual server";
+            }
+        }
+
+        description "virtual server type";
+    }
+
+    container vserver_v4 {
+        list entrys {
+            key "name";
+            leaf name {
+                pattern "[-_.0-9a-zA-Z]{1,128}";
+            }
+
+            leaf address {
+                mandatory true;
+                type inet:ipv4-address;
+            }
+
+            leaf port {
+                mandatory true;
+                type uint16;
+            }
+
+            unique "address port";
+
+            leaf type {
+                type vserver-type;
+                mandatory true;
+            }
+
+            leaf pool_name {
+                mandatory true;
+                type string {
+                    pattern "[-_.0-9a-zA-Z]{1,128}";
+                }
+            }
+
+            leaf snat_name {
+                mandatory true;
+                type string {
+                    pattern "[-_.0-9a-zA-Z]{1,128}";
+                }
+            }
+        }
+    }
+
+    container vserver_v6 {
+        list entrys {
+            key "name";
+            leaf name {
+                pattern "[-_.0-9a-zA-Z]{1,128}";
+            }
+
+            leaf address {
+                mandatory true;
+                type inet:ipv6-address;
+            }
+
+            leaf port {
+                mandatory true;
+                type uint16;
+            }
+
+            unique "address port";
+
+            leaf type {
+                mandatory true;
+                type vserver-type;
+            }
+
+            leaf pool_name {
+                mandatory true;
+                type string {
+                    pattern "[-_.0-9a-zA-Z]{1,128}";
+                }
+            }
+
+            leaf snat_name {
+                mandatory true;
+                type string {
+                    pattern "[-_.0-9a-zA-Z]{1,128}";
+                }
+            }
+        }
+    }
+}

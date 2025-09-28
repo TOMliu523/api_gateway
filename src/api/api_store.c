@@ -1,5 +1,5 @@
 /************************************************
- * filename: api_store.h
+ * filename: api_store.c
  * function:
  * description:
  ***********************************************/
@@ -47,8 +47,29 @@ struct api_db {
     } data;
 };
 
+struct api_module_order {
+    const char *module_name;
+    int id;
+};
+
 static struct api_db s_api_db;
 static struct api_startup s_api_startup;
+/*
+ * String pointer array specifying the delivery order of modules.
+ * All valid modules must be included in this array,
+ * and modules listed earlier will be delivered before those listed later.
+ */
+static const char *s_module_load_order_list[] = {
+    "ip4",
+    "ip6",
+    "route4",
+    "route6",
+    "arp",
+    "rserver",
+    "pool",
+    "snat",
+    "vserver",
+};
 static __thread char s_buffer[BUFSIZ * 4];
 
 static void _api_store_db_log(sr_log_level_t level, const char *message)
@@ -186,6 +207,7 @@ static const struct api_method_node *_api_method_get(const char *container)
 
 static int _api_set_container(const char *container, const char *url, api_action_fn_t change, api_apply_fn_t apply)
 {
+    int id = -1;
     int ret = 0;
     uint32_t hash = 0;
     uint32_t url_len = 0;
@@ -213,8 +235,8 @@ static int _api_set_container(const char *container, const char *url, api_action
                 prev = &curr->node;
                 continue;
             } else if (ret == 0) {
-                LOG_WARN("register container(%s) exists", url);
-                return 0;
+                LOG_ERROR("register container(%s) exists", url);
+                return -1;
             } else {
                 break;
             }
@@ -241,14 +263,32 @@ static int _api_set_container(const char *container, const char *url, api_action
     list_add(&one->node, prev);
 
     RUNTIME_ASSERT(startup->nums < API_CONTAINER_NUMS);
-    startup->container[startup->nums++] = container;
+
+    for (int i = 0; i < ARR_NUMS(s_module_load_order_list); i++) {
+        if (strcmp(s_module_load_order_list[i], container) == 0) {
+            id = i;
+        }
+    }
+
+    if (id == -1) {
+        LOG_ERROR("Container unregister(%s) order.", container);
+        return -1;
+    }
+
+    startup->container[id] = container;
+    startup->nums = ARR_NUMS(s_module_load_order_list);
 
     return 0;
 }
 
 void api_startup_register(const char *url, const char *container, api_action_fn_t change, api_apply_fn_t apply)
 {
-    _api_set_container(container, url, change, apply);
+    int ret = 0;
+
+    ret = _api_set_container(container, url, change, apply);
+    if (ret != 0) {
+        exit(0);
+    }
 }
 
 static int _api_store_load(sr_session_ctx_t *sess, struct api_db *db, const char *module_name)
@@ -265,6 +305,10 @@ static int _api_store_load(sr_session_ctx_t *sess, struct api_db *db, const char
 
     for (int i = 0; i < startup->nums; i++) {
         container = startup->container[i];
+        if (container == NULL) {
+            continue;
+        }
+
         api = _api_method_get(container);
         if (api == NULL) {
             LOG_ERROR("_api_method_get get container(%s) failure.", container);
@@ -296,6 +340,7 @@ static int _api_store_load(sr_session_ctx_t *sess, struct api_db *db, const char
         json_decref(json); json = NULL;
     }
 
+    LOG_DEBUG("module config load success !!!!!!.");
     return 0;
 
 _quit:
@@ -323,7 +368,7 @@ static void *_api_store_cb(void *arg)
 
     epoll_fd = epoll_create1(0);
     if (epoll_fd < 0) {
-        LOG_ERROR("epoll_create1 failure: %s", strerror(epoll_fd));
+        LOG_ERROR("epoll_create1 failure: %s", strerror(errno));
         exit(EXIT_FAILURE);
     }
 
@@ -431,39 +476,85 @@ static int _api_store_delete_one( struct api_db *db, const char *key, void *valu
     return 0;
 }
 
+static int _api_store_add_create(sr_session_ctx_t *session, const struct lyd_node *node)
+{
+    int ret = 0;
+    char *ptr = NULL;
+    char *xpath = NULL;
+    const char *value = NULL;
+
+    xpath = lyd_path(node, LYD_PATH_STD, s_buffer, sizeof(s_buffer));
+    if (xpath == NULL) {
+        LOG_ERROR("lyd_path failure: %s", node->schema->name);
+        return -1;
+    }
+
+    if (!lysc_is_key(node->schema)) {
+        value = lyd_get_value(node);
+        LOG_DEBUG("sr_set_item_str(session, %s, %s, NULL, SR_EDIT_DEFAULT)", xpath, value);
+    } else {
+        ptr = xpath + strlen(xpath);
+
+        /*
+         * To create a list entry that has only keys, use the list instance XPath
+         * (with predicates) instead of the leaf path. In other words, remove the
+         * trailing "/<leaf-name>" from the XPath.
+         *
+         * Example:
+         *   Leaf path:  /v1:rserver/entrys[ip='10.10.100.80'][port='80']/port
+         *   List path:  /v1:rserver/entrys[ip='10.10.100.80'][port='80']
+         *   sr_set_item_str(sess, "<list-path>", NULL, NULL, SR_EDIT_DEFAULT);
+         */
+        for (; ptr != xpath; ptr--) {
+            if (*ptr != '/') {
+                continue;
+            } else {
+                *ptr = 0;
+                break;
+            }
+        }
+
+        LOG_DEBUG("sr_set_item_str(session, %s), NULL, SR_EDIT_DEFAULT", xpath);
+    }
+
+    ret = sr_set_item_str(session, xpath, value, NULL, SR_EDIT_DEFAULT);
+    if (ret != 0) {
+        LOG_ERROR("sr_get_item_str failure: xpath(%s), value(%s)", xpath, value);
+        return -1;
+    }
+
+    return 0;
+}
+
 static int _api_store_add(sr_session_ctx_t *session, const struct lyd_node *node)
 {
     int ret = 0;
-    char tmp[256] = {0};
-    const char *xpath = NULL;
-    const char *value = NULL;
+    int nums = 0;
+    int key_nums = 0;
+    const struct lyd_node *prev = NULL;
 
     for (; node != NULL; node = node->next) {
+        nums += 1;
+        prev = node;
+
         if ((node->schema->nodetype & LYD_NODE_TERM) == 0) {
             ret = _api_store_add(session, lyd_child(node));
             if (ret != 0) {
                 return ret;
             }
-        } else {
-            if (lysc_is_key(node->schema)) {
-                continue;
-            }
-
-            xpath = lyd_path(node, LYD_PATH_STD, tmp, sizeof(tmp));
-            if (xpath == NULL) {
-                LOG_ERROR("lyd_path failure: %s", node->schema->name);
-                return -1;
-            }
-
-            value = lyd_get_value(node);
-
-            LOG_DEBUG("sr_set_item_str(session, %s, %s, NULL, SR_EDIT_DEFAULT)", xpath, value);
-            ret = sr_set_item_str(session, xpath, value, NULL, SR_EDIT_DEFAULT);
+        } else if (!lysc_is_key(node->schema)) {
+            ret = _api_store_add_create(session, node);
             if (ret != 0) {
-                LOG_ERROR("sr_get_item_str failure: xpath(%s), value(%s)", xpath, value);
-                return -1;
+                return ret;
             }
+        } else {
+            key_nums += 1;
         }
+    }
+
+    // Create a list containing only keys
+    if (nums > 0 && nums == key_nums) {
+        return _api_store_add_create(session, prev);
     }
 
     return 0;
@@ -875,8 +966,6 @@ int api_store_init(void *arg)
         LOG_ERROR("pthread_create failure: %s", strerror(ret));
         goto _quit;
     }
-
-    LOG_DEBUG("module config load success !!!!!!.");
 
     return 0;
 

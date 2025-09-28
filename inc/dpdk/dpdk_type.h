@@ -39,7 +39,6 @@
 #define dpdk_mac rte_ether_addr
 #define dpdk_eth_hdr rte_ether_hdr
 #define dpdk_arp_hdr rte_arp_hdr
-#define dpdk_tcp_hdr rte_tcp_hdr
 #define dpdk_udp_hdr rte_udp_hdr
 #define dpdk_arp_hdr_data rte_arp_ipv4
 

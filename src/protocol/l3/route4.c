@@ -10,10 +10,10 @@
 #include "ip4.h"
 #include "type.h"
 #include "errcode.h"
-#include "ip4_conf.h"
-#include "route4_conf.h"
 #include "dpdk_common.h"
 #include "dpdk_spinlock.h"
+#include "slow/ip4.h"
+#include "slow/route4.h"
 
 #define ROUTE4_DIRECT_ITEM_MAX 2000
 #define ROUTE4_ITEM_MAX 20000

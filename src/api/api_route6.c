@@ -13,7 +13,7 @@
 #include "api_inner.h"
 #include "dpdk_port.h"
 #include "dpdk_common.h"
-#include "route6_conf.h"
+#include "slow/route6.h"
 
 static INLINE void _api_route6_item_free(struct route6_item *item)
 {

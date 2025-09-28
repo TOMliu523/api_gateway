@@ -5,6 +5,10 @@ module v1 {
     include network;
     include account;
 
+    include pool;
+    //include vserver;
+    //include snat;
+
     revision "2025-05-31" {
         description "Init version";
     }

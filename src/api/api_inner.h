@@ -14,7 +14,7 @@
 #include "list.h"
 #include "macro.h"
 
-#define API_METHOD_TABLE 128
+#define API_METHOD_TABLE 512
 #define API_AUTH "Authorization"
 #define API_HASH_TABLE_INDEX(x) ((x) % API_METHOD_TABLE)
 

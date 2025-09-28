@@ -1155,7 +1155,7 @@ void ip6_process(void *data[], int count)
         }
 
         if (UNLIKELY(dpdk_pktmbuf_ip6_frag_hdr(ip6hdr) != NULL)) {
-            if (UNLIKELY(dpdk_be_to_cpu_16(ip6hdr->payload_len) <= sizeof(struct dpdk_ip6_frag_ext))) {
+            if (UNLIKELY(dpdk_be_to_cpu_16(ip6hdr->payload_len) < sizeof(struct dpdk_ip6_frag_ext))) {
                 tlv_drop->data[tlv_drop->count++] = mbuf;
                 continue;
             }

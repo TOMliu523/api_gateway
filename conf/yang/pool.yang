@@ -1,0 +1,91 @@
+submodule pool {
+
+    // Belongs to the main module (the main module "v1" must define
+    // namespace/prefix/imports, etc.)
+    belongs-to v1 {
+        prefix "v1";
+    }
+
+    import ietf-inet-types {
+        prefix "inet";
+    }
+
+    /********************************************************************
+     * Backend server repository: global rserver list
+     * Each entry is uniquely identified by the composite key (ip, port).
+     ********************************************************************/
+    container rserver {
+        list entrys {
+            key "ip port";
+            description "Global reusable backend server repository. Key = (ip. port).";
+
+            leaf ip {
+                mandatory true;
+                type inet:ip-address;
+                description "IPv4 or IPv6 address.";
+            }
+
+            leaf port {
+                type inet:port-number;
+                mandatory true;
+                description "TCP/UDP port number (0 .. 65535).";
+            }
+
+            // TODO 
+        }
+    }
+
+    /***********************************************************************
+     * Pool definition: referencing rserver entries from the global list.
+     * - Local rserver list uses leafrefs to point to the global repository.
+     * - Key is (ip, port), ensuring uniqueness.
+     * - rs_count must equal the number of referenced rservers.
+     ***********************************************************************/
+    container pool {
+        list entrys {
+            key "name";
+            description "Virtual service pool definition.";
+
+            leaf name {
+                mandatory true;
+                type string {
+                    pattern "[-_.0-9a-zA-Z]{1,128}";
+                }
+                description "Pool name (1–128 characters, alphanumeric, dash, underscore, dot).";
+            }
+
+            leaf rs_count {
+                mandatory true;
+                type uint32 { 
+                    range "1 .. 200000"; 
+                }
+                description "Number of real servers in the pool.";
+                must 'count(./rserver) = ./rs_count' {
+                    error-message "rs_count must equal the actual number of rserver entries in this pool.";
+                }
+            }
+
+            /*list rserver {
+                key "ip port";
+                description "References to global rserver entries by (ip, port). No local attributes duplicated.";
+                leaf ip {
+                    type leafref {
+                        path "/v1:rserver/v1:entrys/v1:ip";
+                    }
+                    mandatory true;
+                    description "Reference to global rserver IP address.";
+                }
+
+                leaf port {
+                    type leafref {
+                        path "/v1:rserver/v1:entrys[v1:ip = current()/../v1:ip]/v1:port";
+                    }
+                    mandatory true;
+                    description "Reference to global rserver port number for the given IP.";
+                }
+
+                // TODO
+            }*/
+        }
+    }
+}
