@@ -4,8 +4,7 @@
  * description:
  *****************************************************************************/
 
-#ifndef __IP4_H__
-#define __IP4_H__
+#pragma once
 
 #include <stdint.h>
 
@@ -32,5 +31,3 @@ extern void ip4_arp_refresh(void);
  *         - IP_LOCAL_CLASS_LAN: The IP is within the same subnet but not local.
  */
 extern enum IP_LOCAL_CLASS ip4_local_class(uint16_t port, uint32_t ip);
-
-#endif // __IP4_H__

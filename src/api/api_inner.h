@@ -191,6 +191,10 @@ extern int api_json_add_integer(void *json, const char *name, json_int_t value);
 
 extern void api_numa_config_update(void *, void **[], void *[], void (*)(void *[], int));
 
+extern void *api_malloc(size_t);
+extern void *api_malloc_numa(size_t, int);
+extern void api_free(void *);
+
 static INLINE void *api_v1_modify_list(void *json, const char *module_name, const char *list_name)
 {
     char buffer[256] = "";

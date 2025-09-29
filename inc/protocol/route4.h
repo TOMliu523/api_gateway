@@ -4,7 +4,4 @@
  * description:
  ****************************************************************************/
 
-#ifndef __ROUTE4_H__
-#define __ROUTE4_H__
-
-#endif // __ROUTE4_H__
+#pragma once

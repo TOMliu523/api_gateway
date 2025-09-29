@@ -20,8 +20,7 @@ export LD_LIBRARY_PATH=${APP_DIR}/lib:${APP_DIR}/lib64:${LD_LIBRARY_PATH}
 # check process exists
 pid=`pidof "${TARGET}"`
 if [[ -n "${pid}" ]]; then
-    kill -9 ${pid}
-    sleep 3 # 
+    pkill -9 ${pid}
 fi
 
 # cpu list

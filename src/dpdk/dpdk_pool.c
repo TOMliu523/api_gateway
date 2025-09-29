@@ -4,6 +4,7 @@
  * description:
  ***********************************************/
 
+#include <time.h>
 #include <stdio.h>
 
 #include "log.h"
@@ -39,6 +40,7 @@ static void _dpdk_pool_pktmbuf_destroy(void)
 
 int dpdk_pool_pktmbuf_create(void)
 {
+    struct timespec spec = {0};
     char name[CACHE_LINE] = "";
     void *tmp[NUMA_MAX] = {NULL};
     struct numa_cpu *nc = NULL;
@@ -49,8 +51,10 @@ int dpdk_pool_pktmbuf_create(void)
     nc = dpdk_numa_cpu_get();
     n2c = nc->n2c;
 
+    clock_gettime(CLOCK_MONOTONIC, &spec);
+
     for (int i = 0; i < nc->numa_count; i++) {
-        snprintf(name, sizeof(name), "PKTMBUF_POOL_NUMA_%02d", i);
+        snprintf(name, sizeof(name), "PKTMBUF_%lu_%02d", spec.tv_sec, i);
         tmp[i] = rte_pktmbuf_pool_create(name,
                                          n2c[i].count * DPDK_MAX_DESCRIPTORS_PER_CPU,
                                          DPDK_PKTMBUF_CACHE_SIZE,
@@ -64,7 +68,7 @@ int dpdk_pool_pktmbuf_create(void)
 
         pool[i] = tmp[i];
 
-        snprintf(name, sizeof(name), "INDIRECT_POOL_NUMA_%02d", i);
+        snprintf(name, sizeof(name), "INDIRECT_%lu_%02d", spec.tv_sec, i);
         tmp[i] = rte_pktmbuf_pool_create(name,
                                          n2c[i].count * DPDK_INDIRECT_PKTMBUF_MAX,
                                          64,

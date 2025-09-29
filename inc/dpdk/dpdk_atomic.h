@@ -5,8 +5,6 @@
  *****************************************************************************/
 
 #include <rte_atomic.h>
-#include <rte_atomic_32.h>
-#include <rte_atomic_64.h>
 
 #include "macro.h"
 

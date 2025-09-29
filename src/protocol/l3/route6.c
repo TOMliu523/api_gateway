@@ -7,10 +7,10 @@
 #include "ip6.h"
 #include "log.h"
 #include "errcode.h"
+#include "ip6_conf.h"
 #include "dpdk_fib6.h"
 #include "dpdk_common.h"
-#include "slow/ip6.h"
-#include "slow/route6.h"
+#include "route6_conf.h"
 
 #define ROUTE6_ITEM_MAX 20000
 

@@ -31,6 +31,7 @@ struct thread_config {
     void *iface;
     void *ip4_manage;
     void *ip6_manage;
+    void *rs_table;
     // ... other per-NUMA modules
 } ALIGNED(CACHE_LINE);
 

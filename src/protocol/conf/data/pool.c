@@ -3,5 +3,3 @@
  * function:
  * description:
  ****************************************************************************/
-
-static __thread struct rserver *s_rs;

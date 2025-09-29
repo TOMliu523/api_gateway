@@ -39,7 +39,9 @@
     XX(ROUTE_NEXTHOP_INVALID, 304, "Nexthop invalid") \
     XX(SUBNET_NO_EXIST, 305, "Subnext no exist") \
     XX(ROUTE_REFERENCED, 306, "Route referenced") \
-    XX(SUBNET_INVALID, 307, "Subnet invalid")
+    XX(SUBNET_INVALID, 307, "Subnet invalid") \
+    XX(RSERVER_TOO_MANY, 400, "Real server too many") \
+    XX(RSERVER_DUPLICATE, 401, "Real server duplicate")
 
 enum ERRCODE {
 #define ERRCODE(code, value, msg) ERRCODE_##code = value,

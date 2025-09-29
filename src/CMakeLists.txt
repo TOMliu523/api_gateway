@@ -10,10 +10,12 @@ set(DATAPLANE dataplane)
 
 set(API_INC ${INC}/api)
 set(DPDK_INC ${INC}/dpdk)
-set(CONF_INC ${INC}/conf)
 set(COMMON_INC ${INC}/common)
 set(PROTOCOL_INC ${INC}/protocol)
 set(DATAPLANE_INC ${INC}/dataplane)
+
+set(CONF_DATA_INC ${PROTOCOL_INC}/conf/data)
+set(CONF_CONTROL_INC ${PROTOCOL_INC}/conf/control)
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(DPDK REQUIRED IMPORTED_TARGET libdpdk)
@@ -40,8 +42,8 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
                       -Wl,--whole-archive
                       -L.
                       ${API}
-                      ${COMMON}
                       ${DPDK}
+                      ${COMMON}
                       ${PROTOCOL}
                       ${DATAPLANE}
                       -L${TP_LIB} -lmongoose -ltimeout

@@ -4,6 +4,8 @@
  * description: High-Performance Longest Prefix Match Library
  ****************************************************************************/
 
+#include <time.h>
+
 #include "log.h"
 #include "atomic.h"
 #include "dpdk_fib.h"
@@ -11,6 +13,8 @@
 
 struct dpdk_fib *dpdk_fib_create(int hw_numa_id, int max_item)
 {
+    uint32_t seq = 0;
+    struct timespec spec = {0};
     char name[CACHE_LINE] = "";
     struct rte_fib_conf conf = {
         .type = RTE_FIB_DIR24_8,
@@ -40,8 +44,9 @@ struct dpdk_fib *dpdk_fib_create(int hw_numa_id, int max_item)
 
     static uint32_t s_seq = 0;
 
-    atomic_fetch_add(&s_seq, 1);
-    snprintf(name, sizeof(name), "DPDK_FIB_%u_%u", hw_numa_id, s_seq);
+    seq = atomic_fetch_add(&s_seq, 1);
+    clock_gettime(CLOCK_MONOTONIC, &spec);
+    snprintf(name, sizeof(name), "FIB_%lu_%u_%u", spec.tv_sec, hw_numa_id, seq);
 
     fib = rte_fib_create(name, hw_numa_id, &conf);
     if (fib == NULL) {

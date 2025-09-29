@@ -4,6 +4,7 @@
  * description:
  ****************************************************************************/
 
+#include <time.h>
 #include <string.h>
 
 #include <rte_errno.h>
@@ -18,6 +19,8 @@
 
 struct dpdk_hash *dpdk_hash_create(uint32_t max_entries, uint32_t key_len, int hw_numa_id, dpdk_hash_cmp_t cmp)
 {
+    uint32_t seq = 0;
+    struct timespec spec = {0};
     struct dpdk_hash *hash = NULL;
     char name[DPDK_HASH_NAMESIZE] = "";
     struct dpdk_hash_param param = {
@@ -33,8 +36,14 @@ struct dpdk_hash *dpdk_hash_create(uint32_t max_entries, uint32_t key_len, int h
 
     static uint32_t s_seq = 0;
 
-    atomic_fetch_add(&s_seq, 1);
-    snprintf(name, sizeof(name), "DPDK_HASH_%u_%u", hw_numa_id, s_seq);
+    /*
+     * Avoid failures caused by leftover DPDK hugepage objects during rapid restarts,
+     * where stale memzone allocations may still exist and cause object name conflicts.
+     */
+    seq = atomic_fetch_add(&s_seq, 1);
+    clock_gettime(CLOCK_MONOTONIC, &spec);
+    snprintf(name, sizeof(name), "HASH_%lu_%u_%u", spec.tv_sec, hw_numa_id, seq);
+    LOG_ERROR("%s", name);
 
     hash = rte_hash_create(&param);
     if (hash == NULL) {

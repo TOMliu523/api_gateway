@@ -11,11 +11,11 @@
 #include "type.h"
 #include "errcode.h"
 #include "protocol.h"
+#include "ip4_conf.h"
 #include "api_inner.h"
 #include "dpdk_port.h"
 #include "dpdk_common.h"
-#include "slow/ip4.h"
-#include "slow/route4.h"
+#include "route4_conf.h"
 
 static INLINE void _api_route4_item_free(struct route4_item *item)
 {

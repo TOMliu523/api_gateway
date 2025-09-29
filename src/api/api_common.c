@@ -15,6 +15,7 @@
 #include "errcode.h"
 #include "dpdk_rcu.h"
 #include "api_inner.h"
+#include "dpdk_common.h"
 
 #define ACCOUNT_SALT "M8#zY1$pQr!T2xVa"
 
@@ -281,4 +282,39 @@ void api_numa_config_update(void *cfg, void **position[], void *update[], void (
     }
 
     free_post(numa, root->hw_info.numa_count);
+}
+
+void *api_malloc(size_t size)
+{
+    void *ptr = NULL;
+
+    ptr = dpdk_malloc(size);
+    if (ptr == NULL) {
+        LOG_ERROR("OOM.");
+        return NULL;
+    }
+
+    memset(ptr, 0, size);
+    return ptr;
+}
+
+void *api_malloc_numa(size_t size, int hw_numa)
+{
+    void *ptr = NULL;
+
+    ptr = dpdk_malloc_numa(size, hw_numa);
+    if (ptr == NULL) {
+        LOG_ERROR("OOM.");
+        return NULL;
+    }
+
+    memset(ptr, 0, size);
+    return ptr;
+}
+
+void api_free(void *ptr)
+{
+    if (ptr != NULL) {
+        dpdk_free(ptr);
+    }
 }

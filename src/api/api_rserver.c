@@ -12,121 +12,270 @@
 #include "errcode.h"
 #include "api_inner.h"
 #include "dpdk_common.h"
+#include "rserver_conf.h"
 
 #define API_RS_MODULE_NAME "rserver"
 #define API_RS_LIST_NAME "entrys"
 
-struct api_rserver {
-    int nums;
-    struct rs {
-        union nf_inet_addr addr;
-        int af;
-        uint16_t port;
-    } __attribute__((aligned(8))) rs[];
+struct api_rs {
+    int count;
+    struct rserver **array;
 };
 
-static void _api_rs_free(void *ptr)
-{
-    if (ptr != NULL) {
-        dpdk_free(ptr);
-    }
-}
+struct api_rs_hdr {
+    int cpu_count;
+    struct api_rs rs[];
+};
 
-static struct api_rserver *_api_rs_alloc(int count)
+static void _api_rs_batch_free(struct api_rs *rs)
 {
-    size_t size = 0;
-    struct api_rserver *rs = NULL;
-
-    size = sizeof(*rs) + count * sizeof(struct rs);
-    rs = dpdk_malloc(size);
     if (rs == NULL) {
-        LOG_ERROR("OOM");
-        return NULL;
+        return;
     }
 
-    memset(rs, 0, size);
-    return rs;
+    for (int i = 0; i < rs->count; i++) {
+        rs_conf_rs_free(rs->array[i]);
+    }
+
+    api_free(rs->array);
+    rs->array = NULL;
 }
 
-static int _api_rs_parse_one(struct rs *rs, void *one)
+static void _api_rs_hdr_free(struct api_rs_hdr *hdr)
 {
-    int ret = 0;
+    if (hdr == NULL) {
+        return;
+    }
+
+    for (int i = 0; i < hdr->cpu_count; i++) {
+        _api_rs_batch_free(&hdr->rs[i]);
+    }
+
+    api_free(hdr);
+}
+
+static void _api_rs_hdr_only_frame_free(struct api_rs_hdr *hdr)
+{
+    for (int i = 0; i < hdr->cpu_count; i++) {
+        api_free(hdr->rs[i].array);
+    }
+
+    api_free(hdr);
+}
+
+static int _api_rs_parse_data(struct api_rs *one, int hw_numa_id, void *json)
+{
+    int code = 0;
     int port = 0;
-    const char *ip = NULL;
-
-    rs->port = json_integer_value(json_object_get(one, "port"));
-    ip = json_string_value(json_object_get(one, "ip"));
-    rs->af = (strchr(ip, ':')) ? AF_INET6 : AF_INET;
-
-    rs->port = port;
-    ret = inet_pton(rs->af, ip, &rs->addr);
-    if (ret != 1) {
-        LOG_ERROR("Parameter ip addr(%s)", ip);
-        return ERRCODE_INVALID;
-    }
-
-    return 0;
-}
-
-static int _api_rs_parse(struct api_rserver **output, void *json)
-{
     int count = 0;
     void *array = NULL;
-    enum ERRCODE code = 0;
-    struct api_rserver *rs = NULL;
+    const char *ip = NULL;
 
     array = api_v1_modify_list(json, API_RS_MODULE_NAME, API_RS_LIST_NAME);
     if (array == NULL) {
-        LOG_ERROR("Parameter invalid.");
-        return ERRCODE_INVALID;
+        LOG_ERROR("Invalid parameter.");
+        return ERRCODE_INNER;
     }
 
     count = json_array_size(array);
     if (count <= 0) {
-        LOG_ERROR("Parameter invalid.");
-        return ERRCODE_INVALID;
+        LOG_ERROR("Invalid parameter.");
+        return ERRCODE_INNER;
     }
 
-    rs = _api_rs_alloc(count);
-    if (rs == NULL) {
-        LOG_ERROR("OOM");
+    one->array = api_malloc_numa(count * sizeof(*one->array), hw_numa_id);
+    if (one->array == NULL) {
         return ERRCODE_OOM;
     }
 
-    for (int i = 0; i < count; i++) {
-        void *one = NULL;
+    one->count = count;
 
-        one = json_array_get(json, i);
-        code = _api_rs_parse_one(&rs->rs[i], one);
+    for (int i = 0; i < count; i++) {
+        void *obj = NULL;
+
+        obj = json_array_get(array, i);
+        ip = json_string_value(json_object_get(obj, "ip"));
+        port = json_integer_value(json_object_get(obj, "port"));
+
+        if (strchr(ip, ':') == NULL) { // IPv4
+            struct rserver_v4 *v4 = NULL;
+
+            v4 = rs_conf_v4_alloc(hw_numa_id);
+            if (v4 == NULL) {
+                code = ERRCODE_OOM;
+                goto _quit;
+            }
+
+            v4->rs.id = RS_INVALID_ID;
+            INIT_LIST_HEAD(&v4->rs.node);
+            inet_pton(AF_INET, ip, &v4->ip);
+            v4->base.port = port;
+
+            one->array[i] = &v4->rs;
+        } else { // IPv6
+            struct rserver_v6 *v6 = NULL;
+
+            v6 = rs_conf_v6_alloc(hw_numa_id);
+            if (v6 == NULL) {
+                code = ERRCODE_OOM;
+                goto _quit;
+            }
+
+            v6->rs.id = RS_INVALID_ID;
+            INIT_LIST_HEAD(&v6->rs.node);
+            inet_pton(AF_INET6, ip, &v6->ip6);
+            v6->base.port = port;
+
+            one->array[i] = &v6->rs;
+        }
+    }
+
+    return 0;
+
+_quit:
+    _api_rs_batch_free(one);
+    return code;
+}
+
+static int _api_rs_copy(struct api_rs *dst, int hw_numa_id, struct api_rs *src)
+{
+    int code = 0;
+
+    dst->array = api_malloc_numa(src->count * sizeof(*dst->array), hw_numa_id);
+    if (dst->array == NULL) {
+        LOG_ERROR("OOM.");
+        return ERRCODE_OOM;
+    }
+
+    dst->count = src->count;
+
+    for (int i = 0; i < dst->count; i++) {
+        struct rserver *rs = NULL;
+
+        rs = src->array[i];
+        if (rs->af == AF_INET) {
+            struct rserver_v4 *v4 = NULL;
+
+            v4 = rs_conf_v4_alloc(hw_numa_id);
+            if (v4 == NULL) {
+                code = ERRCODE_OOM;
+                goto _quit;
+            }
+
+            dpdk_memcpy(v4, rs, sizeof(*v4));
+            dst->array[i] = &v4->rs;
+        } else {
+            struct rserver_v6 *v6 = NULL;
+
+            v6 = rs_conf_v6_alloc(hw_numa_id);
+            if (v6 == NULL) {
+                code = ERRCODE_OOM;
+                goto _quit;
+            }
+
+            dpdk_memcpy(v6, rs, sizeof(*v6));
+            dst->array[i] = &v6->rs;
+        }
+    }
+
+    return 0;
+
+_quit:
+    _api_rs_batch_free(dst);
+    return code;
+}
+
+static int _api_rs_parse(const struct root *root, struct api_rs_hdr **phdr, void *json)
+{
+    int code = 0;
+    struct dataplane *dp = NULL;
+    struct api_rs_hdr *hdr = NULL;
+    int cpu_count = root->hw_info.cpu_count;
+
+    hdr = api_malloc(sizeof(struct api_rs_hdr) + cpu_count * sizeof(struct api_rs));
+    if (hdr == NULL) {
+        return ERRCODE_OOM;
+    }
+
+    hdr->cpu_count = cpu_count;
+
+    // one
+    dp = root->dpdk_thread[0];
+    code = _api_rs_parse_data(&hdr->rs[0], dp->hw_numa_id, json);
+    if (code != 0) {
+        goto _quit;
+    }
+
+    // other
+    for (int i = 1; i < cpu_count; i++) {
+        dp = root->dpdk_thread[i];
+        code = _api_rs_copy(&hdr->rs[i], dp->hw_numa_id, &hdr->rs[0]);
         if (code != 0) {
             goto _quit;
         }
     }
 
-    rs->nums = count;
-    *output = rs;
+    *phdr = hdr;
+    return 0;
+
+_quit:
+    _api_rs_hdr_free(hdr);
+    return code;
+}
+
+static void _api_rs_add_del(struct api_rs_hdr *hdr, int cpu_count)
+{
+    struct api_rs *rs = NULL;
+
+    for (int i = 0; i < cpu_count; i++) {
+        rs = &hdr->rs[i];
+        rs_conf_add_del(rs->array, rs->count);
+    }
+}
+
+static int _api_rs_add(const struct root *root, struct api_rs_hdr *hdr)
+{
+    int code = 0;
+    struct api_rs *rs = NULL;
+    int cpu_count = root->hw_info.cpu_count;
+
+    for (int i = 0; i < cpu_count; i++) {
+        rs = &hdr->rs[i];
+        code = rs_conf_add(rs->array, rs->count);
+        if (code != 0) {
+            goto _quit;
+        }
+    }
 
     return 0;
 
 _quit:
-    _api_rs_free(rs);
+    _api_rs_add_del(hdr, cpu_count);
     return code;
 }
 
 API_POST(/v1/app/rserver, rserver)
 {
-    enum ERRCODE code = 0;
-    // struct root *root = cfg;
-    struct api_rserver *rs = NULL;
+    int code = 0;
+    struct root *root = cfg;
+    struct api_rs_hdr *hdr = NULL;
 
-    code = _api_rs_parse(&rs, json);
+    code = _api_rs_parse(root, &hdr, json);
     if (code != 0) {
-        return api_fail(code);
+        goto _quit;
     }
 
+    code = _api_rs_add(root, hdr);
+    if (code != 0) {
+        goto _quit;
+    }
 
-
+    _api_rs_hdr_only_frame_free(hdr);
     return api_succ(NULL);
+
+_quit:
+    _api_rs_hdr_only_frame_free(hdr);
+    return api_fail(code);
 }
 
 API_PUT(/v1/app/rserver, rserver)

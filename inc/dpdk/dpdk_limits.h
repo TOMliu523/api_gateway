@@ -46,4 +46,8 @@
 #define DP_MBUF_MAX 64
 #endif // DP_MBUF_MAX
 
+#ifndef DP_RSERVER_MAX
+#define DP_RSERVER_MAX 50000
+#endif // DP_RSERVER_MAX
+
 #endif // __DPDK_LIMITIS_H__

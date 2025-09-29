@@ -4,8 +4,7 @@
  * description:
  ****************************************************************************/
 
-#ifndef __ROUTE6_CONF_H__
-#define __ROUTE6_CONF_H__
+#pragma once
 
 #include "list.h"
 #include "dpdk_ip6.h"
@@ -46,5 +45,3 @@ extern int route6_conf_create_and_delete(void **dst,
                                          bool is_route);
 extern void route6_conf_table_get(void *src, struct route6_item **item, int *count);
 extern void route6_conf_destroy(void *ptr);
-
-#endif // __ROUTE6_CONF_H__

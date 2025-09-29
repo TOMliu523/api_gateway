@@ -4,6 +4,7 @@
  * description:
  ****************************************************************************/
 
+#include <time.h>
 #include <rte_errno.h>
 
 #include "log.h"
@@ -20,15 +21,18 @@ static struct dpdk_timer_ctl s_timer_ctl;
 
 int dpdk_timer_start(void)
 {
+    struct timespec spec = {0};
     char name[CACHE_LINE] = "";
     struct numa_cpu *nc = NULL;
     struct dpdk_timer_ctl *ctl = &s_timer_ctl;
 
+    clock_gettime(CLOCK_MONOTONIC, &spec);
     nc = dpdk_numa_cpu_get();
+
     for (int i = 0; i < nc->numa_count; i++) {
         struct numa_to_cpu *n2c = &nc->n2c[i];
 
-        snprintf(name, sizeof(name), "DPDK_TIMER_%d", i);
+        snprintf(name, sizeof(name), "DPDK_TIMER_%lu_%d", spec.tv_sec, i);
         ctl->timer_pool[i] = dpdk_pool_mm_create(name,
                                                  n2c->count * DPDK_MAX_TIMER_PER_CPU,
                                                  sizeof(struct timeout),
