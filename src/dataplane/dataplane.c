@@ -8,8 +8,6 @@
 #include <stdlib.h>
 #include <unistd.h>
 
-#include "ip4.h"
-#include "ip6.h"
 #include "log.h"
 #include "timer.h"
 #include "notify.h"
@@ -22,6 +20,7 @@
 #include "dpdk_init.h"
 #include "dataplane.h"
 #include "dpdk_common.h"
+#include "thread_config.h"
 
 #define DP_LOOP_MAX 256
 #define NOTICE_NAME_MAX 64
@@ -79,53 +78,6 @@ static void _dp_tc_destroy(struct thread_config *nc)
         dpdk_free(nc->iface);
         dpdk_free(nc);
     }
-}
-
-static void *_dp_tc_create(int nic_count, int hw_numa_id)
-{
-    struct iface *iface = NULL;
-    struct thread_config *nc = NULL;
-    struct ip4_manage *ip4_manage = NULL;
-    struct ip6_manage *ip6_manage = NULL;
-
-    nc = dpdk_malloc(sizeof(*nc));
-    if (nc == NULL) {
-        LOG_ERROR("OOM.");
-        return NULL;
-    }
-
-    iface = dpdk_malloc(sizeof(struct iface) + nic_count * sizeof(uint16_t));
-    if (UNLIKELY(iface == NULL)) {
-        LOG_ERROR("OOM.");
-        dpdk_free(nc);
-        return NULL;
-    }
-
-    iface->nums = nic_count;
-    for (int i = 0; i < nic_count; i++) {
-        iface->port[i] = i;
-    }
-
-    ip4_manage = ip4_startup(nic_count, hw_numa_id);
-    if (UNLIKELY(ip4_manage == NULL)) {
-        dpdk_free(iface);
-        dpdk_free(nc);
-        return NULL;
-    }
-
-    ip6_manage = ip6_startup(nic_count, hw_numa_id);
-    if (UNLIKELY(ip6_manage == NULL)) {
-        dpdk_free(iface);
-        dpdk_free(nc);
-        ip6_destroy(ip6_manage);
-        return NULL;
-    }
-
-    nc->iface = iface;
-    nc->ip4_manage = ip4_manage;
-    nc->ip6_manage = ip6_manage;
-
-    return nc;
 }
 
 static void _dp_pkt_classifier_destroy(void *ptr)
@@ -219,7 +171,7 @@ static INLINE void _dp_init(void *arg)
         goto _quit;
     }
 
-    tlv_dp->tc = _dp_tc_create(root->hw_info.nic_count, tlv_dp->hw_numa_id);
+    tlv_dp->tc = tc_init(root->hw_info.nic_count, tlv_dp->hw_numa_id);
     if (tlv_dp->tc == NULL) {
         goto _quit;
     }

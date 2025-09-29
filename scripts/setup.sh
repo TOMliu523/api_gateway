@@ -20,7 +20,8 @@ export LD_LIBRARY_PATH=${APP_DIR}/lib:${APP_DIR}/lib64:${LD_LIBRARY_PATH}
 # check process exists
 pid=`pidof "${TARGET}"`
 if [[ -n "${pid}" ]]; then
-    pkill -9 ${pid}
+    kill -9 ${pid}
+    sleep 3
 fi
 
 # cpu list
@@ -34,28 +35,46 @@ CHANEL=`dmidecode -t memory | awk '
             print used
         }'`
 
-# use vfio
-sudo modprobe vfio
-sudo modprobe vfio-pci
-
-# uninstall nic from dpdk
-for dev in $(./release/bin/dpdk-devbind.py --status | awk '/drv=(vfio-pci|igb_uio|uio_pci_generic)/ {print $1}')
-do
-    ${DEVBIND} -u ${dev}
-done
-
-#install nic
+# Execute on first startup only, do not reload afterwards.
 nic_pci=("0000:04:00.0"
          "0000:04:00.1"
          "0000:04:00.2"
          "0000:04:00.3")
 
-for pci in "${nic_pci[@]}"
+# Check whether the PCI devices have changed
+bind_count=0
+common_count=0
+for bind_dev in $(./release/bin/dpdk-devbind.py --status | awk '/drv=(vfio-pci|igb_uio|uio_pci_generic)/ {print $1}')
 do
-    ${DEVBIND} -b vfio-pci ${pci}
+    for cur_dev in "${nic_pci[@]}"; 
+    do
+        if [ ${bind_dev} == ${cur_dev} ]
+        then
+            common_count=$(( $common_count + 1 ))
+        fi
+    done
+
+    bind_count=$(( $bind_count + 1 ))
 done
 
-${DEVBIND} --status
+if [ ${bind_count} -ne ${common_count} ] || [ ${bind_count} -ne ${#nic_pci[@]} ]; then
+    echo "Bind pci dev..."
+    # use vfio 
+    sudo modprobe vfio
+    sudo modprobe vfio-pci
+
+    # unbind
+    for dev in $(./release/bin/dpdk-devbind.py --status | awk '/drv=(vfio-pci|igb_uio|uio_pci_generic)/ {print $1}')
+    do
+        ${DEVBIND} -u ${dev}
+    done
+
+    # bind
+    for pci in "${nic_pci[@]}"
+    do
+        ${DEVBIND} -b vfio-pci ${pci}
+    done
+fi
 
 echo "starting application ..."
 echo "Executable: ${APP}"

@@ -223,25 +223,29 @@ _quit:
     return code;
 }
 
-static void _api_rs_add_del(struct api_rs_hdr *hdr, int cpu_count)
+static void _api_rs_add_del(struct root *root, struct api_rs_hdr *hdr, int cpu_count)
 {
     struct api_rs *rs = NULL;
+    struct dataplane *dp = NULL;
 
     for (int i = 0; i < cpu_count; i++) {
         rs = &hdr->rs[i];
-        rs_conf_add_del(rs->array, rs->count);
+        dp = root->dpdk_thread[i];
+        rs_conf_add_del(dp->tc->rs_table, rs->array, rs->count);
     }
 }
 
-static int _api_rs_add(const struct root *root, struct api_rs_hdr *hdr)
+static int _api_rs_add(struct root *root, struct api_rs_hdr *hdr)
 {
     int code = 0;
     struct api_rs *rs = NULL;
+    struct dataplane *dp = NULL;
     int cpu_count = root->hw_info.cpu_count;
 
     for (int i = 0; i < cpu_count; i++) {
         rs = &hdr->rs[i];
-        code = rs_conf_add(rs->array, rs->count);
+        dp = root->dpdk_thread[i];
+        code = rs_conf_add(dp->tc->rs_table, rs->array, rs->count);
         if (code != 0) {
             goto _quit;
         }
@@ -250,7 +254,7 @@ static int _api_rs_add(const struct root *root, struct api_rs_hdr *hdr)
     return 0;
 
 _quit:
-    _api_rs_add_del(hdr, cpu_count);
+    _api_rs_add_del(root, hdr, cpu_count);
     return code;
 }
 

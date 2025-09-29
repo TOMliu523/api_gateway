@@ -100,10 +100,10 @@ static int _rs_conf_v6_check(struct rserver_v6 *rs, struct list_head *head)
     return 0;
 }
 
-static int _rs_conf_add_check(struct rserver **rs, int count)
+static int _rs_conf_add_check(void *arg, struct rserver **rs, int count)
 {
     int code = 0;
-    struct rserver_table *table = s_rs_table;
+    struct rserver_table *table = arg;
 
     if (UNLIKELY(table->rs_count + count > DP_RSERVER_MAX)) {
         LOG_ERROR("The number(%d) of real servers exceeds the threshold(%d).", table->rs_count + count, DP_RSERVER_MAX);
@@ -129,11 +129,11 @@ static int _rs_conf_add_check(struct rserver **rs, int count)
     return 0;
 }
 
-static int _rs_conf_add(struct rserver **rs, int count)
+static int _rs_conf_add(void *arg, struct rserver **rs, int count)
 {
     int start_id = 0;
     struct rserver *one = NULL;
-    struct rserver_table *table = s_rs_table;
+    struct rserver_table *table = arg;
 
     for (int i = 0; i < count; i++) {
         one = rs[i];
@@ -163,11 +163,11 @@ static int _rs_conf_add(struct rserver **rs, int count)
     return 0;
 }
 
-static void _rs_conf_del_offline(void)
+static void _rs_conf_del_offline(void *arg)
 {
     struct rserver *cur = NULL;
     struct rserver *next = NULL;
-    struct rserver_table *table = s_rs_table;
+    struct rserver_table *table = arg;
     struct list_head *head = &table->free_list;
 
     list_for_each_entry_safe(cur, next, head, node) {
@@ -275,24 +275,24 @@ _quit:
     return NULL;
 }
 
-int rs_conf_add(struct rserver **rs, int count)
+int rs_conf_add(void *arg, struct rserver **rs, int count)
 {
     int code = 0;
 
-    _rs_conf_del_offline();
+    _rs_conf_del_offline(arg);
 
-    code = _rs_conf_add_check(rs, count);
+    code = _rs_conf_add_check(arg, rs, count);
     if (code != 0) {
         return code;
     }
 
-   return _rs_conf_add(rs, count);
+   return _rs_conf_add(arg, rs, count);
 }
 
-void rs_conf_add_del(struct rserver **rs, int count)
+void rs_conf_add_del(void *arg, struct rserver **rs, int count)
 {
     struct rserver *one = NULL;
-    struct rserver_table *table = s_rs_table;
+    struct rserver_table *table = arg;
 
     for (int i = 0; i < count; i++) {
         one = rs[i];
@@ -312,14 +312,14 @@ void rs_conf_add_del(struct rserver **rs, int count)
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
 // Data plane interface
 
-int rserver_init(int hw_numa)
+void *rserver_init(int hw_numa)
 {
     struct rserver_table *table = NULL;
 
     table = dpdk_malloc_numa(sizeof(*table), hw_numa);
     if ((table == NULL)) {
         LOG_ERROR("OOM.");
-        return -1;
+        return NULL;
     }
 
     memset(table, 0, sizeof(*table));
@@ -328,13 +328,18 @@ int rserver_init(int hw_numa)
     INIT_LIST_HEAD(&table->v6_search);
 
     s_rs_table = table;
-    return 0;
+    return s_rs_table;
 }
 
-void rserver_fini(void)
+void rserver_fini(void *ptr)
 {
-    if (s_rs_table != NULL) {
-        dpdk_free(s_rs_table);
-        s_rs_table = NULL;
+    if (ptr != s_rs_table) {
+        struct rserver_table *table = ptr;
+        dpdk_free(table);
+    } else {
+        if (s_rs_table != NULL) {
+            dpdk_free(s_rs_table);
+            s_rs_table = NULL;
+        }
     }
 }

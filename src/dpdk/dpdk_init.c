@@ -112,3 +112,10 @@ int dpdk_init(int argc, char *argv[], void *output)
 
     return 0;
 }
+
+void dpdk_cleanup(int signo)
+{
+    LOG_ERROR("Receive signal no %d", signo);
+    rte_eal_cleanup();
+    exit(EXIT_FAILURE);
+}

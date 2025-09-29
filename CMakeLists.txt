@@ -5,6 +5,7 @@ project(api_gateway)
 set(CMAKE_C_FLAGS "-std=gnu99 -Wall -Werror -march=native -msse4.2 -mssse3 -ggdb -mrtm")
 #set(CMAKE_C_FLAGS "-std=gnu99 -Wall -Werror -msse4.2 -mssse3 -g -Ofast -mrtm")
 set(CMAKE_VERBOSE_MAKEFILE ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 set(SRC ${PROJECT_SOURCE_DIR}/src)
 set(INC ${PROJECT_SOURCE_DIR}/inc)

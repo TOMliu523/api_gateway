@@ -13,6 +13,7 @@
 
 #include "macro.h"
 
+extern void dpdk_cleanup(int signo);
 extern int dpdk_init(int argc, char *argv[], void *output);
 extern void dpdk_thread_startup(void *f, void *arg);
 extern void dpdk_thread_set_name(uint8_t numa_idx, uint8_t cpu_id);

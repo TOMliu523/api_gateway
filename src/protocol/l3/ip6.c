@@ -1117,7 +1117,7 @@ _quit:
     return NULL;
 }
 
-void *ip6_startup(int nic_count, int hw_numa_id)
+void *ip6_manage_startup(int nic_count, int hw_numa_id)
 {
     int ret = 0;
     void *dst = NULL;
@@ -1201,7 +1201,7 @@ void ip6_process(void *data[], int count)
     }
 }
 
-void ip6_destroy(void *ptr)
+void ip6_manage_destroy(void *ptr)
 {
     _ip6_conf_manage_destroy(ptr);
 }

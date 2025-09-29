@@ -58,5 +58,5 @@ struct rserver_v6 {
     struct rserver_base base;
 };
 
-extern int rserver_init(int);
-extern void rserver_fini(void);
+extern void *rserver_init(int);
+extern void rserver_fini(void *);

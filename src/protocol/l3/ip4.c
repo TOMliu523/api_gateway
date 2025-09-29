@@ -626,7 +626,7 @@ enum IP_LOCAL_CLASS ip4_local_class(uint16_t port, uint32_t ip)
     return IP_LOCAL_CLASS_LAN;
 }
 
-void *ip4_startup(int nic_count, int hw_numa_id)
+void *ip4_manage_startup(int nic_count, int hw_numa_id)
 {
     int ret = 0;
     void *dst = NULL;

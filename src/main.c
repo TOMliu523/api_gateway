@@ -65,7 +65,7 @@ static void single_instance(const char *filename)
         }
     }
 
-    nbytes = snprintf(buffer, sizeof(buffer), "process startup time: %lu\nprocess number: %u", time(NULL), getpid());
+    nbytes = snprintf(buffer, sizeof(buffer), "process number: %u\nprocess startup time: %lu", getpid(), time(NULL));
     if (nbytes < 0) {
         LOG_ERROR("snprintf failure: %s", strerror(errno));
         exit(EXIT_FAILURE);
@@ -77,7 +77,7 @@ static void single_instance(const char *filename)
     lock.l_len = 1;
 
     ret = fcntl(fd, F_SETLK, &lock);
-    if (ret < 0) {
+    if (ret != 0) {
         LOG_ERROR("lock %s failure: %s", filename, strerror(errno));
         exit(EXIT_FAILURE);
     }
@@ -97,7 +97,7 @@ static void signal_process(void)
 {
     signal(SIGTERM, SIG_IGN);
     signal(SIGUSR1, SIG_IGN);
-    signal(SIGUSR2, SIG_IGN);
+    signal(SIGUSR2, dpdk_cleanup);
     signal(SIGTTIN, SIG_IGN);
     signal(SIGTTOU, SIG_IGN);
     signal(SIGCHLD, SIG_IGN);
