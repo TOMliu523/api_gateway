@@ -4,6 +4,8 @@
  * description:
  ****************************************************************************/
 
+#include <stdbool.h>
+
 #include "log.h"
 #include "conf.h"
 #include "list.h"
@@ -16,14 +18,21 @@
 #include "rserver_conf.h"
 
 struct rserver_table {
-    int rs_count;
-    struct list_head free_list;
+    int store_count;
+    struct list_head free_head;
     struct list_head v4_search;
     struct list_head v6_search;
     struct rserver *store[DP_RSERVER_MAX];
 };
 
 static __thread struct rserver_table *s_rs_table;
+
+static INLINE bool _rs_conf_del_condition(struct rserver_base *base)
+{
+    return (base->mtb->status == RSERVER_OFFLINE
+            && base->stat->refcnt == 0 &&
+            base->mtb->pool_refcnt);
+}
 
 static void _rs_conf_free(void *ptr)
 {
@@ -105,8 +114,8 @@ static int _rs_conf_add_check(void *arg, struct rserver **rs, int count)
     int code = 0;
     struct rserver_table *table = arg;
 
-    if (UNLIKELY(table->rs_count + count > DP_RSERVER_MAX)) {
-        LOG_ERROR("The number(%d) of real servers exceeds the threshold(%d).", table->rs_count + count, DP_RSERVER_MAX);
+    if (UNLIKELY(table->store_count + count > DP_RSERVER_MAX)) {
+        LOG_ERROR("The number(%d) of real servers exceeds the threshold(%d).", table->store_count + count, DP_RSERVER_MAX);
         return ERRCODE_RSERVER_TOO_MANY;
     }
 
@@ -127,6 +136,200 @@ static int _rs_conf_add_check(void *arg, struct rserver **rs, int count)
     }
 
     return 0;
+}
+
+static int _rs_conf_v4_find(struct list_head *head, struct rserver_v4 *one)
+{
+    struct rserver *cur = NULL;
+    struct rserver *next = NULL;
+    struct rserver_v4 *v4 = NULL;
+
+    list_for_each_entry_safe(cur, next, head, node) {
+        v4 = (struct rserver_v4 *)cur;
+
+        if (v4->ip == one->ip) {
+            if (v4->base.port == one->base.port) {
+                return 0;
+            } else if (v4->base.port < one->base.port) {
+                return ERRCODE_RSERVER_NOT_FOUND;
+            } else {
+                continue;
+            }
+        } else if (v4->ip < one->ip) {
+            return ERRCODE_RSERVER_NOT_FOUND;
+        } else {
+            continue;
+        }
+    }
+
+    return 0;
+}
+
+static int _rs_conf_v6_find(struct list_head *head, struct rserver_v6 *one)
+{
+    int ret = 0;
+    struct rserver *cur = NULL;
+    struct rserver *next = NULL;
+    struct rserver_v6 *v6 = NULL;
+
+    list_for_each_entry_safe(cur, next, head, node) {
+        v6 = (struct rserver_v6 *)cur;
+
+        ret = dpdk_ip6_addr_cmp(&v6->ip6, &one->ip6, sizeof(one->ip6));
+        if (ret == 0) {
+            if (v6->base.port == one->base.port) {
+                return 0;
+            } else if (v6->base.port < one->base.port) {
+                return ERRCODE_RSERVER_NOT_FOUND;
+            } else {
+                continue;
+            }
+        } else if (ret < 0) {
+            return ERRCODE_RSERVER_NOT_FOUND;
+        } else {
+            continue;
+        }
+    }
+
+    return 0;
+}
+
+static int _rs_conf_del_check(void *arg, struct rserver **rs, int count)
+{
+    int code = 0;
+    struct rserver *one = NULL;
+    struct rserver_table *table = arg;
+
+    if (UNLIKELY(table->store_count < count)) {
+        LOG_ERROR("Real server invalid count(%d), cur count(%d).", table->store_count, count);
+        return ERRCODE_RSERVER_INVALID_COUNT;
+    }
+
+    for (int i = 0; i < count; i++) {
+        one = rs[i];
+        if (one->af == AF_INET) {
+            code = _rs_conf_v4_find(&table->v4_search, (struct rserver_v4 *)one);
+            if (code != 0) {
+                LOG_ERROR("Real rserver not exists.");
+                return code;
+            }
+        } else {
+            code = _rs_conf_v6_find(&table->v6_search, (struct rserver_v6 *)one);
+            if (code != 0) {
+                return code;
+            }
+        }
+    }
+
+    return 0;
+}
+
+static void _rs_conf_v4_del(void *arg, struct rserver_v4 *one)
+{
+    int count = 0;
+    struct rserver *cur = NULL;
+    struct rserver *next = NULL;
+    struct rserver_table *table = arg;
+
+    list_for_each_entry_safe(cur, next, &table->v4_search, node) {
+        struct rserver_v4 *v4 = (struct rserver_v4 *)cur;
+
+        if (v4->ip == one->ip) {
+            if (v4->base.port == one->base.port) {
+                if (_rs_conf_del_condition(&one->base)) {
+                    table->store[v4->rs.id] = NULL;
+                    list_del(&v4->rs.node);
+                    rs_conf_rs_free(cur);
+
+                    count += 1;
+                } else {
+                    v4->base.mtb->status = RSERVER_OFFLINE;
+                    list_del(&v4->rs.node);
+                    list_add(&v4->rs.node, &table->free_head);
+                }
+            } else if (v4->base.port < one->base.port) {
+                /*
+                 * This code path should never be reached under normal conditions.
+                 * Execution will only reach here if memory corruption occurs.
+                 */
+                LOG_ERROR("Real server(%s:%d) not exists.", conf_ip_to_str(one->ip), one->base.port);
+                break;
+            } else {
+                continue;
+            }
+        } else if (v4->ip < one->ip) {
+            LOG_ERROR("Real server(%s:%d) not exists.", conf_ip_to_str(one->ip), one->base.port);
+            break;
+        } else {
+            continue;
+        }
+    }
+
+    table->store_count -= count;
+}
+
+static void _rs_conf_v6_del(void *arg, struct rserver_v6 *one)
+{
+    int ret = 0;
+    int count = 0;
+    struct rserver *cur = NULL;
+    struct rserver *next = NULL;
+    struct rserver_table *table = arg;
+
+    list_for_each_entry_safe(cur, next, &table->v4_search, node) {
+        struct rserver_v6 *v6 = (struct rserver_v6 *)cur;
+
+        ret = dpdk_ip6_addr_cmp(&v6->ip6, &one->ip6, sizeof(v6->ip6));
+        if (ret == 0) {
+            if (v6->base.port == one->base.port) {
+                if (_rs_conf_del_condition(&one->base)) {
+                    table->store[v6->rs.id] = NULL;
+                    list_del(&v6->rs.node);
+                    rs_conf_rs_free(cur);
+
+                    count += 1;
+                } else {
+                    v6->base.mtb->status = RSERVER_OFFLINE;
+                    list_del(&v6->rs.node);
+                    list_add(&v6->rs.node, &table->free_head);
+                }
+            } else if (v6->base.port < one->base.port) {
+                /*
+                 * This code path should never be reached under normal conditions.
+                 * Execution will only reach here if memory corruption occurs.
+                 */
+                LOG_ERROR("Real server(%s:%d) not exists.", conf_ip6_to_str(&one->ip6), one->base.port);
+                break;
+            } else {
+                continue;
+            }
+        } else if (ret < 0) {
+            /*
+             * This code path should never be reached under normal conditions.
+             * Execution will only reach here if memory corruption occurs.
+             */
+            LOG_ERROR("Real server(%s:%d) not exists.", conf_ip6_to_str(&one->ip6), one->base.port);
+            break;
+        } else {
+            continue;
+        }
+    }
+
+    table->store_count -= count;
+}
+
+static void _rs_conf_del(void *arg, struct rserver **rs, int count)
+{
+    struct rserver *one = NULL;
+
+    for (int i = 0; i < count; i++) {
+        one = rs[i];
+        if (one->af == AF_INET) {
+            _rs_conf_v4_del(arg, (struct rserver_v4 *)one);
+        } else {
+            _rs_conf_v6_del(arg, (struct rserver_v6 *)one);
+        }
+    }
 }
 
 static int _rs_conf_add(void *arg, struct rserver **rs, int count)
@@ -160,15 +363,17 @@ static int _rs_conf_add(void *arg, struct rserver **rs, int count)
         }
     }
 
+    table->store_count += count;
     return 0;
 }
 
 static void _rs_conf_del_offline(void *arg)
 {
+    int count = 0;
     struct rserver *cur = NULL;
     struct rserver *next = NULL;
     struct rserver_table *table = arg;
-    struct list_head *head = &table->free_list;
+    struct list_head *head = &table->free_head;
 
     list_for_each_entry_safe(cur, next, head, node) {
         int id = 0;
@@ -183,12 +388,16 @@ static void _rs_conf_del_offline(void *arg)
             base = &v6->base;
         }
 
-        if (base->mtb->status == RSERVER_OFFLINE && base->stat->refcnt == 0 && base->mtb->pool_refcnt == 0) {
+        if (_rs_conf_del_condition(base)) {
             table->store[id] = NULL;
             list_del(&cur->node);
             rs_conf_rs_free(cur);
+
+            count += 1;
         }
     }
+
+    table->store_count -= count;
 }
 
 void rs_conf_rs_free(struct rserver *rserver)
@@ -275,18 +484,31 @@ _quit:
     return NULL;
 }
 
+int rs_conf_del(void *arg, struct rserver **rs, int count)
+{
+    int code = 0;
+
+    _rs_conf_del_offline(arg);
+    code = _rs_conf_del_check(arg, rs, count);
+    if (code != 0) {
+        return code;
+    }
+
+    _rs_conf_del(arg, rs, count);
+    return code;
+}
+
 int rs_conf_add(void *arg, struct rserver **rs, int count)
 {
     int code = 0;
 
     _rs_conf_del_offline(arg);
-
     code = _rs_conf_add_check(arg, rs, count);
     if (code != 0) {
         return code;
     }
 
-   return _rs_conf_add(arg, rs, count);
+    return _rs_conf_add(arg, rs, count);
 }
 
 void rs_conf_add_del(void *arg, struct rserver **rs, int count)
@@ -323,7 +545,7 @@ void *rserver_init(int hw_numa)
     }
 
     memset(table, 0, sizeof(*table));
-    INIT_LIST_HEAD(&table->free_list);
+    INIT_LIST_HEAD(&table->free_head);
     INIT_LIST_HEAD(&table->v4_search);
     INIT_LIST_HEAD(&table->v6_search);
 

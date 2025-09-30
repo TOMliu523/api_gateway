@@ -41,7 +41,9 @@
     XX(ROUTE_REFERENCED, 306, "Route referenced") \
     XX(SUBNET_INVALID, 307, "Subnet invalid") \
     XX(RSERVER_TOO_MANY, 400, "Real server too many") \
-    XX(RSERVER_DUPLICATE, 401, "Real server duplicate")
+    XX(RSERVER_DUPLICATE, 401, "Real server duplicate") \
+    XX(RSERVER_INVALID_COUNT, 402, "Real server invalid count") \
+    XX(RSERVER_NOT_FOUND, 403, "Real server not found")
 
 enum ERRCODE {
 #define ERRCODE(code, value, msg) ERRCODE_##code = value,

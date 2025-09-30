@@ -560,11 +560,28 @@ static int _api_store_add(sr_session_ctx_t *session, const struct lyd_node *node
     return 0;
 }
 
+static int _api_store_create_check(struct api_db *db, const char *buffer)
+{
+    int ret = 0;
+    sr_val_t *value = NULL;
+
+    ret = sr_get_item(db->sess, buffer, 0, &value);
+    switch (ret) {
+    case SR_ERR_OK:
+        sr_free_val(value);
+        return 0;
+    case SR_ERR_NOT_FOUND:
+        return 0;
+    default:
+        LOG_ERROR("sr_get_item(%s) failed: %s", buffer, sr_strerror(ret));
+        return -1;
+    }
+}
+
 static int _api_store_create(struct lyd_node *node, bool create)
 {
     int n = 0;
     int ret = 0;
-    sr_val_t *value = NULL;
     struct api_db *db = &s_api_db;
     const struct lyd_node *next = NULL;
     const struct lyd_node *child = NULL;
@@ -584,17 +601,13 @@ static int _api_store_create(struct lyd_node *node, bool create)
             }
 
             if (create) {
-                ret = sr_get_item(db->sess, s_buffer, 0, &value);
-                sr_free_val(value);
-                if (ret != SR_ERR_NOT_FOUND) {
-                    LOG_ERROR("sr_get_item failure: %s exists.", s_buffer);
+                ret = _api_store_create_check(db, s_buffer);
+                if (ret != 0) {
                     return -1;
                 }
             } else {
-                ret = sr_get_item(db->sess, s_buffer, 0, &value);
-                sr_free_val(value);
-                if (ret == SR_ERR_NOT_FOUND) {
-                    LOG_ERROR("sr_get_item failure: %s.", sr_strerror(errno));
+                ret = _api_store_create_check(db, s_buffer);
+                if (ret != 0) {
                     return -1;
                 }
 
