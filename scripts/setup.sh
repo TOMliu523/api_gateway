@@ -8,7 +8,7 @@ APP=${BIN}/${TARGET}
 DEVBIND=${BIN}/dpdk-devbind.py
 
 if [[ -z ${API_LIBYANG_PATH} ]]; then
-    export API_LIBYANG_PATH=${APP_DIR}/conf/yang
+    export API_LIBYANG_PATH=${APP_DIR}/conf/yang:${APP_DIR}/conf/yang/common
 fi
 
 if [[ -z ${SYSREPO_REPOSITORY_PATH} ]]; then

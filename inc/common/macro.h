@@ -76,7 +76,7 @@
 #endif
 
 #ifndef CAT2
-#define CAT2(v1, v2, v3) v1##v2##v3
+#define CAT2(v1, v2, v3) CAT1(CAT1(v1, v2), v3)
 #endif // CAT2
 
 #ifndef ACCESS_ONCE

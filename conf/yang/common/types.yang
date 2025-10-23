@@ -1,0 +1,28 @@
+module types {
+    namespace "urn:types";
+    prefix "tys";
+
+    revision "2025-05-31" {
+        description "Init version";
+    }
+
+    typedef common-name {
+        type string {
+            length "1..127";
+            pattern "[-_.0-9a-zA-Z]{1,127}";
+        }
+        description "Common name format: alphanumeric, dash, underscore, and dot allowed (1–127 chars).";
+    }
+
+    typedef interface-name {
+        type string {
+            length "3..63";
+            pattern '[-0-9a-zA-Z.]{3,63}';
+        }
+        description
+            "Interface name format.
+            - Allows letters, digits, hyphens, and dots.
+            - Common examples: eth0, ens1f0, bond0.100.
+            - Length: 3–63 characters.";
+    }
+}

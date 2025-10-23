@@ -23,8 +23,8 @@ API_GET(/v1/status/pktmbuf, pktmbuf)
 
     array = json_array();
     obj = json_object();
-    api_json_add_integer(obj, "avail_count", avail_count);
-    api_json_add_integer(obj, "used_count", used_count);
+    api_json_add_long(obj, "avail_count", avail_count);
+    api_json_add_long(obj, "used_count", used_count);
     json_array_append_new(array, obj);
 
     return api_succ(array);

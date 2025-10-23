@@ -28,7 +28,7 @@
 #define IP4_BUCKET_MAX (1 << 16)
 #define IP4_INFO_MAX IP4_BUCKET_MAX
 
-struct ip4_manage {
+struct ip4_table {
     int ip_count;
     int nic_count;
     struct dpdk_fib *fib[DPDK_ETHPORT_MAX];
@@ -42,23 +42,25 @@ struct ip4_manage {
     struct ip4_info store[IP4_INFO_MAX];
 };
 
-// Release the ipv4_manage structure.
-static void _ip4_conf_manage_destroy(struct ip4_manage *manage)
+static __thread struct ip4_table *s_ip4_table;
+
+// Release the ipv4_table structure.
+static void _ip4_conf_table_destroy(struct ip4_table *table)
 {
-    if (manage == NULL) {
+    if (table == NULL) {
         return;
     }
 
-    for (int i = 0; i < manage->nic_count; i++) {
-        if (manage->fib[i] != NULL) {
-            dpdk_fib_destroy(manage->fib[i]);
+    for (int i = 0; i < table->nic_count; i++) {
+        if (table->fib[i] != NULL) {
+            dpdk_fib_destroy(table->fib[i]);
         }
     }
 
-    dpdk_free(manage);
+    dpdk_free(table);
 }
 
-static int _ip4_conf_manage_add(struct ip4_manage *manage, const struct ip4_info *one)
+static int _ip4_conf_table_add(struct ip4_table *table, const struct ip4_info *one)
 {
     int ret = 0;
     int nums = 0;
@@ -68,18 +70,18 @@ static int _ip4_conf_manage_add(struct ip4_manage *manage, const struct ip4_info
     struct list_head *prev = NULL;
     struct ip4_info *store = NULL;
     int idx = IP4_BUCKET_IDX(one->ip);
-    struct list_head *head = &manage->head[idx];
+    struct list_head *head = &table->head[idx];
 
-    nums = manage->ip_count;
-    store = &manage->store[nums];
+    nums = table->ip_count;
+    store = &table->store[nums];
     *store = *one;
     INIT_LIST_HEAD(&store->node);
-    if (manage->master[one->port] == NULL && one->type == IP_MASTER) {
-        manage->master[one->port] = store;
+    if (table->master[one->port] == NULL && one->type == IP_MASTER) {
+        table->master[one->port] = store;
     }
 
     host_ip = dpdk_be_to_cpu_32(one->ip);
-    ret = dpdk_fib_add(manage->fib[one->port], host_ip, one->mask, nums);
+    ret = dpdk_fib_add(table->fib[one->port], host_ip, one->mask, nums);
     if (UNLIKELY(ret != 0)) {
         LOG_ERROR("Failure dpdk_fib_add: %s", strerror(-ret));
         return ERRCODE_INNER;
@@ -105,7 +107,7 @@ static int _ip4_conf_manage_add(struct ip4_manage *manage, const struct ip4_info
     }
 
     list_add(&store->node, prev);
-    manage->ip_count = nums + 1;
+    table->ip_count = nums + 1;
 
     return 0;
 }
@@ -115,7 +117,7 @@ static int _ip4_conf_manage_add(struct ip4_manage *manage, const struct ip4_info
  * if they belong to the same subnet or have overlapping subnets,
  * such as 192.168.10.0/24 and 192.168.10.0/28.
  */
-static int _ip4_conf_manage_add_check(struct ip4_manage *manage, const struct ip4_info *info, int count)
+static int _ip4_conf_table_add_check(struct ip4_table *table, const struct ip4_info *info, int count)
 {
     int ret = 0;
     uint8_t mask = 0;
@@ -123,11 +125,11 @@ static int _ip4_conf_manage_add_check(struct ip4_manage *manage, const struct ip
     char ip_str[CACHE_LINE] = "";
     const struct ip4_info *one = NULL;
 
-    if (UNLIKELY(manage == NULL || manage->ip_count == 0) && count <= IP4_INFO_MAX) {
+    if (UNLIKELY(table == NULL || table->ip_count == 0) && count <= IP4_INFO_MAX) {
         return 0;
     }
 
-    if (UNLIKELY(manage->ip_count + count > IP4_INFO_MAX)) {
+    if (UNLIKELY(table->ip_count + count > IP4_INFO_MAX)) {
         LOG_ERROR("Maximum supported IP address count(%d) exceeded", IP4_INFO_MAX);
         return ERRCODE_IP_LIMIT_EXCEEDED;
     }
@@ -135,13 +137,13 @@ static int _ip4_conf_manage_add_check(struct ip4_manage *manage, const struct ip
     for (int i = 0; i < count; i++) {
         one = &info[i];
 
-        ret = dpdk_fib_lookup(manage->fib[one->port], (uint32_t *)&one->ip, &next_hop, 1);
+        ret = dpdk_fib_lookup(table->fib[one->port], (uint32_t *)&one->ip, &next_hop, 1);
         if (UNLIKELY(ret != 0)) {
             LOG_ERROR("Inner error.");
             return ERRCODE_INNER;
         }
 
-        if (UNLIKELY(ret == 0 && next_hop != DPDK_FIB_DEFAULT && manage->store[next_hop].mask == one->mask)) {
+        if (UNLIKELY(ret == 0 && next_hop != DPDK_FIB_DEFAULT && table->store[next_hop].mask == one->mask)) {
             mask = one->mask;
             inet_ntop(AF_INET, &one->ip, ip_str, sizeof(ip_str));
             LOG_ERROR("IP address conflict — another IP(%s/%d) in the same subnet is already configured.", ip_str, mask);
@@ -156,7 +158,7 @@ static int _ip4_conf_manage_add_check(struct ip4_manage *manage, const struct ip
  * 1. Check that all IP addresses exist.
  * 2. Verify that the quantity meets expectations.
  */
-static int _ip4_conf_manage_del_check(struct ip4_manage *manage, const struct ip4_info *info, int count)
+static int _ip4_conf_table_del_check(struct ip4_table *table, const struct ip4_info *info, int count)
 {
     int idx = 0;
     int exist = 0;
@@ -165,8 +167,8 @@ static int _ip4_conf_manage_del_check(struct ip4_manage *manage, const struct ip
     struct list_head *head = NULL;
     const struct ip4_info *one = NULL;
 
-    if (UNLIKELY(manage->ip_count - count < 0)) {
-        LOG_ERROR("Parameter exception: origin %d, delete %d", manage->ip_count, count);
+    if (UNLIKELY(table->ip_count - count < 0)) {
+        LOG_ERROR("Parameter exception: origin %d, delete %d", table->ip_count, count);
         return ERRCODE_INNER;
     }
 
@@ -175,7 +177,7 @@ static int _ip4_conf_manage_del_check(struct ip4_manage *manage, const struct ip
         one = &info[i];
 
         idx = IP4_BUCKET_IDX(one->ip);
-        head = &manage->head[idx];
+        head = &table->head[idx];
 
         list_for_each_entry(cur, head, node) {
             if (cur->ip == one->ip && cur->port == one->port) {
@@ -196,54 +198,54 @@ static int _ip4_conf_manage_del_check(struct ip4_manage *manage, const struct ip
     return 0;
 }
 
-// Initialize a fresh ipv4_manage object with default/empty values.
-static int _ip4_conf_manage_create(void **dst, int nic_count, int hw_numa_id)
+// Initialize a fresh ipv4_table object with default/empty values.
+static int _ip4_conf_table_create(void **dst, int nic_count, int hw_numa_id)
 {
-    struct ip4_manage *manage = NULL;
+    struct ip4_table *table = NULL;
 
-    manage = dpdk_malloc_numa(sizeof(*manage), hw_numa_id);
-    if (UNLIKELY(manage == NULL)) {
+    table = dpdk_malloc_numa(sizeof(*table), hw_numa_id);
+    if (UNLIKELY(table == NULL)) {
         LOG_ERROR("HW NUMA(%d) OOM.", hw_numa_id);
         return ERRCODE_OOM;
     }
 
-    memset(manage, 0, sizeof(*manage));
+    memset(table, 0, sizeof(*table));
 
-    manage->ip_count = 0;
-    manage->nic_count = nic_count;
+    table->ip_count = 0;
+    table->nic_count = nic_count;
 
     for (int i = 0; i < nic_count; i++) {
-        manage->fib[i] = dpdk_fib_create(hw_numa_id, IP4_INFO_MAX);
-        if (UNLIKELY(manage->fib[i] == NULL)) {
+        table->fib[i] = dpdk_fib_create(hw_numa_id, IP4_INFO_MAX);
+        if (UNLIKELY(table->fib[i] == NULL)) {
             goto _quit;
         }
     }
 
     for (int i = 0; i < IP4_BUCKET_MAX; i++) {
-        INIT_LIST_HEAD(&manage->head[i]);
+        INIT_LIST_HEAD(&table->head[i]);
     }
 
-    *dst = manage;
+    *dst = table;
     return 0;
 
 _quit:
-    _ip4_conf_manage_destroy(manage);
+    _ip4_conf_table_destroy(table);
     return ERRCODE_OOM;
 }
 
-static int _ip4_conf_manage_append(struct ip4_manage *dst, const struct ip4_manage *src, const struct ip4_info *info, int count)
+static int _ip4_conf_table_append(struct ip4_table *dst, const struct ip4_table *src, const struct ip4_info *info, int count)
 {
     int ret = 0;
 
     for (int i = 0; i < src->ip_count; i++) {
-        ret = _ip4_conf_manage_add(dst, &src->store[i]);
+        ret = _ip4_conf_table_add(dst, &src->store[i]);
         if (UNLIKELY(ret != 0)) {
             return ret;
         }
     }
 
     for (int i = 0; i < count; i++) {
-        ret = _ip4_conf_manage_add(dst, &info[i]);
+        ret = _ip4_conf_table_add(dst, &info[i]);
         if (UNLIKELY(ret != 0)) {
             return ret;
         }
@@ -252,7 +254,7 @@ static int _ip4_conf_manage_append(struct ip4_manage *dst, const struct ip4_mana
     return 0;
 }
 
-static int _ip4_conf_manage_delete(struct ip4_manage *dst, const struct ip4_manage *src, const struct ip4_info *info, int count)
+static int _ip4_conf_table_delete(struct ip4_table *dst, const struct ip4_table *src, const struct ip4_info *info, int count)
 {
     int ret = 0;
     bool need_delete = false;
@@ -275,7 +277,7 @@ static int _ip4_conf_manage_delete(struct ip4_manage *dst, const struct ip4_mana
             continue;
         }
 
-        ret = _ip4_conf_manage_add(dst, store);
+        ret = _ip4_conf_table_add(dst, store);
         if (UNLIKELY(ret != 0)) {
             return ret;
         }
@@ -284,17 +286,22 @@ static int _ip4_conf_manage_delete(struct ip4_manage *dst, const struct ip4_mana
     return 0;
 }
 
-bool ip4_conf_manage_ip_is_local(const void *arg, uint32_t ip, uint8_t port)
+void ip4_conf_table_destroy(void *ptr)
+{
+    _ip4_conf_table_destroy(ptr);
+}
+
+bool ip4_conf_table_ip_is_local(const void *arg, uint32_t ip, uint8_t port)
 {
     const struct ip4_info *cur = NULL;
     const struct list_head *head = NULL;
-    const struct ip4_manage *ip4_manage = (const struct ip4_manage *)arg;
+    const struct ip4_table *ip4_table = (const struct ip4_table *)arg;
 
     if (arg == NULL) {
         return false;
     }
 
-    head = &ip4_manage->head[IP4_BUCKET_IDX(ip)];
+    head = &ip4_table->head[IP4_BUCKET_IDX(ip)];
     list_for_each_entry(cur, head, node) {
         if (cur->ip == ip && cur->port == port) {
             return true;
@@ -306,10 +313,10 @@ bool ip4_conf_manage_ip_is_local(const void *arg, uint32_t ip, uint8_t port)
     return false;
 }
 
-int ip4_conf_manage_create_and_append(void **dst, void *src, const struct ip4_info *info, int count, int hw_numa_id)
+int ip4_conf_table_create_and_append(void **dst, void *src, const struct ip4_info *info, int count, int hw_numa_id)
 {
     int ret = 0;
-    const struct ip4_manage *one = src;
+    struct ip4_table *one = src;
 
     if (UNLIKELY(dst == NULL || src == NULL || count < 0)) {
         LOG_ERROR("Parameter exception(dst: %p, src: %p, count: %d).", dst, src, count);
@@ -317,21 +324,21 @@ int ip4_conf_manage_create_and_append(void **dst, void *src, const struct ip4_in
     }
 
     // Check whether the newly added IP address and subnet already exist
-    ret = _ip4_conf_manage_add_check(src, info, count);
+    ret = _ip4_conf_table_add_check(src, info, count);
     if (UNLIKELY(ret != 0)) {
         return ret;
     }
 
-    // Only create the ipv4_manage structure.
-    ret = _ip4_conf_manage_create(dst, one->nic_count, hw_numa_id);
+    // Only create the ipv4_table structure.
+    ret = _ip4_conf_table_create(dst, one->nic_count, hw_numa_id);
     if (UNLIKELY(ret != 0)) {
         return ret;
     }
 
     // Add both new and existing data together
-    ret = _ip4_conf_manage_append(*dst, one, info, count);
+    ret = _ip4_conf_table_append(*dst, one, info, count);
     if (UNLIKELY(ret != 0)) {
-        _ip4_conf_manage_destroy(*dst);
+        _ip4_conf_table_destroy(*dst);
         *dst = NULL;
         return ret;
     }
@@ -339,30 +346,30 @@ int ip4_conf_manage_create_and_append(void **dst, void *src, const struct ip4_in
     return 0;
 }
 
-int ip4_conf_manage_create_and_delete(void **dst, void *src, const struct ip4_info *info, int count, int hw_numa_id)
+int ip4_conf_table_create_and_delete(void **dst, void *src, const struct ip4_info *info, int count, int hw_numa_id)
 {
     int ret = 0;
-    struct ip4_manage *one = src;
+    struct ip4_table *one = src;
 
     if (UNLIKELY(dst == NULL || src == NULL || info == NULL || one->ip_count - count < 0)) {
         LOG_ERROR("Parameter exception(dst: %p, src: %p, info: %p, count: %d).", dst, src, info, one->ip_count);
         return ERRCODE_INNER;
     }
 
-    ret = _ip4_conf_manage_del_check(src, info, count);
+    ret = _ip4_conf_table_del_check(src, info, count);
     if (UNLIKELY(ret != 0)) {
         return ret;
     }
 
-    // Only create the ipv4_manage structure.
-    ret = _ip4_conf_manage_create(dst, one->nic_count, hw_numa_id);
+    // Only create the ipv4_table structure.
+    ret = _ip4_conf_table_create(dst, one->nic_count, hw_numa_id);
     if (UNLIKELY(ret != 0)) {
         return ret;
     }
 
-    ret = _ip4_conf_manage_delete(*dst, one, info, count);
+    ret = _ip4_conf_table_delete(*dst, one, info, count);
     if (UNLIKELY(ret != 0)) {
-        _ip4_conf_manage_destroy(*dst);
+        _ip4_conf_table_destroy(*dst);
         return ret;
     }
 
@@ -379,15 +386,15 @@ static int _ip4_get_by_port(uint32_t *ip, uint32_t target_ip, int port)
 {
     int ret = 0;
     uint64_t next_hop = 0;
-    struct ip4_manage *manage = rcu_dereference(tlv_th_cfg->ip4_manage);
-    struct dpdk_fib *fib = manage->fib[port];
+    struct ip4_table *table = s_ip4_table;
+    struct dpdk_fib *fib = table->fib[port];
 
     ret = dpdk_fib_lookup(fib, &target_ip, &next_hop, 1);
     if (UNLIKELY(ret != 0 || next_hop == DPDK_FIB_DEFAULT)) {
         return -1;
     }
 
-    *ip = manage->store[(uint16_t)next_hop].ip;
+    *ip = table->store[(uint16_t)next_hop].ip;
     return 0;
 }
 
@@ -398,7 +405,7 @@ static INLINE void _ip4_is_local_bulk(void *data[], bool result[], int count)
     struct list_head *head = NULL;
     struct dpdk_mbuf *mbuf = NULL;
     struct dpdk_ip4_hdr *ip4hdr = NULL;
-    struct ip4_manage *manage = rcu_dereference(tlv_th_cfg->ip4_manage);
+    struct ip4_table *table = s_ip4_table;
 
     for (int i = 0; i < count; i++) {
         bool hit = false;
@@ -407,7 +414,7 @@ static INLINE void _ip4_is_local_bulk(void *data[], bool result[], int count)
         ip4hdr = dpdk_pktmbuf_ip4_hdr(mbuf);
 
         idx = IP4_BUCKET_IDX(ip4hdr->dst_addr);
-        head = &manage->head[idx];
+        head = &table->head[idx];
 
         list_for_each_entry(cur, head, node) {
             if (ip4hdr->dst_addr == cur->ip) {
@@ -596,10 +603,10 @@ enum IP_LOCAL_CLASS ip4_local_class(uint16_t port, uint32_t ip)
     struct dpdk_fib *fib = NULL;
     struct ip4_info *cur = NULL;
     struct list_head *head = NULL;
-    struct ip4_manage *manage = rcu_dereference(tlv_th_cfg->ip4_manage);
+    struct ip4_table *table = s_ip4_table;
 
     idx = IP4_BUCKET_IDX(ip);
-    head = &manage->head[idx];
+    head = &table->head[idx];
 
     list_for_each_entry(cur, head, node) {
         if (cur->ip == ip) {
@@ -617,7 +624,7 @@ enum IP_LOCAL_CLASS ip4_local_class(uint16_t port, uint32_t ip)
         }
     }
 
-    fib = manage->fib[port];
+    fib = table->fib[port];
     ret = dpdk_fib_lookup(fib, &ip, &next_hop, 1);
     if (ret != 0 || next_hop == DPDK_FIB_DEFAULT) {
         return IP_LOCAL_CLASS_EXTERNAL;
@@ -626,20 +633,26 @@ enum IP_LOCAL_CLASS ip4_local_class(uint16_t port, uint32_t ip)
     return IP_LOCAL_CLASS_LAN;
 }
 
-void *ip4_manage_startup(int nic_count, int hw_numa_id)
+void *ip4_table_startup(int nic_count, int hw_numa_id)
 {
     int ret = 0;
     void *dst = NULL;
 
-    ret = _ip4_conf_manage_create(&dst, nic_count, hw_numa_id);
+    ret = _ip4_conf_table_create(&dst, nic_count, hw_numa_id);
     if (UNLIKELY(ret != 0)) {
         return NULL;
     }
 
+    s_ip4_table = dst;
     return dst;
 }
 
-void ip4_manage_destroy(void *ptr)
+void ip4_table_destroy(void *ptr)
 {
-    _ip4_conf_manage_destroy(ptr);
+    _ip4_conf_table_destroy(ptr);
+}
+
+void ip4_thread_config_refresh(void *arg)
+{
+    s_ip4_table = arg;
 }

@@ -60,7 +60,7 @@ static int _api_route6_post_parse(struct route6_item **pp_item, int *p_count, vo
     char ip_str[CACHE_LINE] = "";
     struct route6_item *item = NULL;
 
-    array = api_v1_modify_list(json, "route6", "entrys");
+    array = api_v1_modify_list_old(json, "route6", "entrys");
     count = json_array_size(array);
 
     item = _api_route6_item_alloc(count);
@@ -89,8 +89,8 @@ static int _api_route6_post_parse(struct route6_item **pp_item, int *p_count, vo
         inet_pton(AF_INET6, nexthop, &one->nexthop);
 
         name = json_string_value(json_object_get(obj, "interface"));
-        one->interface = dpdk_port_by_name_get(name);
-        if (one->interface == (uint16_t) -1) {
+        one->port = dpdk_port_by_name_get(name);
+        if (one->port == (uint16_t) -1) {
             code = ERRCODE_PORT_NOT_EXIST;
             goto _quit;
         }
@@ -104,8 +104,8 @@ static int _api_route6_post_parse(struct route6_item **pp_item, int *p_count, vo
             goto _quit;
         }
 
-        if (!dpdk_port_is_up(one->interface)) {
-            LOG_ERROR("Ethdev port(%d) startup failure.", one->interface);
+        if (!dpdk_port_is_up(one->port)) {
+            LOG_ERROR("Ethdev port(%d) startup failure.", one->port);
             code = ERRCODE_PORT_IS_DOWN;
             goto _quit;
         }
@@ -127,7 +127,7 @@ static int _api_route6_del_parse(struct route6_item **pp_item, int *p_count, voi
     void *array = NULL;
     struct route6_item *item = NULL;
 
-    array = api_v1_delete_list(json, "route6", "entrys");
+    array = api_v1_delete_list_old(json, "route6", "entrys");
     count = json_array_size(array);
 
     item = _api_route6_item_alloc(count);
@@ -168,7 +168,7 @@ static int _api_route6_table_add(struct root *root, void *route6[], struct route
 
     dp = root->dpdk_thread[0];
     proto = dp->protocol;
-    ret = route6_conf_create_and_append(&route6[dp->numa_id], proto->route6, item, count, dp->hw_numa_id, dp->tc->ip6_manage);
+    ret = route6_conf_create_and_append(&route6[dp->numa_id], proto->route6, item, count, dp->hw_numa_id, dp->tc->ip6_table);
     if (ret != 0) {
         return ret;
     }
@@ -180,7 +180,7 @@ static int _api_route6_table_add(struct root *root, void *route6[], struct route
         }
 
         hw_numa_id = root->dpdk_thread[i]->hw_numa_id;
-        ret = route6_conf_create_and_append(&route6[i], route6[dp->numa_id], NULL, 0, hw_numa_id, dp->tc->ip6_manage);
+        ret = route6_conf_create_and_append(&route6[i], route6[dp->numa_id], NULL, 0, hw_numa_id, dp->tc->ip6_table);
         if (ret != 0) {
             goto _quit;
         }
@@ -215,7 +215,7 @@ static int _api_route6_table_del(struct root *root, void *route6[], struct route
         }
 
         hw_numa_id = root->dpdk_thread[i]->hw_numa_id;
-        code = route6_conf_create_and_append(&route6[i], route6[dp->numa_id], NULL, 0, hw_numa_id, dp->tc->ip6_manage);
+        code = route6_conf_create_and_append(&route6[i], route6[dp->numa_id], NULL, 0, hw_numa_id, dp->tc->ip6_table);
         if (code != 0) {
             goto _quit;
         }
@@ -350,12 +350,12 @@ API_GET(/v1/network/route6, route6)
 
         inet_ntop(AF_INET6, &item->dst_subnet, ip_str, sizeof(ip_str));
         api_json_add_string(one, "dst_subnet", ip_str);
-        api_json_add_integer(one, "mask", item->mask);
+        api_json_add_long(one, "mask", item->mask);
 
         inet_ntop(AF_INET6, &item->nexthop, ip_str, sizeof(ip_str));
         api_json_add_string(one, "nexthop", ip_str);
 
-        name = dpdk_port_id_to_name(item->interface);
+        name = dpdk_port_id_to_name(item->port);
         api_json_add_string(one, "interface", name);
 
         api_json_add_string(one, "owner", route_type[item->route_type]);

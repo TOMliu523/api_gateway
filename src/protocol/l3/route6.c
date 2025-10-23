@@ -21,6 +21,8 @@ struct route6_table {
     struct route6_item store[ROUTE6_ITEM_MAX];
 };
 
+static __thread struct route6_table *s_route6_table;
+
 static int _route6_conf_add_check(struct route6_table *route6, const struct route6_item *item, int count, const void *arg)
 {
     int ret = 0;
@@ -117,7 +119,7 @@ static int _route6_conf_add_check(struct route6_table *route6, const struct rout
          * No local IP references
          */
         do {
-            if (UNLIKELY(ip6_conf_manage_ip_is_local(arg, &one->nexthop, one->interface))) {
+            if (UNLIKELY(ip6_conf_table_ip_is_local(arg, &one->nexthop, one->port))) {
                 inet_ntop(AF_INET6, &one->nexthop, ip_str, sizeof(ip_str));
                 LOG_ERROR("The next hop is a local IP(%s) address.", ip_str);
                 return ERRCODE_ROUTE_LOCAL_IP;
@@ -150,7 +152,7 @@ static int _route6_conf_del_check(struct route6_table *route6, const struct rout
         } else {
             for (j = 0; j < route6->store_count; j++) {
                 store = &route6->store[j];
-                if (dpdk_ip6_addr_eq(&one->dst_subnet, &store->dst_subnet) && one->interface == store->interface) {
+                if (dpdk_ip6_addr_eq(&one->dst_subnet, &store->dst_subnet) && one->port == store->port) {
                     hit = true;
                     break;
                 }
@@ -279,7 +281,7 @@ static int _route6_conf_delete(void *dst, struct route6_table *src, const struct
             }
         } else {
             for (int j = 0; j < count; j++) {
-                if (dpdk_ip6_addr_eq(&one->dst_subnet, &item[j].dst_subnet) && one->interface == item[j].interface) {
+                if (dpdk_ip6_addr_eq(&one->dst_subnet, &item[j].dst_subnet) && one->port == item[j].port) {
                     hit = true;
                     break;
                 }
@@ -294,6 +296,32 @@ static int _route6_conf_delete(void *dst, struct route6_table *src, const struct
         }
     }
 
+    return 0;
+}
+
+int route6_conf_mask_find(uint8_t *p_mask, void *arg, const struct dpdk_ip6_addr *addr, uint16_t port)
+{
+    int n = 0;
+    uint64_t next_hop = 0;
+    struct route6_table *table = arg;
+
+    if (UNLIKELY(p_mask == NULL || arg == NULL)) {
+        LOG_ERROR("Invalid parameter.");
+        return ERRCODE_PARAMETER_INVALID;
+    }
+
+    n = dpdk_fib6_lookup(table->fib, addr, &next_hop, 1);
+    if (UNLIKELY(n != 0)) {
+        LOG_ERROR("Search error.");
+        return ERRCODE_ROUTE_NEXTHOP_INVALID;
+    }
+
+    if (table->store[next_hop].port != port) {
+        LOG_ERROR("Port not match.");
+        return ERRCODE_ROUTE_NEXTHOP_INVALID;
+    }
+
+    *p_mask = table->store[next_hop].mask;
     return 0;
 }
 
@@ -379,3 +407,37 @@ void route6_conf_destroy(void *ptr)
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
 // Data plane interface
+
+void *route6_thread_create(int hw_numa_id)
+{
+    struct route6_table *table = NULL;
+
+    table = dpdk_malloc_numa(sizeof(*table), hw_numa_id);
+    if (UNLIKELY(table == NULL)) {
+        LOG_ERROR("OOM.");
+        return NULL;
+    }
+
+    table->fib = NULL;
+    table->default_id = DPDK_FIB6_DEFAULT;
+    table->store_count = 0;
+
+    return table;
+}
+
+void route6_thread_destroy(void *ptr)
+{
+    struct route6_table *table = ptr;
+
+    if (ptr == NULL) {
+        return;
+    }
+
+    dpdk_fib6_destroy(table->fib);
+    dpdk_free(table);
+}
+
+void route6_thread_config_refresh(void *arg)
+{
+    s_route6_table = arg;
+}

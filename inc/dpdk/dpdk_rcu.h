@@ -43,7 +43,7 @@
 // RCU
 extern int dpdk_rcu_create(void);
 extern void dpdk_rcu_destroy(void);
-extern struct dpdk_rcu *dpdk_rcu_get(int numa_id, int thread_id);
+extern struct dpdk_rcu *dpdk_rcu_get(int cpu_id);
 
 static INLINE int dpdk_rcu_thread_register(struct dpdk_rcu *v, unsigned int thread_id)
 {

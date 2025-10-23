@@ -50,9 +50,9 @@ void tc_fini(struct thread_config *tc)
         return;
     }
 
-    rserver_fini(tc->rs_table);
-    ip6_manage_destroy(tc->ip6_manage);
-    ip4_manage_destroy(tc->ip4_manage);
+    rserver_thread_destroy(tc->rs_table);
+    ip6_table_destroy(tc->ip6_table);
+    ip4_table_destroy(tc->ip4_table);
     dpdk_free(tc->iface);
 
     dpdk_free(tc);
@@ -72,17 +72,17 @@ struct thread_config *tc_init(int nic_count, int hw_numa_id)
         goto _quit;
     }
 
-    tc->ip4_manage = ip4_manage_startup(nic_count, hw_numa_id);
-    if (UNLIKELY(tc->ip4_manage == NULL)) {
+    tc->ip4_table = ip4_table_startup(nic_count, hw_numa_id);
+    if (UNLIKELY(tc->ip4_table == NULL)) {
         goto _quit;
     }
 
-    tc->ip6_manage = ip6_manage_startup(nic_count, hw_numa_id);
-    if (UNLIKELY(tc->ip6_manage == NULL)) {
+    tc->ip6_table = ip6_table_startup(nic_count, hw_numa_id);
+    if (UNLIKELY(tc->ip6_table == NULL)) {
         goto _quit;
     }
 
-    tc->rs_table = rserver_init(hw_numa_id);
+    tc->rs_table = rserver_thread_create(hw_numa_id);
     if (UNLIKELY(tc->rs_table == NULL)) {
         goto _quit;
     }

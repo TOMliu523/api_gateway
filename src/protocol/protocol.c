@@ -35,8 +35,18 @@ void *protocol_create(int nic_count, void *arg)
         goto _quit;
     }
 
+    header->route4 = route4_thread_create(dp->hw_numa_id);
+    if (UNLIKELY(header->route4 == NULL)) {
+        goto _quit;
+    }
+
     header->nt = ip6_thread_ndp_table_create(nic_count, dp->cpu_id, dp->hw_numa_id);
     if (UNLIKELY(header->nt == NULL)) {
+        goto _quit;
+    }
+
+    header->route6 = route6_thread_create(dp->hw_numa_id);
+    if (UNLIKELY(header->route6 == NULL)) {
         goto _quit;
     }
 
@@ -57,6 +67,8 @@ void protocol_destroy(void *arg)
 
     l2_thread_mac_destroy(header->mac);
     l2_thread_arp_table_destroy(header->at);
+    route4_thread_destroy(header->route4);
     ip6_thread_ndp_table_destroy(header->nt);
+    route6_thread_destroy(header->route6);
     dpdk_free(header);
 }

@@ -50,4 +50,16 @@
 #define DP_RSERVER_MAX 50000
 #endif // DP_RSERVER_MAX
 
+#ifndef DP_POOL_MAX
+#define DP_POOL_MAX 10000
+#endif // DP_POOL_MAX
+
+#ifndef DP_SNAT_POOL_MAX
+#define DP_SNAT_POOL_MAX 10000
+#endif // DP_SNAT_POOL_MAX
+
+#ifndef DP_VSERVER_MAX
+#define DP_VSERVER_MAX 10000
+#endif // DP_VSERVER_MAX
+
 #endif // __DPDK_LIMITIS_H__

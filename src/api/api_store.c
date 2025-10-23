@@ -65,9 +65,10 @@ static const char *s_module_load_order_list[] = {
     "route4",
     "route6",
     "arp",
+    "vlan",
     "rserver",
     "pool",
-    "snat",
+    "snat_pool",
     "vserver",
 };
 static __thread char s_buffer[BUFSIZ * 4];
@@ -415,6 +416,31 @@ static void *_api_store_get(struct private_data *data)
     }
 }
 
+static int _api_store_yang_path(char buffer[], int max, const char *yang_path, const char *module_name)
+{
+    int len = 0;
+    int yang_path_len = 0;
+
+    yang_path_len = strlen(yang_path);
+    if (yang_path_len >= max) {
+        LOG_ERROR("Invalid environment variable.");
+        return -1;
+    }
+
+    for (int i = 0; yang_path[i] != 0; i++) {
+        if (yang_path[i] != ':') {
+            buffer[len++] = yang_path[i];
+        } else {
+            break;
+        }
+    }
+
+    buffer[len] = 0;
+    snprintf(buffer + len, max - len, "/%s.yang", module_name);
+
+    return 0;
+}
+
 static enum API_STATUS _api_store_apply( struct api_db *db, const struct api_method_node *api, const char *url, void *input, void **output)
 {
     int ret = 0;
@@ -632,7 +658,7 @@ static int _api_store_create(struct lyd_node *node, bool create)
 }
 
 // Waiting for the data plane to complete initialization
-static void _api_store_wait_dataplane(struct root *root)
+static void _api_store_wait_dataplane(const struct root *root)
 {
     for (; !atomic_load(&root->inited););
 }
@@ -931,8 +957,13 @@ int api_store_init(void *arg)
     }
 
     schema_path[0] = buffer;
-    snprintf(buffer, sizeof(buffer), "%s/%s.yang", yang_path, module_name);
-    snprintf(search_dir, sizeof(search_dir), "%s:%s/common/", yang_path, yang_path);
+    ret = _api_store_yang_path(buffer, sizeof(buffer), yang_path, module_name);
+    if (ret < 0) {
+        return -1;
+    }
+
+    // snprintf(buffer + len, sizeof(buffer) - len, "%s/%s.yang", yang_path, module_name);
+    snprintf(search_dir, sizeof(search_dir), "%s", yang_path);
 
     db->data.root = arg;
 

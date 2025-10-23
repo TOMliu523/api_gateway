@@ -3,111 +3,73 @@ submodule vserver {
         prefix "v1";
     }
 
+    import types {
+        prefix "tys";
+    }
+
     import ietf-inet-types {
         prefix "inet";
     }
 
-    typedef vserver-type {
-        type enumeration {
-            enum VSERVER_TCP {
-                description "TCP virtual server";
-            }
-            enum VSERVER_UDP {
-                description "UDP virtual server";
-            }
-            enum VSERVER_HTTP {
-                description "HTTP virtual server";
-            }
-            enum VSERVER_HTTPS {
-                description "HTTPS virtual server";
-            }
-            enum VSERVER_HTTP2 {
-                description "HTTP/2 virtual server";
-            }
-            enum VSERVER_HTTP3 {
-                description "HTTP/3 virtual server";
-            }
-        }
-
-        description "virtual server type";
-    }
-
-    container vserver_v4 {
-        list entrys {
+    container vserver {
+        list entries {
             key "name";
+            description "List of virtual server entries.
+                        Each entry defines one virtual server instance identified by name.";
+
             leaf name {
-                pattern "[-_.0-9a-zA-Z]{1,128}";
+                type tys:common-name;
+                description "Name of the virtual server. Must be unique across all entries.";
             }
 
-            leaf address {
+            leaf addr {
                 mandatory true;
-                type inet:ipv4-address;
+                type inet:ip-address;
+                description "Frontend IP address of the virtual server.
+                            This is the address on which incoming client connections are accepted.";
+            }
+
+            leaf interface {
+                mandatory true;
+                type "tys:interface-name";
+                description "Interface name on which the virtual server is bound.
+                            Must refer to an existing system interface (e.g., eth0, bond0, ens1f0.100).";
             }
 
             leaf port {
                 mandatory true;
                 type uint16;
+                description "Frontend port number on which the virtual server listens for connections.";
             }
 
-            unique "address port";
-
-            leaf type {
-                type vserver-type;
-                mandatory true;
+            leaf protocol-type {
+                type enumeration {
+                    enum TCP {
+                        description "TCP virtual server (only supported type)";
+                    }
+                }
+                default "TCP";
+                description "Transport protocol type used by the virtual server.
+                            Currently only TCP is supported, but this field allows
+                            for future extension (e.g., UDP).";
             }
+
+            unique "addr port protocol-type";
 
             leaf pool_name {
                 mandatory true;
-                type string {
-                    pattern "[-_.0-9a-zA-Z]{1,128}";
-                }
+                type tys:common-name;
+                description "Name of the backend pool associated with this virtual server.
+                            The backend pool defines the set of real servers to which
+                            incoming client connections are forwarded.";
             }
 
-            leaf snat_name {
+            leaf snat_pool_name {
                 mandatory true;
-                type string {
-                    pattern "[-_.0-9a-zA-Z]{1,128}";
-                }
-            }
-        }
-    }
-
-    container vserver_v6 {
-        list entrys {
-            key "name";
-            leaf name {
-                pattern "[-_.0-9a-zA-Z]{1,128}";
-            }
-
-            leaf address {
-                mandatory true;
-                type inet:ipv6-address;
-            }
-
-            leaf port {
-                mandatory true;
-                type uint16;
-            }
-
-            unique "address port";
-
-            leaf type {
-                mandatory true;
-                type vserver-type;
-            }
-
-            leaf pool_name {
-                mandatory true;
-                type string {
-                    pattern "[-_.0-9a-zA-Z]{1,128}";
-                }
-            }
-
-            leaf snat_name {
-                mandatory true;
-                type string {
-                    pattern "[-_.0-9a-zA-Z]{1,128}";
-                }
+                type tys:common-name;
+                description "Name of the SNAT (Source NAT) pool used for source address translation.
+                            Specifies which source addresses are used when the virtual
+                            server initiates outbound connections to backend servers.";
             }
         }
     }

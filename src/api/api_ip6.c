@@ -6,7 +6,6 @@
 
 #include <stdbool.h>
 #include <arpa/inet.h>
-#include <linux/netfilter.h>
 
 #include <jansson.h>
 #include <sysrepo.h>
@@ -66,11 +65,11 @@ static void *_api_ip6_alloc(size_t size)
     return tmp;
 }
 
-static void _api_ip6_manage_numa_free(void *manage[], int count)
+void api_ip6_table_numa_free(void *table[], int count)
 {
     for (int i = 0; i < count; i++) {
-        if (manage[i] != NULL) {
-            ip6_conf_manage_destroy(manage[i]);
+        if (table[i] != NULL) {
+            ip6_conf_table_destroy(table[i]);
         }
     }
 }
@@ -111,7 +110,7 @@ static int _api_ip6_obj_gen(void *array, sr_val_t *val, int cnt)
             if (len >= 3 && strcmp(xpath + len - 3, "/ip") == 0) {
                 ret = api_json_add_string(obj, "ip", val[j].data.string_val);
             } else if (len >= 5 && strcmp(xpath + len - 5, "/mask") == 0) {
-                ret = api_json_add_integer(obj, "mask", val[j].data.uint8_val);
+                ret = api_json_add_long(obj, "mask", val[j].data.uint8_val);
             } else if (len >= 5 && strcmp(xpath + len - 5, "/type") == 0) {
                 ret = api_json_add_string(obj, "type", val[j].data.string_val);
             } else if (len >= 5 && strcmp(xpath + len - 5, "/name") == 0) {
@@ -147,7 +146,7 @@ static int _api_ip6_post_parse_count(void *json)
 {
     void *array = NULL;
 
-    array = api_v1_modify_list(json, IP6_MODULE_NAME, IP6_LIST_NAME);
+    array = api_v1_modify_list_old(json, IP6_MODULE_NAME, IP6_LIST_NAME);
     return json_array_size(array);
 }
 
@@ -155,7 +154,7 @@ static int _api_ip6_del_parse_count(void *json)
 {
     void *array = NULL;
 
-    array = api_v1_delete_list(json, IP6_MODULE_NAME, IP6_LIST_NAME);
+    array = api_v1_delete_list_old(json, IP6_MODULE_NAME, IP6_LIST_NAME);
     return json_array_size(array);
 }
 
@@ -164,7 +163,7 @@ static int _api_ip6_del_parse(void *json, struct api_ip6 *ip6, int count)
     void *array = NULL;
     struct api_ip6 *one = NULL;
 
-    array = api_v1_delete_list(json, IP6_MODULE_NAME, IP6_LIST_NAME);
+    array = api_v1_delete_list_old(json, IP6_MODULE_NAME, IP6_LIST_NAME);
     for (int i = 0; i < count; i++) {
         json_t *obj = NULL;
         const char *ip = NULL;
@@ -193,7 +192,7 @@ static int _api_ip6_post_parse(struct root *root, void *json, struct api_ip6 ip6
     void *array = NULL;
     struct api_ip6 *one = NULL;
 
-    array = api_v1_modify_list(json, IP6_MODULE_NAME, IP6_LIST_NAME);
+    array = api_v1_modify_list_old(json, IP6_MODULE_NAME, IP6_LIST_NAME);
     for (int i = 0; i < count; i++) {
         json_t *obj = NULL;
         const char *ip = NULL;
@@ -263,6 +262,23 @@ static int _api_ip6_ndp_gen(struct root *root, void *ndp[], struct api_ip6 ip6[]
     return 0;
 }
 
+int ip6_info_init(struct ip6_info *info, const struct dpdk_ip6_addr *addr,
+                  uint8_t mask, uint16_t port, enum IP_TYPE type, uint32_t refcnt)
+{
+    if (info == NULL) {
+        LOG_ERROR("Inner invalid parameter.");
+        return ERRCODE_INNER;
+    }
+
+    info->addr = *addr;
+    info->mask = mask;
+    info->port = port;
+    info->type = type;
+    info->refcnt = refcnt;
+
+    return 0;
+}
+
 static struct ip6_info *_api_ip6_to_info(struct api_ip6 *ip6, int count)
 {
     struct ip6_info *info = NULL;
@@ -277,6 +293,7 @@ static struct ip6_info *_api_ip6_to_info(struct api_ip6 *ip6, int count)
         info[i].mask = ip6[i].mask;
         info[i].port = ip6[i].port;
         info[i].type = ip6[i].type;
+        info[i].refcnt = 1;
     }
 
     return info;
@@ -303,14 +320,14 @@ static struct route6_item *_api_ip6_to_route_item(const struct api_ip6 *ip6, int
         _api_ip6_to_subnet(&item[i].dst_subnet, &ip6[i].addr, ip6[i].mask);
         item[i].mask = ip6[i].mask;
         item[i].route_type = ROUTE6_DIRECT;
-        item[i].interface = ip6[i].port;
+        item[i].port = ip6[i].port;
         item[i].valid = 1;
     }
 
     return item;
 }
 
-static INLINE int _api_ip6_manage_del(struct root *root, void *ip6_manage[], struct api_ip6 *ip6, int count)
+static INLINE int _api_ip6_table_del(struct root *root, void *ip6_table[], struct api_ip6 *ip6, int count)
 {
     int ret = 0;
     int numa_count = 0;
@@ -324,7 +341,7 @@ static INLINE int _api_ip6_manage_del(struct root *root, void *ip6_manage[], str
     }
 
     dp = root->dpdk_thread[0];
-    ret = ip6_conf_manage_create_and_delete(&ip6_manage[dp->numa_id], dp->tc->ip6_manage, info, count, dp->hw_numa_id);
+    ret = ip6_conf_table_create_and_delete(&ip6_table[dp->numa_id], dp->tc->ip6_table, info, count, dp->hw_numa_id);
     _api_ip6_free(info);
     if (ret != 0) {
         return ret;
@@ -337,7 +354,7 @@ static INLINE int _api_ip6_manage_del(struct root *root, void *ip6_manage[], str
         }
 
         one = root->dpdk_thread[i];
-        ret = ip6_conf_manage_create_and_append(&ip6_manage[i], ip6_manage[dp->numa_id], NULL, 0, one->hw_numa_id);
+        ret = ip6_conf_table_create_and_append(&ip6_table[i], ip6_table[dp->numa_id], NULL, 0, one->hw_numa_id);
         if (ret != 0) {
             goto _quit;
         }
@@ -346,11 +363,11 @@ static INLINE int _api_ip6_manage_del(struct root *root, void *ip6_manage[], str
     return 0;
 
 _quit:
-    _api_ip6_manage_numa_free(ip6_manage, numa_count);
+    api_ip6_table_numa_free(ip6_table, numa_count);
     return ret;
 }
 
-static int _api_ip6_manage_add(struct root *root, void *ip6_manage[], struct api_ip6 *ip6, int count)
+static int _api_ip6_table_add(struct root *root, void *ip6_table[], struct api_ip6 *ip6, int count)
 {
     int ret = 0;
     int numa_count = 0;
@@ -364,7 +381,7 @@ static int _api_ip6_manage_add(struct root *root, void *ip6_manage[], struct api
     }
 
     dp = root->dpdk_thread[0];
-    ret = ip6_conf_manage_create_and_append(&ip6_manage[dp->numa_id], dp->tc->ip6_manage, info, count, dp->hw_numa_id);
+    ret = ip6_conf_table_create_and_append(&ip6_table[dp->numa_id], dp->tc->ip6_table, info, count, dp->hw_numa_id);
     _api_ip6_free(info);
     if (ret != 0) {
         return ret;
@@ -377,7 +394,7 @@ static int _api_ip6_manage_add(struct root *root, void *ip6_manage[], struct api
         }
 
         one = root->dpdk_thread[i];
-        ret = ip6_conf_manage_create_and_append(&ip6_manage[i], ip6_manage[dp->numa_id], NULL, 0, one->hw_numa_id);
+        ret = ip6_conf_table_create_and_append(&ip6_table[i], ip6_table[dp->numa_id], NULL, 0, one->hw_numa_id);
         if (ret != 0) {
             goto _quit;
         }
@@ -386,7 +403,7 @@ static int _api_ip6_manage_add(struct root *root, void *ip6_manage[], struct api
     return 0;
 
 _quit:
-    _api_ip6_manage_numa_free(ip6_manage, numa_count);
+    api_ip6_table_numa_free(ip6_table, numa_count);
     return ret;
 }
 
@@ -487,9 +504,9 @@ API_POST(/v1/network/ip6, ip6)
     struct api_ip6 *ip6 = NULL;
     void *route6[NUMA_MAX] = {NULL};
     void **position[CPU_MAX] = {NULL};
-    void *ip6_manage[NUMA_MAX] = {NULL};
+    void *ip6_table[NUMA_MAX] = {NULL};
     void *thread_route6[CPU_MAX] = {NULL};
-    void *thread_ip6_manage[CPU_MAX] = {NULL};
+    void *thread_ip6_table[CPU_MAX] = {NULL};
 
     count = _api_ip6_post_parse_count(json);
     if (count < 0) {
@@ -519,22 +536,22 @@ API_POST(/v1/network/ip6, ip6)
         goto _quit;
     }
 
-    code = _api_ip6_manage_add(cfg, ip6_manage, ip6, count);
+    code = _api_ip6_table_add(cfg, ip6_table, ip6, count);
     if (code != 0) {
         goto _quit;
     }
 
-    code = _api_ip6_route_table_add(cfg, route6, ip6, count, ip6_manage[0]);
+    code = _api_ip6_route_table_add(cfg, route6, ip6, count, ip6_table[0]);
     if (code != 0) {
         goto _quit;
     }
 
     for (int i = 0; i < root->hw_info.cpu_count; i++) {
-        position[i] = &root->dpdk_thread[i]->tc->ip6_manage;
-        thread_ip6_manage[i] = ip6_manage[root->dpdk_thread[i]->numa_id];
+        position[i] = &root->dpdk_thread[i]->tc->ip6_table;
+        thread_ip6_table[i] = ip6_table[root->dpdk_thread[i]->numa_id];
     }
 
-    api_numa_config_update(cfg, position, thread_ip6_manage, _api_ip6_manage_numa_free);
+    api_numa_config_update(cfg, position, thread_ip6_table, api_ip6_table_numa_free);
 
     for (int i = 0; i < root->hw_info.cpu_count; i++) {
         struct proto_header *proto = root->dpdk_thread[i]->protocol;
@@ -573,9 +590,9 @@ API_DEL(/v1/network/ip6, ip6)
     struct api_ip6 *api_iface = {0};
     void *route6[NUMA_MAX] = {NULL};
     void **position[CPU_MAX] = {NULL};
-    void *ip6_manage[NUMA_MAX] = {NULL};
+    void *ip6_table[NUMA_MAX] = {NULL};
     void *thread_route6[CPU_MAX] = {NULL};
-    void *thread_ip6_manage[CPU_MAX] = {NULL};
+    void *thread_ip6_table[CPU_MAX] = {NULL};
 
     count = _api_ip6_del_parse_count(json);
     if (count < 0) {
@@ -593,22 +610,22 @@ API_DEL(/v1/network/ip6, ip6)
         goto _quit;
     }
 
-    code = _api_ip6_manage_del(cfg, ip6_manage, api_iface, count);
+    code = _api_ip6_table_del(cfg, ip6_table, api_iface, count);
     if (code != 0) {
         goto _quit;
     }
 
-    code = _api_ip6_route_table_del(cfg, route6, api_iface, count, ip6_manage[0]);
+    code = _api_ip6_route_table_del(cfg, route6, api_iface, count, ip6_table[0]);
     if (code != 0) {
         goto _quit;
     }
 
     for (int i = 0; i < root->hw_info.cpu_count; i++) {
-        position[i] = &root->dpdk_thread[i]->tc->ip6_manage;
-        thread_ip6_manage[i] = ip6_manage[root->dpdk_thread[i]->numa_id];
+        position[i] = &root->dpdk_thread[i]->tc->ip6_table;
+        thread_ip6_table[i] = ip6_table[root->dpdk_thread[i]->numa_id];
     }
 
-    api_numa_config_update(cfg, position, thread_ip6_manage, _api_ip6_manage_numa_free);
+    api_numa_config_update(cfg, position, thread_ip6_table, api_ip6_table_numa_free);
 
     for (int i = 0; i < root->hw_info.cpu_count; i++) {
         struct proto_header *proto = root->dpdk_thread[i]->protocol;

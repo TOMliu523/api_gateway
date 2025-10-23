@@ -68,6 +68,53 @@ static INLINE void dpdk_ip6_addr_unspec(struct dpdk_ip6_addr *addr)
     DPDK_IP6_ADDR1(addr) = 0UL;
 }
 
+static INLINE void dpdk_ip6_addr_to_uint128(__uint128_t *v, const struct dpdk_ip6_addr *addr)
+{
+    uint64_t first = 0;
+    uint64_t second = 0;
+
+    first = dpdk_be_to_cpu_64(*(uint64_t *)addr);
+    second = dpdk_be_to_cpu_64(*(uint64_t *)((void *)addr + 8));
+
+    *v = ((__uint128_t)first << 64) | ((__uint128_t)second);
+}
+
+static INLINE void dpdk_ip6_addr_to_next(struct dpdk_ip6_addr *to, __uint128_t *v)
+{
+    uint64_t first = 0;
+    uint64_t second = 0;
+
+    first = dpdk_cpu_to_be_64((uint64_t)(*v >> 64));
+    second = dpdk_cpu_to_be_64((uint64_t)(*v));
+
+    dpdk_memcpy(to, &first, sizeof(first));
+    dpdk_memcpy((void *)to + sizeof(first), &second, sizeof(second));
+}
+
+static INLINE uint32_t dpdk_ip6_addr_diff(const struct dpdk_ip6_addr *addr0, const struct dpdk_ip6_addr *addr1)
+{
+    __uint128_t first = 0;
+    __uint128_t second = 0;
+
+    dpdk_ip6_addr_to_uint128(&first, addr0);
+    dpdk_ip6_addr_to_uint128(&second, addr1);
+
+    if (second - first + 1 >= UINT32_MAX) {
+        return UINT32_MAX;
+    } else {
+        return second - first + 1;
+    }
+}
+
+static INLINE void dpdk_ip6_addr_inc(struct dpdk_ip6_addr *next, const struct dpdk_ip6_addr *addr)
+{
+    __uint128_t first = 0;
+
+    dpdk_ip6_addr_to_uint128(&first, addr);
+    first += 1;
+    dpdk_ip6_addr_to_next(next, &first);
+}
+
 static INLINE int dpdk_ip6_addr_cmp(const void *first, const void *second, size_t len)
 {
     return memcmp(first, second, len);

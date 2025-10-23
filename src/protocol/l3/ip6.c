@@ -77,7 +77,7 @@ struct ndp_table {
     struct dpdk_hash *hash[DPDK_ETHPORT_MAX];
 };
 
-struct ip6_manage {
+struct ip6_table {
     int ip_count;
     int nic_count;
     struct dpdk_fib6 *fib[DPDK_ETHPORT_MAX];
@@ -95,18 +95,21 @@ static struct dpdk_ip6_addr s_ipv6_multicast_ip = {
     },
 };
 
-static void _ip6_conf_manage_destroy(struct ip6_manage *manage)
+static __thread struct ndp_table *s_ndp_table;
+static __thread struct ip6_table *s_ip6_table;
+
+static void _ip6_conf_table_destroy(struct ip6_table *table)
 {
-    if (manage == NULL) {
+    if (table == NULL) {
         return;
     }
 
-    for (int i = 0; i < manage->nic_count; i++) {
-        dpdk_hash_destroy(manage->hash[i]);
-        dpdk_fib6_destroy(manage->fib[i]);
+    for (int i = 0; i < table->nic_count; i++) {
+        dpdk_hash_destroy(table->hash[i]);
+        dpdk_fib6_destroy(table->fib[i]);
     }
 
-    dpdk_free(manage);
+    dpdk_free(table);
 }
 
 static int _ip6_conf_info_cmp(const void *first, const void *second, size_t len)
@@ -114,21 +117,21 @@ static int _ip6_conf_info_cmp(const void *first, const void *second, size_t len)
     return memcmp(first, second, len);
 }
 
-static int _ip6_conf_manage_del_check(struct ip6_manage *manage, const struct ip6_info *info, int count)
+static int _ip6_conf_table_del_check(struct ip6_table *table, const struct ip6_info *info, int count)
 {
     int ret = 0;
     char ip_str[CACHE_LINE] = "";
     struct ip6_info *data = NULL;
     const struct ip6_info *one = NULL;
 
-    if (UNLIKELY(manage->ip_count - count < 0)) {
-        LOG_ERROR("Parameter exception: origin %d, delete %d", manage->ip_count, count);
+    if (UNLIKELY(table->ip_count - count < 0)) {
+        LOG_ERROR("Parameter exception: origin %d, delete %d", table->ip_count, count);
         return ERRCODE_INNER;
     }
 
     for (int i = 0; i < count; i++) {
         one = &info[i];
-        ret = dpdk_hash_lookup(manage->hash[one->port], (const void *)&one->addr, (void **)&data);
+        ret = dpdk_hash_lookup(table->hash[one->port], (const void *)&one->addr, (void **)&data);
         if (UNLIKELY(ret < 0)) {
             inet_ntop(AF_INET6, &one->addr, ip_str, sizeof(ip_str));
             LOG_ERROR("IP: %s, port: %d not exists", ip_str, one->port);
@@ -139,37 +142,37 @@ static int _ip6_conf_manage_del_check(struct ip6_manage *manage, const struct ip
     return 0;
 }
 
-static int _ip6_conf_manage_add(struct ip6_manage *manage, const struct ip6_info *one)
+static int _ip6_conf_table_add(struct ip6_table *table, const struct ip6_info *one)
 {
     int ret = 0;
     int nums = 0;
     struct ip6_info *store = NULL;
 
-    nums = manage->ip_count;
-    store = &manage->store[nums];
+    nums = table->ip_count;
+    store = &table->store[nums];
     *store = *one;
 
-    if (manage->master[one->port] == NULL && store->type == IP_MASTER) {
-        manage->master[one->port] = store;
+    if (table->master[one->port] == NULL && store->type == IP_MASTER) {
+        table->master[one->port] = store;
     }
 
-    ret = dpdk_fib6_add(manage->fib[one->port], &store->addr, store->mask, nums);
+    ret = dpdk_fib6_add(table->fib[one->port], &store->addr, store->mask, nums);
     if (UNLIKELY(ret != 0)) {
         LOG_ERROR("Failure dpdk_fib6_add: %s", strerror(-ret));
         return ERRCODE_INNER;
     }
 
-    ret = dpdk_hash_add_kv(manage->hash[one->port], &one->addr, store);
+    ret = dpdk_hash_add_kv(table->hash[one->port], &one->addr, store);
     if (UNLIKELY(ret != 0)) {
         LOG_ERROR("Failure dpdk_hash_add_kv: %s", strerror(-rte_errno));
         return ERRCODE_INNER;
     }
 
-    manage->ip_count += 1;
+    table->ip_count += 1;
     return 0;
 }
 
-static int _ip6_conf_manage_add_check(struct ip6_manage *manage, const struct ip6_info *info, int count)
+static int _ip6_conf_table_add_check(struct ip6_table *table, const struct ip6_info *info, int count)
 {
     int ret = 0;
     uint8_t mask = 0;
@@ -177,11 +180,11 @@ static int _ip6_conf_manage_add_check(struct ip6_manage *manage, const struct ip
     char ip_str[CACHE_LINE] = "";
     const struct ip6_info *one = NULL;
 
-    if (UNLIKELY(manage == NULL || manage->ip_count == 0)) {
+    if (UNLIKELY(table == NULL || table->ip_count == 0)) {
         return 0;
     }
 
-    if (UNLIKELY(manage->ip_count + count > IP6_BUCKET_MAX)) {
+    if (UNLIKELY(table->ip_count + count > IP6_BUCKET_MAX)) {
         LOG_ERROR("Maximum supported IP address count(%d) exceeded", IP6_BUCKET_MAX);
         return ERRCODE_IP_LIMIT_EXCEEDED;
     }
@@ -189,13 +192,13 @@ static int _ip6_conf_manage_add_check(struct ip6_manage *manage, const struct ip
     for (int i = 0; i < count; i++) {
         one = &info[i];
 
-        ret = dpdk_fib6_lookup(manage->fib[one->port], &one->addr, &next_hop, 1);
+        ret = dpdk_fib6_lookup(table->fib[one->port], &one->addr, &next_hop, 1);
         if (UNLIKELY(ret != 0)) {
             LOG_ERROR("Inner error.");
             return ERRCODE_INNER;
         }
 
-        if (UNLIKELY(ret == 0 && next_hop != DPDK_FIB6_DEFAULT && manage->store[next_hop].mask == one->mask)) {
+        if (UNLIKELY(ret == 0 && next_hop != DPDK_FIB6_DEFAULT && table->store[next_hop].mask == one->mask)) {
             mask = one->mask;
             inet_ntop(AF_INET6, &one->addr, ip_str, sizeof(ip_str));
             LOG_ERROR("IP address conflict - another IP(%s/%d) in the same subnet is already configured.", ip_str, mask);
@@ -206,56 +209,56 @@ static int _ip6_conf_manage_add_check(struct ip6_manage *manage, const struct ip
     return 0;
 }
 
-static int _ip6_conf_manage_create(void **dst, int nic_count, int hw_numa_id)
+static int _ip6_conf_table_create(void **dst, int nic_count, int hw_numa_id)
 {
-    struct ip6_manage *manage = NULL;
+    struct ip6_table *table = NULL;
 
-    manage = dpdk_malloc_numa(sizeof(*manage), hw_numa_id);
-    if (UNLIKELY(manage == NULL)) {
+    table = dpdk_malloc_numa(sizeof(*table), hw_numa_id);
+    if (UNLIKELY(table == NULL)) {
         LOG_ERROR("HA NUMA(%d) OOM.", hw_numa_id);
         return ERRCODE_OOM;
     }
 
-    memset(manage, 0, sizeof(*manage));
+    memset(table, 0, sizeof(*table));
 
-    manage->ip_count = 0;
-    manage->nic_count = nic_count;
+    table->ip_count = 0;
+    table->nic_count = nic_count;
 
     for (int i = 0; i < nic_count; i++) {
-        manage->hash[i] = dpdk_hash_create(IP6_BUCKET_MAX, sizeof(struct dpdk_ip6_addr), hw_numa_id, _ip6_conf_info_cmp);
-        if (UNLIKELY(manage->hash[i] == NULL)) {
+        table->hash[i] = dpdk_hash_create(IP6_BUCKET_MAX, sizeof(struct dpdk_ip6_addr), hw_numa_id, _ip6_conf_info_cmp);
+        if (UNLIKELY(table->hash[i] == NULL)) {
             goto _quit;
         }
     }
 
     for (int i = 0; i < nic_count; i++) {
-        manage->fib[i] = dpdk_fib6_create(hw_numa_id, IP6_BUCKET_MAX);
-        if (UNLIKELY(manage->fib[i] == NULL)) {
+        table->fib[i] = dpdk_fib6_create(hw_numa_id, IP6_BUCKET_MAX);
+        if (UNLIKELY(table->fib[i] == NULL)) {
             goto _quit;
         }
     }
 
-    *dst = manage;
+    *dst = table;
     return 0;
 
 _quit:
-    _ip6_conf_manage_destroy(manage);
+    _ip6_conf_table_destroy(table);
     return ERRCODE_OOM;
 }
 
-static int _ip6_conf_manage_append(struct ip6_manage *dst, const struct ip6_manage *src, const struct ip6_info *info, int count)
+static int _ip6_conf_table_append(struct ip6_table *dst, const struct ip6_table *src, const struct ip6_info *info, int count)
 {
     int ret = 0;
 
     for (int i = 0; i < src->ip_count; i++) {
-        ret = _ip6_conf_manage_add(dst, &src->store[i]);
+        ret = _ip6_conf_table_add(dst, &src->store[i]);
         if (UNLIKELY(ret != 0)) {
             return ret;
         }
     }
 
     for (int i = 0; i < count; i++) {
-        ret = _ip6_conf_manage_add(dst, &info[i]);
+        ret = _ip6_conf_table_add(dst, &info[i]);
         if (UNLIKELY(ret != 0)) {
             return ret;
         }
@@ -264,7 +267,7 @@ static int _ip6_conf_manage_append(struct ip6_manage *dst, const struct ip6_mana
     return 0;
 }
 
-static int _ip6_conf_manage_delete(struct ip6_manage *dst, const struct ip6_manage *src, const struct ip6_info *info, int count)
+static int _ip6_conf_table_delete(struct ip6_table *dst, const struct ip6_table *src, const struct ip6_info *info, int count)
 {
     int ret = 0;
     bool need_delete = false;
@@ -287,7 +290,7 @@ static int _ip6_conf_manage_delete(struct ip6_manage *dst, const struct ip6_mana
             continue;
         }
 
-        ret = _ip6_conf_manage_add(dst, store);
+        ret = _ip6_conf_table_add(dst, store);
         if (UNLIKELY(ret != 0)) {
             return ret;
         }
@@ -296,22 +299,22 @@ static int _ip6_conf_manage_delete(struct ip6_manage *dst, const struct ip6_mana
     return 0;
 }
 
-void ip6_conf_manage_destroy(void *ptr)
+void ip6_conf_table_destroy(void *ptr)
 {
-    _ip6_conf_manage_destroy(ptr);
+    _ip6_conf_table_destroy(ptr);
 }
 
-bool ip6_conf_manage_ip_is_local(const void *arg, const struct dpdk_ip6_addr *addr, uint8_t port)
+bool ip6_conf_table_ip_is_local(const void *arg, const struct dpdk_ip6_addr *addr, uint8_t port)
 {
     int ret = 0;
     void *data = NULL;
-    const struct ip6_manage *manage = (const struct ip6_manage *)arg;
+    const struct ip6_table *table = (const struct ip6_table *)arg;
 
-    if (manage == NULL) {
+    if (table == NULL) {
         return false;
     }
 
-    ret = dpdk_hash_lookup(manage->hash[port], addr, &data);
+    ret = dpdk_hash_lookup(table->hash[port], addr, &data);
     if (ret != 0) {
         return false;
     }
@@ -367,59 +370,59 @@ int ip6_ndp_na_mcast_gen(struct dpdk_mbuf *mbuf, uint16_t port, const struct dpd
     return 0;
 }
 
-int ip6_conf_manage_create_and_append(void **dst, void *src, const struct ip6_info *info, int count, int hw_numa_id)
+int ip6_conf_table_create_and_append(void **dst, void *src, const struct ip6_info *info, int count, int hw_numa_id)
 {
     int ret = 0;
-    struct ip6_manage *one = src;
+    struct ip6_table *one = src;
 
     if (UNLIKELY(dst == NULL || src == NULL || count < 0)) {
         LOG_ERROR("Parameter exception(dst: %p, src: %p, count: %d).", dst, src, count);
         return ERRCODE_INNER;
     }
 
-    ret = _ip6_conf_manage_add_check(one, info, count);
+    ret = _ip6_conf_table_add_check(one, info, count);
     if (UNLIKELY(ret != 0)) {
         return ret;
     }
 
-    ret = _ip6_conf_manage_create(dst, one->nic_count, hw_numa_id);
+    ret = _ip6_conf_table_create(dst, one->nic_count, hw_numa_id);
     if (UNLIKELY(ret != 0)) {
         return ret;
     }
 
-    ret = _ip6_conf_manage_append(*dst, one, info, count);
+    ret = _ip6_conf_table_append(*dst, one, info, count);
     if (UNLIKELY(ret != 0)) {
-        _ip6_conf_manage_destroy(*dst);
+        _ip6_conf_table_destroy(*dst);
         return ret;
     }
 
     return 0;
 }
 
-int ip6_conf_manage_create_and_delete(void **dst, void *src, const struct ip6_info *info, int count, int hw_numa_id)
+int ip6_conf_table_create_and_delete(void **dst, void *src, const struct ip6_info *info, int count, int hw_numa_id)
 {
     int ret = 0;
-    struct ip6_manage *one = src;
+    struct ip6_table *one = src;
 
     if (UNLIKELY(dst == NULL || src == NULL || count < 0)) {
         LOG_ERROR("Parameter exception(dst: %p, src: %p, count: %d).", dst, src, count);
         return ERRCODE_INNER;
     }
 
-    ret = _ip6_conf_manage_del_check(one, info, count);
+    ret = _ip6_conf_table_del_check(one, info, count);
     if (UNLIKELY(ret != 0)) {
         return ret;
     }
 
-    ret = _ip6_conf_manage_create(dst, one->nic_count, hw_numa_id);
+    ret = _ip6_conf_table_create(dst, one->nic_count, hw_numa_id);
     if (UNLIKELY(ret != 0)) {
-        _ip6_conf_manage_destroy(*dst);
+        _ip6_conf_table_destroy(*dst);
         return ret;
     }
 
-    ret = _ip6_conf_manage_delete(*dst, one, info, count);
+    ret = _ip6_conf_table_delete(*dst, one, info, count);
     if (UNLIKELY(ret != 0)) {
-        _ip6_conf_manage_destroy(*dst);
+        _ip6_conf_table_destroy(*dst);
         return ret;
     }
 
@@ -436,9 +439,9 @@ static INLINE bool _ip6_is_local(int port, const void *key)
 {
     int ret = 0;
     void *data = NULL;
-    struct ip6_manage *manage = rcu_dereference(tlv_th_cfg->ip6_manage);
+    struct ip6_table *table = s_ip6_table;
 
-    ret = dpdk_hash_lookup(manage->hash[port], key, &data);
+    ret = dpdk_hash_lookup(table->hash[port], key, &data);
     return (ret >= 0) ? true : false;
 }
 
@@ -450,7 +453,7 @@ static INLINE int _ip6_is_local_bulk(void *data[], uint64_t result[], int count)
     void **outs = tlv_cache2->data;
 
     struct dpdk_ip6_hdr *ip6hdr = NULL;
-    struct ip6_manage *manage = rcu_dereference(tlv_th_cfg->ip6_manage);
+    struct ip6_table *table = rcu_dereference(tlv_th_cfg->ip6_table);
 
     UNROLL_LOOP_8(i, count, {
         mbuf = data[i];
@@ -461,18 +464,18 @@ static INLINE int _ip6_is_local_bulk(void *data[], uint64_t result[], int count)
 
     // The caller must ensure that the incoming mbuf belongs to a single port.
     mbuf = data[0];
-    return dpdk_hash_lookup_bulk(manage->hash[mbuf->port], (const void **)keys, count, result, outs);
+    return dpdk_hash_lookup_bulk(table->hash[mbuf->port], (const void **)keys, count, result, outs);
 }
 
 static INLINE bool _ip6_port_ip_get(int port, struct dpdk_ip6_addr *addr)
 {
-    struct ip6_manage *manage = rcu_dereference(tlv_th_cfg->ip6_manage);
+    struct ip6_table *table = s_ip6_table;
 
-    if (UNLIKELY(manage->master[port] == NULL)) {
+    if (UNLIKELY(table->master[port] == NULL)) {
         return false;
     }
 
-    *addr = manage->master[port]->addr;
+    *addr = table->master[port]->addr;
     return true;
 }
 
@@ -774,7 +777,7 @@ static INLINE bool _ip6_ndp_table_update(int port, const struct dpdk_ip6_addr *a
 {
     int ret = 0;
     struct ndp_item *data = NULL;
-    struct ndp_table *table = ((struct proto_header *)tlv_dp->protocol)->nt;
+    struct ndp_table *table = s_ndp_table;
 
     static __thread int s_ndp_cache_count = 0;
     static __thread void *s_ndp_cache[NDP_GC_MAX] = {NULL};
@@ -1117,12 +1120,12 @@ _quit:
     return NULL;
 }
 
-void *ip6_manage_startup(int nic_count, int hw_numa_id)
+void *ip6_table_startup(int nic_count, int hw_numa_id)
 {
     int ret = 0;
     void *dst = NULL;
 
-    ret = _ip6_conf_manage_create(&dst, nic_count, hw_numa_id);
+    ret = _ip6_conf_table_create(&dst, nic_count, hw_numa_id);
     if (UNLIKELY(ret != 0)) {
         return NULL;
     }
@@ -1201,9 +1204,9 @@ void ip6_process(void *data[], int count)
     }
 }
 
-void ip6_manage_destroy(void *ptr)
+void ip6_table_destroy(void *ptr)
 {
-    _ip6_conf_manage_destroy(ptr);
+    _ip6_conf_table_destroy(ptr);
 }
 
 void ip6_ndp_refresh(void)
@@ -1213,7 +1216,7 @@ void ip6_ndp_refresh(void)
     struct ndp_item *cur = NULL;
     struct ndp_item *next = NULL;
     uint32_t cur_time = tlv_dp->off_time;
-    struct ndp_table *nt = ((struct proto_header *)tlv_dp->protocol)->nt;
+    struct ndp_table *nt = s_ndp_table;
 
     static __thread void *s_ndp_gc[NDP_GC_MAX] = {NULL};
 
@@ -1269,4 +1272,10 @@ void ip6_ndp_update_or_create(void *data)
     }
 
     _ip6_ndp_table_update(mbuf->port, addr, (struct dpdk_mac *)ndpopt->data, override);
+}
+
+void ip6_thread_config_refresh(void *ip6_table, void *ndp_table)
+{
+    s_ip6_table = ip6_table;
+    s_ndp_table = ndp_table;
 }

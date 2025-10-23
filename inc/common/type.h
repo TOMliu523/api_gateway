@@ -29,9 +29,12 @@
  */
 struct thread_config {
     void *iface;
-    void *ip4_manage;
-    void *ip6_manage;
+    void *ip4_table;
+    void *ip6_table;
     void *rs_table;
+    void *pool_table;
+    void *snat_table;
+    void *vs_table;
     // ... other per-NUMA modules
 } ALIGNED(CACHE_LINE);
 
@@ -62,7 +65,8 @@ struct pkt_classifier {
         ip6,
         icmp,
         icmp6,
-        tcp,
+        tcp4,
+        tcp6,
         drop,
         notify,
         pending,

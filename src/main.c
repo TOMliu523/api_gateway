@@ -18,6 +18,7 @@
 #include "log.h"
 #include "api.h"
 #include "type.h"
+#include "runtime.h"
 #include "dpdk_init.h"
 #include "dataplane.h"
 
@@ -166,7 +167,13 @@ int main(int argc, char *argv[])
     s_root = root_init(&info);
     ret = pthread_create(&tid, NULL, api_startup, s_root);
     if (ret != 0) {
-        LOG_ERROR("startup api thread failure: %s", strerror(ret));
+        LOG_ERROR("Startup api thread failure: %s", strerror(ret));
+        return EXIT_FAILURE;
+    }
+
+    ret = pthread_create(&tid, NULL, runtime_mgmt_startup, s_root);
+    if (ret != 0) {
+        LOG_ERROR("Startup running thread failure: %s", strerror(ret));
         return EXIT_FAILURE;
     }
 

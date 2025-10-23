@@ -6,8 +6,8 @@ module v1 {
     include account;
 
     include pool;
-    //include vserver;
-    //include snat;
+    include snat_pool;
+    include vserver;
 
     revision "2025-05-31" {
         description "Init version";

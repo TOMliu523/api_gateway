@@ -14,7 +14,6 @@
 #include "list.h"
 #include "dpdk_ip4.h"
 #include "dpdk_ip6.h"
-#include "protocol.h"
 #include "dpdk_port.h"
 #include "dpdk_core.h"
 #include "dpdk_common.h"
@@ -341,7 +340,7 @@ void l2_arp_refresh(int (*func)(uint32_t *, uint32_t, int))
     struct arp_item *cur = NULL;
     struct arp_item *next = NULL;
     uint32_t time = tlv_dp->off_time;
-    struct arp_table *table = ((struct proto_header *)tlv_dp->protocol)->at;
+    struct arp_table *table = s_arp_table;
 
     static __thread void *s_arp_gc[ARP_GC_MAX] = {NULL};
 
@@ -385,11 +384,10 @@ static void _l2_arp_parse(void *data[], int count)
 {
     uint16_t port = 0;
     struct pkt_tx *tx = NULL;
-    struct dpdk_arp_hdr *arp = NULL;
     struct dpdk_mbuf *mbuf = NULL;
+    struct dpdk_arp_hdr *arp = NULL;
+    struct arp_table *at = s_arp_table;
     struct dpdk_arp_hdr_data *arp_data = NULL;
-    struct proto_header *proto = tlv_dp->protocol;
-    struct arp_table *at = proto->at;
 
     int drop_count = tlv_drop->count;
     int notify_count = tlv_notify->count;
@@ -480,8 +478,7 @@ static void _l2_arp_parse(void *data[], int count)
 void l2_arp_update_or_create(void *arg)
 {
     struct dpdk_mbuf *mbuf = arg;
-    struct proto_header *proto = tlv_dp->protocol;
-    struct arp_table *at = proto->at;
+    struct arp_table *at = s_arp_table;
     struct dpdk_arp_hdr *arp = dpdk_pktmbuf_arp(mbuf);
     struct dpdk_arp_hdr_data *arp_data = &arp->arp_data;
 
@@ -661,7 +658,7 @@ void *l2_thread_mac_create(int nic_count)
 {
     struct dpdk_mac *mac = NULL;
 
-    mac = dpdk_malloc(nic_count * sizeof(*mac));
+    mac = dpdk_malloc_numa(nic_count * sizeof(*mac), tlv_hw_numa_id);
     if (UNLIKELY(mac == NULL)) {
         LOG_ERROR("OOM");
         return NULL;
@@ -687,4 +684,9 @@ void l2_thread_mac_destroy(void *ptr)
 void l2_thread_port_mac(uint16_t port, struct dpdk_mac *mac)
 {
     *mac = s_mac[port];
+}
+
+void l2_thread_config_refresh(void *arg)
+{
+    s_arp_table = arg;
 }

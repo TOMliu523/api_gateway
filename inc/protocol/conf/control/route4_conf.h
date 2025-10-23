@@ -28,7 +28,7 @@ struct route4_item {
     uint8_t mask;                // Subnet mask length (e.g., 24 for /24)
     uint8_t route_type;          // Route protocol type (see ROUTE_TYPE enum)
     uint8_t priority;            // Route priority (lower value means higher priority)
-    uint8_t interface;           // Egress interface ID
+    uint8_t port;           // Egress interface ID
     uint8_t valid;               // Route validity flag (1 = valid, 0 = invalid)
     uint32_t last_access_time;   // Timestamp of last access (used for aging/LRU)
     uint32_t last_probe_time;    // Timestamp of last probe or activity (e.g., ARP)
@@ -49,3 +49,5 @@ extern int route4_conf_create_and_delete(void **dst,
                                          bool is_route);
 extern void route4_conf_table_get(void *src, struct route4_item **item, int *count);
 extern void route4_conf_destroy(void *ptr);
+
+extern int route4_conf_mask_find(uint8_t *, void *, uint32_t, uint16_t);

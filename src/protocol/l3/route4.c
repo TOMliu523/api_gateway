@@ -31,6 +31,8 @@ struct route4_table {
 	struct route4_item store[ROUTE4_ITEM_MAX];
 };
 
+static __thread struct route4_table *s_route4_table;
+
 static INLINE bool _route4_conf_is_broadcast_ip(uint32_t local_ip_be, uint8_t mask, uint32_t next_hop_be)
 {
     uint32_t local_ip = dpdk_be_to_cpu_32(local_ip_be);
@@ -189,7 +191,7 @@ static int _route4_conf_add_check(struct route4_table *route, const struct route
          * Check for the existence of a directly connected route.
          */
         do {
-            if (route == NULL || one->interface == L3_INTERFACE_INVALID) {
+            if (route == NULL || one->port == L3_INTERFACE_INVALID) {
                 break;
             }
 
@@ -222,7 +224,7 @@ static int _route4_conf_add_check(struct route4_table *route, const struct route
          * The address is neither a broadcast address nor a multicast address.
          */
         do {
-            if (route == NULL || one->interface == L3_INTERFACE_INVALID) {
+            if (route == NULL || one->port == L3_INTERFACE_INVALID) {
                 break;
             }
 
@@ -256,11 +258,11 @@ static int _route4_conf_add_check(struct route4_table *route, const struct route
          * No local IP references
          */
         do {
-            if (one->interface == L3_INTERFACE_INVALID) {
+            if (one->port == L3_INTERFACE_INVALID) {
                 break;
             }
 
-            if (ip4_conf_manage_ip_is_local(arg, one->nexthop, one->interface)) {
+            if (ip4_conf_table_ip_is_local(arg, one->nexthop, one->port)) {
                 inet_ntop(AF_INET, &one->nexthop, ip_str, sizeof(ip_str));
                 LOG_ERROR("The next hop is a local IP(%s) address.", ip_str);
                 return ERRCODE_ROUTE_LOCAL_IP;
@@ -291,7 +293,7 @@ static int _route4_conf_del_check(const struct route4_table *route, const struct
             }
         } else {
             for (j = 0; j < route->store_count; j++) {
-                if (store->dst_subnet == route->store[j].dst_subnet && store->interface == route->store[j].interface) {
+                if (store->dst_subnet == route->store[j].dst_subnet && store->port == route->store[j].port) {
                     hit = true;
                     break;
                 }
@@ -359,7 +361,7 @@ static int _route4_conf_delete(struct route4_table *dst, struct route4_table *sr
             }
         } else {
             for (int j = 0; j < count; j++) {
-                if (one->dst_subnet == item[j].dst_subnet && one->interface == item[j].interface) {
+                if (one->dst_subnet == item[j].dst_subnet && one->port == item[j].port) {
                     hit = true;
                     break;
                 }
@@ -374,6 +376,32 @@ static int _route4_conf_delete(struct route4_table *dst, struct route4_table *sr
         }
     }
 
+    return 0;
+}
+
+int route4_conf_mask_find(uint8_t *p_mask, void *arg, uint32_t ip, uint16_t port)
+{
+    int n = 0;
+    uint64_t next_hop = 0;
+    struct route4_table *table = arg;
+
+    if (UNLIKELY(p_mask == NULL || arg == NULL)) {
+        LOG_ERROR("Invalid parameter.");
+        return ERRCODE_PARAMETER_INVALID;
+    }
+
+    n = dpdk_fib_lookup(table->fib, &ip, &next_hop, 1);
+    if (UNLIKELY(n != 0)) {
+        LOG_ERROR("Search error.");
+        return ERRCODE_ROUTE_NEXTHOP_INVALID;
+    }
+
+    if (table->store[next_hop].port != port) {
+        LOG_ERROR("Search error");
+        return ERRCODE_ROUTE_NEXTHOP_INVALID;
+    }
+
+    *p_mask = table->store[next_hop].mask;
     return 0;
 }
 
@@ -451,3 +479,37 @@ void route4_conf_table_get(void *src, struct route4_item **item, int *count)
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
 // Data plane interface
+
+void *route4_thread_create(int hw_numa_id)
+{
+    struct route4_table *table = NULL;
+
+    table = dpdk_malloc_numa(sizeof(*table), hw_numa_id);
+    if (UNLIKELY(table == NULL)) {
+        LOG_ERROR("OOM.");
+        return NULL;
+    }
+
+    table->fib = NULL;
+    table->default_id = DPDK_FIB_DEFAULT;
+    table->store_count = 0;
+
+    return table;
+}
+
+void route4_thread_destroy(void *ptr)
+{
+    struct route4_table *table = ptr;
+
+    if (ptr == NULL) {
+        return;
+    }
+
+    dpdk_fib_destroy(table->fib);
+    dpdk_free(table);
+}
+
+void route4_thread_config_refresh(void *arg)
+{
+    s_route4_table = arg;
+}

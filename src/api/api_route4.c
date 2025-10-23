@@ -63,7 +63,7 @@ static int _api_route4_post_parse(struct route4_item **pp_item, int *p_count, vo
     char ip_str[CACHE_LINE] = "";
     struct route4_item *item = NULL;
 
-    array = api_v1_modify_list(json, "route4", "entrys");
+    array = api_v1_modify_list_old(json, "route4", "entrys");
     count = json_array_size(array);
 
     item = _api_route4_item_alloc(count);
@@ -92,8 +92,8 @@ static int _api_route4_post_parse(struct route4_item **pp_item, int *p_count, vo
         inet_pton(AF_INET, nexthop, &one->nexthop);
 
         name = json_string_value(json_object_get(obj, "interface"));
-        one->interface = dpdk_port_by_name_get(name);
-        if (one->interface == (uint16_t)-1) {
+        one->port = dpdk_port_by_name_get(name);
+        if (one->port == (uint8_t)-1) {
             code = ERRCODE_PORT_NOT_EXIST;
             goto _quit;
         }
@@ -107,8 +107,8 @@ static int _api_route4_post_parse(struct route4_item **pp_item, int *p_count, vo
             goto _quit;
         }
 
-        if (!dpdk_port_is_up(one->interface)) {
-            LOG_ERROR("Ethdev port(%d) startup failure.", one->interface);
+        if (!dpdk_port_is_up(one->port)) {
+            LOG_ERROR("Ethdev port(%d) startup failure.", one->port);
             code = ERRCODE_PORT_IS_DOWN;
             goto _quit;
         }
@@ -130,7 +130,7 @@ static int _api_route4_del_parse(struct route4_item **pp_item, int *p_count, voi
     void *array = NULL;
     struct route4_item *item = NULL;
 
-    array = api_v1_delete_list(json, "route4", "entrys");
+    array = api_v1_delete_list_old(json, "route4", "entrys");
     count = json_array_size(array);
 
     item = _api_route4_item_alloc(count);
@@ -171,7 +171,7 @@ static int _api_route4_table_add(struct root *root, void *route[], struct route4
 
     dp = root->dpdk_thread[0];
     proto = dp->protocol;
-    ret = route4_conf_create_and_append(&route[dp->numa_id], proto->route4, item, count, dp->hw_numa_id, dp->tc->ip4_manage);
+    ret = route4_conf_create_and_append(&route[dp->numa_id], proto->route4, item, count, dp->hw_numa_id, dp->tc->ip4_table);
     if (ret != 0) {
         return ret;
     }
@@ -183,7 +183,7 @@ static int _api_route4_table_add(struct root *root, void *route[], struct route4
         }
 
         hw_numa_id = root->dpdk_thread[i]->hw_numa_id;
-        ret = route4_conf_create_and_append(&route[i], route[dp->numa_id], NULL, 0, hw_numa_id, dp->tc->ip4_manage);
+        ret = route4_conf_create_and_append(&route[i], route[dp->numa_id], NULL, 0, hw_numa_id, dp->tc->ip4_table);
         if (ret != 0) {
             goto _quit;
         }
@@ -218,7 +218,7 @@ static int _api_route4_table_del(struct root *root, void *route[], struct route4
         }
 
         hw_numa_id = root->dpdk_thread[i]->hw_numa_id;
-        code = route4_conf_create_and_append(&route[i], route[dp->numa_id], NULL, 0, hw_numa_id, dp->tc->ip4_manage);
+        code = route4_conf_create_and_append(&route[i], route[dp->numa_id], NULL, 0, hw_numa_id, dp->tc->ip4_table);
         if (code != 0) {
             goto _quit;
         }
@@ -333,7 +333,7 @@ API_GET(/v1/network/route4, route4)
 
     array = json_array();
     if (array == NULL) {
-        return api_fail(ERRCODE_INNER);
+        return api_fail(ERRCODE_OOM);
     }
 
     for (int i = 0; i < count; i++) {
@@ -353,12 +353,12 @@ API_GET(/v1/network/route4, route4)
 
         inet_ntop(AF_INET, &item->dst_subnet, ip_str, sizeof(ip_str));
         api_json_add_string(one, "net", ip_str);
-        api_json_add_integer(one, "mask", item->mask);
+        api_json_add_long(one, "mask", item->mask);
 
         inet_ntop(AF_INET, &item->nexthop, ip_str, sizeof(ip_str));
         api_json_add_string(one, "nexthop", ip_str);
 
-        name = dpdk_port_id_to_name(item->interface);
+        name = dpdk_port_id_to_name(item->port);
         api_json_add_string(one, "interface", name);
 
         api_json_add_string(one, "owner", route_type[item->route_type]);

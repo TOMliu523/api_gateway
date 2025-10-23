@@ -6,3 +6,7 @@
  ****************************************************************************/
 
 #pragma once
+
+extern void *route6_thread_create(int);
+extern void route6_thread_destroy(void *);
+extern void route6_thread_config_refresh(void *arg);

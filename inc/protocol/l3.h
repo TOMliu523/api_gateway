@@ -33,6 +33,7 @@ struct ip4_info {
     uint16_t port;
     uint8_t mask;
     uint8_t type; // enum IP_TYPE
+    uint32_t refcnt;
 };
 
 struct ip6_info {
@@ -40,6 +41,7 @@ struct ip6_info {
     uint16_t port;
     uint8_t mask;
     uint8_t type;
+    uint32_t refcnt;
 };
 
 #endif // __L3_H__

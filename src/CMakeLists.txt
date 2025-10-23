@@ -5,12 +5,14 @@ set(API api)
 set(DATA data)
 set(DPDK dpdk)
 set(COMMON common)
+set(RUNTIME runtime)
 set(PROTOCOL protocol)
 set(DATAPLANE dataplane)
 
 set(API_INC ${INC}/api)
 set(DPDK_INC ${INC}/dpdk)
 set(COMMON_INC ${INC}/common)
+set(RUNTIME_INC ${INC}/runtime)
 set(PROTOCOL_INC ${INC}/protocol)
 set(DATAPLANE_INC ${INC}/dataplane)
 
@@ -25,9 +27,10 @@ pkg_check_modules(JANSSON REQUIRED IMPORTED_TARGET jansson)
 pkg_check_modules(JEMALLOC REQUIRED IMPORTED_TARGET jemalloc)
 pkg_check_modules(OPENSSL REQUIRED IMPORTED_TARGET openssl)
 
-add_subdirectory(${COMMON})
 add_subdirectory(${API})
 add_subdirectory(${DPDK})
+add_subdirectory(${COMMON})
+add_subdirectory(${RUNTIME})
 add_subdirectory(${PROTOCOL})
 add_subdirectory(${DATAPLANE})
 
@@ -35,6 +38,7 @@ add_executable(${PROJECT_NAME} main.c)
 target_include_directories(${PROJECT_NAME} PRIVATE ${API_INC})
 target_include_directories(${PROJECT_NAME} PRIVATE ${DPDK_INC})
 target_include_directories(${PROJECT_NAME} PRIVATE ${COMMON_INC})
+target_include_directories(${PROJECT_NAME} PRIVATE ${RUNTIME_INC})
 target_include_directories(${PROJECT_NAME} PRIVATE ${DATAPLANE_INC})
 target_include_directories(${PROJECT_NAME} PRIVATE ${DPDK_INCLUDE_DIRS})
 
@@ -44,6 +48,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
                       ${API}
                       ${DPDK}
                       ${COMMON}
+                      ${RUNTIME}
                       ${PROTOCOL}
                       ${DATAPLANE}
                       -L${TP_LIB} -lmongoose -ltimeout

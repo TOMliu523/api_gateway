@@ -11,6 +11,7 @@
 
 #include <jansson.h>
 
+#include "conf.h"
 #include "list.h"
 #include "macro.h"
 
@@ -184,18 +185,35 @@ extern enum API_STATUS api_store_delete(const struct api_method_node *api, const
 extern int api_db_query(const char *path, void **obj);
 
 extern int api_account_desensitize(char *dst, size_t max, const char *passwd, size_t len);
+
 extern int api_string_to_json(const char *string, void **json);
 extern int api_json_to_string(void *json, char **string);
+extern int api_json_add_object(void *json, const char *name, void *obj);
+extern int api_json_array_append(void *array, void *obj);
 extern int api_json_add_string(void *json, const char *name, const char *value);
-extern int api_json_add_integer(void *json, const char *name, json_int_t value);
+extern int api_json_add_long(void *json, const char *name, long value);
+extern int api_json_object(void **obj);
+extern int api_json_array(void **arr);
+extern void api_json_free(void *ptr);
 
+extern const char *api_json_get_string(void *obj, const char *name);
+extern int api_json_get_long(uint64_t *value, void *obj, const char *name);
+
+extern void api_config_update(void **[], void *[], int, void (*)(void *));
+extern void api_thread_config_update(void *, void **[], void *[], void (*)(void *));
 extern void api_numa_config_update(void *, void **[], void *[], void (*)(void *[], int));
 
+extern int api_string_to_addr(int *af, union inet_addr *addr, const char *str);
+
 extern void *api_malloc(size_t);
+extern void *api_realloc(void *, size_t);
 extern void *api_malloc_numa(size_t, int);
 extern void api_free(void *);
 
-static INLINE void *api_v1_modify_list(void *json, const char *module_name, const char *list_name)
+extern int api_v1_modify_list(void **, size_t *, void *, const char *, const char *);
+extern int api_v1_delete_list(void **, size_t *, void *, const char *, const char *);
+
+static INLINE void *api_v1_modify_list_old(void *json, const char *module_name, const char *list_name)
 {
     char buffer[256] = "";
 
@@ -203,12 +221,17 @@ static INLINE void *api_v1_modify_list(void *json, const char *module_name, cons
     return json_object_get(json_object_get(json, buffer), list_name);
 }
 
-static INLINE void *api_v1_delete_list(void *json, const char *module_name, const char *list_name)
+static INLINE void *api_v1_delete_list_old(void *json, const char *module_name, const char *list_name)
 {
     char buffer[256] = "";
 
     snprintf(buffer, sizeof(buffer), "/v1:%s/%s", module_name, list_name);
     return json_object_get(json, buffer);
+}
+
+static INLINE void *api_json_array_get(void *array, int id)
+{
+    return json_array_get(array, id);
 }
 
 #endif // __API_INNER_H__

@@ -10,16 +10,20 @@ submodule pool {
         prefix "inet";
     }
 
+    import types {
+        prefix "tys";
+    }
+
     /********************************************************************
      * Backend server repository: global rserver list
-     * Each entry is uniquely identified by the composite key (ip, port).
+     * Each entry is uniquely identified by the composite key (addr, port).
      ********************************************************************/
     container rserver {
         list entrys {
-            key "ip port";
-            description "Global reusable backend server repository. Key = (ip. port).";
+            key "addr port";
+            description "Global reusable backend server repository. Key = (addr. port).";
 
-            leaf ip {
+            leaf addr {
                 mandatory true;
                 type inet:ip-address;
                 description "IPv4 or IPv6 address.";
@@ -31,14 +35,14 @@ submodule pool {
                 description "TCP/UDP port number (0 .. 65535).";
             }
 
-            // TODO 
+            // TODO
         }
     }
 
     /***********************************************************************
      * Pool definition: referencing rserver entries from the global list.
      * - Local rserver list uses leafrefs to point to the global repository.
-     * - Key is (ip, port), ensuring uniqueness.
+     * - Key is (addr, port), ensuring uniqueness.
      * - rs_count must equal the number of referenced rservers.
      ***********************************************************************/
     container pool {
@@ -47,17 +51,30 @@ submodule pool {
             description "Virtual service pool definition.";
 
             leaf name {
-                mandatory true;
-                type string {
-                    pattern "[-_.0-9a-zA-Z]{1,128}";
+                type tys:common-name;
+                description "Pool name (1–127 characters, alphanumeric, dash, underscore, dot).";
+            }
+
+            leaf algo {
+                type enumeration {
+                    enum rr {
+                        description "Round Robin (default)";
+                    }
+                    enum random {
+                        description "Random selection";
+                    }
+                    enum wrr {
+                        description "Weighted Round Robin";
+                    }
                 }
-                description "Pool name (1–128 characters, alphanumeric, dash, underscore, dot).";
+                default "rr";
+                description "Algorithm used for real server selection. Default is Round Robin.";
             }
 
             leaf rs_count {
                 mandatory true;
-                type uint32 { 
-                    range "1 .. 200000"; 
+                type uint32 {
+                    range "1 .. 200000";
                 }
                 description "Number of real servers in the pool.";
                 must 'count(./rserver) = ./rs_count' {
@@ -65,12 +82,12 @@ submodule pool {
                 }
             }
 
-            /*list rserver {
-                key "ip port";
-                description "References to global rserver entries by (ip, port). No local attributes duplicated.";
-                leaf ip {
+            list rserver {
+                key "addr port";
+                description "References to global rserver entries by (addr, port). No local attributes duplicated.";
+                leaf addr {
                     type leafref {
-                        path "/v1:rserver/v1:entrys/v1:ip";
+                        path "/v1:rserver/v1:entrys/v1:addr";
                     }
                     mandatory true;
                     description "Reference to global rserver IP address.";
@@ -78,14 +95,14 @@ submodule pool {
 
                 leaf port {
                     type leafref {
-                        path "/v1:rserver/v1:entrys[v1:ip = current()/../v1:ip]/v1:port";
+                        path "/v1:rserver/v1:entrys[v1:addr = current()/../v1:addr]/v1:port";
                     }
                     mandatory true;
                     description "Reference to global rserver port number for the given IP.";
                 }
 
                 // TODO
-            }*/
+            }
         }
     }
 }

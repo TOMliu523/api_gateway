@@ -6,7 +6,6 @@
 
 #include <stdbool.h>
 #include <arpa/inet.h>
-#include <linux/netfilter.h>
 
 #include <jansson.h>
 #include <sysrepo.h>
@@ -68,7 +67,7 @@ static int _api_ip4_obj_gen(void *array, sr_val_t *val, int cnt)
             if (len >= 3 && strcmp(xpath + len - 3, "/ip") == 0) {
                 ret = api_json_add_string(obj, "ip", val[j].data.string_val);
             } else if (len >= 5 && strcmp(xpath + len - 5, "/mask") == 0) {
-                ret = api_json_add_integer(obj, "mask", val[j].data.uint8_val);
+                ret = api_json_add_long(obj, "mask", val[j].data.uint8_val);
             } else if (len >= 5 && strcmp(xpath + len - 5, "/type") == 0) {
                 ret = api_json_add_string(obj, "type", val[j].data.string_val);
             } else if (len >= 5 && strcmp(xpath + len - 5, "/name") == 0) {
@@ -105,11 +104,11 @@ static INLINE void _api_ip4_broadcast_free(void **arp, int count)
     dpdk_pktmbuf_push(arp, count);
 }
 
-static INLINE void _api_ip4_manage_numa_free(void *manage[], int count)
+void api_ip4_table_numa_free(void *table[], int count)
 {
     for (int i = 0; i < count; i++) {
-        if (manage[i] != NULL) {
-            ip4_manage_destroy(manage[i]);
+        if (table[i] != NULL) {
+            ip4_table_destroy(table[i]);
         }
     }
 }
@@ -185,7 +184,7 @@ static INLINE int _api_ip4_post_parse_count(void *json)
 {
     void *array = NULL;
 
-    array = api_v1_modify_list(json, IP4_MODULE_NAME, IP4_LIST_NAME);
+    array = api_v1_modify_list_old(json, IP4_MODULE_NAME, IP4_LIST_NAME);
     return json_array_size(array);
 }
 
@@ -193,7 +192,7 @@ static INLINE int _api_ip4_del_parse_count(void *json)
 {
     void *array = NULL;
 
-    array = api_v1_delete_list(json, IP4_MODULE_NAME, IP4_LIST_NAME);
+    array = api_v1_delete_list_old(json, IP4_MODULE_NAME, IP4_LIST_NAME);
     return json_array_size(array);
 }
 
@@ -203,7 +202,7 @@ static enum ERRCODE _api_ip4_post_parse(struct root *root, void *json, struct ap
     void *array = NULL;
     struct api_ip4 *one = NULL;
 
-    array = api_v1_modify_list(json, IP4_MODULE_NAME, IP4_LIST_NAME);
+    array = api_v1_modify_list_old(json, IP4_MODULE_NAME, IP4_LIST_NAME);
     for (int i = 0; i < count; i++) {
         json_t *obj = NULL;
         const char *ip = NULL;
@@ -249,7 +248,7 @@ static int _api_ip4_del_parse(void *json, struct api_ip4 *iface, int count)
     void *array = NULL;
     struct api_ip4 *one = NULL;
 
-    array = api_v1_delete_list(json, IP4_MODULE_NAME, IP4_LIST_NAME);
+    array = api_v1_delete_list_old(json, IP4_MODULE_NAME, IP4_LIST_NAME);
     for (int i = 0; i < count; i++) {
         json_t *obj = NULL;
         const char *ip = NULL;
@@ -272,6 +271,23 @@ static int _api_ip4_del_parse(void *json, struct api_ip4 *iface, int count)
     return 0;
 }
 
+int ip4_info_init(struct ip4_info *info, uint32_t ip, uint8_t mask, uint16_t port, enum IP_TYPE type, uint32_t refcnt)
+{
+    if (info == NULL) {
+        LOG_ERROR("Inner parameter invalid.");
+        return ERRCODE_INNER;
+    }
+
+    info->ip = ip;
+    info->mask = mask;
+    INIT_LIST_HEAD(&info->node);
+    info->port = port;
+    info->type = type;
+    info->refcnt = refcnt;
+
+    return 0;
+}
+
 static INLINE void *_api_ip4_to_info(const struct api_ip4 *iface, int count)
 {
     struct ip4_info *info = NULL;
@@ -285,11 +301,7 @@ static INLINE void *_api_ip4_to_info(const struct api_ip4 *iface, int count)
     memset(info, 0, count * sizeof(*info));
 
     for (int i = 0; i < count; i++) {
-        info[i].ip = iface[i].ip;
-        info[i].mask = iface[i].mask;
-        INIT_LIST_HEAD(&info[i].node);
-        info[i].port = iface[i].port;
-        info[i].type = iface[i].ip_type;
+        ip4_info_init(&info[i], iface[i].ip, iface[i].mask, iface[i].port, iface[i].ip_type, 1);
     }
 
     return info;
@@ -322,7 +334,7 @@ static INLINE void *_api_ip4_to_route_item(const struct api_ip4 *iface, int coun
         item[i].mask = iface[i].mask;
         item[i].route_type = ROUTE4_DIRECT;
         item[i].priority = 0;
-        item[i].interface = iface[i].port;
+        item[i].port = iface[i].port;
         item[i].last_access_time = 0;
         item[i].last_probe_time = 0;
         item[i].valid = 1;
@@ -332,7 +344,7 @@ static INLINE void *_api_ip4_to_route_item(const struct api_ip4 *iface, int coun
     return item;
 }
 
-static INLINE int _api_ip4_manage_del(struct root *root, void *ip4_manage[], struct api_ip4 *iface, int count)
+static INLINE int _api_ip4_table_del(struct root *root, void *ip4_table[], struct api_ip4 *iface, int count)
 {
     int ret = 0;
     int numa_count = 0;
@@ -345,7 +357,7 @@ static INLINE int _api_ip4_manage_del(struct root *root, void *ip4_manage[], str
     }
 
     dp = root->dpdk_thread[0];
-    ret = ip4_conf_manage_create_and_delete(&ip4_manage[dp->numa_id], dp->tc->ip4_manage, info, count, dp->hw_numa_id);
+    ret = ip4_conf_table_create_and_delete(&ip4_table[dp->numa_id], dp->tc->ip4_table, info, count, dp->hw_numa_id);
     _api_ip4_info_free(info);
     if (ret != 0) {
         return ret;
@@ -357,7 +369,7 @@ static INLINE int _api_ip4_manage_del(struct root *root, void *ip4_manage[], str
             continue;
         }
 
-        ret = ip4_conf_manage_create_and_append(&ip4_manage[i], ip4_manage[dp->numa_id], NULL, 0, rte_socket_id_by_idx(i));
+        ret = ip4_conf_table_create_and_append(&ip4_table[i], ip4_table[dp->numa_id], NULL, 0, rte_socket_id_by_idx(i));
         if (ret != 0) {
             goto _quit;
         }
@@ -366,11 +378,11 @@ static INLINE int _api_ip4_manage_del(struct root *root, void *ip4_manage[], str
     return 0;
 
 _quit:
-    _api_ip4_manage_numa_free(ip4_manage, numa_count);
+    api_ip4_table_numa_free(ip4_table, numa_count);
     return ret;
 }
 
-static INLINE int _api_ip4_manage_add(struct root *root, void *ip4_manage[], const struct api_ip4 *iface, int count)
+static INLINE int _api_ip4_table_add(struct root *root, void *ip4_table[], const struct api_ip4 *iface, int count)
 {
     int ret = 0;
     int numa_count = 0;
@@ -384,7 +396,7 @@ static INLINE int _api_ip4_manage_add(struct root *root, void *ip4_manage[], con
     }
 
     dp = root->dpdk_thread[0];
-    ret = ip4_conf_manage_create_and_append(&ip4_manage[dp->numa_id], dp->tc->ip4_manage, info, count, dp->hw_numa_id);
+    ret = ip4_conf_table_create_and_append(&ip4_table[dp->numa_id], dp->tc->ip4_table, info, count, dp->hw_numa_id);
     _api_ip4_info_free(info);
     if (ret != 0) {
         return ret;
@@ -397,7 +409,7 @@ static INLINE int _api_ip4_manage_add(struct root *root, void *ip4_manage[], con
             continue;
         }
 
-        ret = ip4_conf_manage_create_and_append(&ip4_manage[i], ip4_manage[dp->numa_id], NULL, 0, one->hw_numa_id);
+        ret = ip4_conf_table_create_and_append(&ip4_table[i], ip4_table[dp->numa_id], NULL, 0, one->hw_numa_id);
         if (ret != 0) {
             goto _quit;
         }
@@ -406,7 +418,7 @@ static INLINE int _api_ip4_manage_add(struct root *root, void *ip4_manage[], con
     return 0;
 
 _quit:
-    _api_ip4_manage_numa_free(ip4_manage, numa_count);
+    api_ip4_table_numa_free(ip4_table, numa_count);
     return ret;
 }
 
@@ -505,9 +517,9 @@ API_POST(/v1/network/ip4, ip4)
     struct api_ip4 *api_iface = {0};
     void *route[NUMA_MAX] = {NULL};
     void **position[CPU_MAX] = {NULL};
-    void *ip4_manage[NUMA_MAX] = {NULL};
+    void *ip4_table[NUMA_MAX] = {NULL};
     void *thread_route[CPU_MAX] = {NULL};
-    void *thread_ip4_manage[CPU_MAX] = {NULL};
+    void *thread_ip4_table[CPU_MAX] = {NULL};
 
     count = _api_ip4_post_parse_count(json);
     if (count < 0) {
@@ -537,22 +549,22 @@ API_POST(/v1/network/ip4, ip4)
         goto _quit;
     }
 
-    code = _api_ip4_manage_add(cfg, ip4_manage, api_iface, count);
+    code = _api_ip4_table_add(cfg, ip4_table, api_iface, count);
     if (code != 0) {
         goto _quit;
     }
 
-    code = _api_ip4_route_table_add(cfg, route, api_iface, count, ip4_manage[0]);
+    code = _api_ip4_route_table_add(cfg, route, api_iface, count, ip4_table[0]);
     if (code != 0) {
         goto _quit;
     }
 
     for (int i = 0; i < root->hw_info.cpu_count; i++) {
-        position[i] = &root->dpdk_thread[i]->tc->ip4_manage;
-        thread_ip4_manage[i] = ip4_manage[root->dpdk_thread[i]->numa_id];
+        position[i] = &root->dpdk_thread[i]->tc->ip4_table;
+        thread_ip4_table[i] = ip4_table[root->dpdk_thread[i]->numa_id];
     }
 
-    api_numa_config_update(cfg, position, thread_ip4_manage, _api_ip4_manage_numa_free);
+    api_numa_config_update(cfg, position, thread_ip4_table, api_ip4_table_numa_free);
 
     for (int i = 0; i < root->hw_info.cpu_count; i++) {
         struct proto_header *proto = root->dpdk_thread[i]->protocol;
@@ -576,7 +588,7 @@ _quit:
     _api_ip4_free(arp);
     _api_ip4_free(api_iface);
     _api_ip4_route_numa_free(route, root->hw_info.numa_count);
-    _api_ip4_manage_numa_free(ip4_manage, root->hw_info.numa_count);
+    api_ip4_table_numa_free(ip4_table, root->hw_info.numa_count);
     return api_fail(code);
 }
 
@@ -593,9 +605,9 @@ API_DEL(/v1/network/ip4, ip4)
     struct api_ip4 *api_iface = {0};
     void *route[NUMA_MAX] = {NULL};
     void **position[CPU_MAX] = {NULL};
-    void *ip4_manage[NUMA_MAX] = {NULL};
+    void *ip4_table[NUMA_MAX] = {NULL};
     void *thread_route[CPU_MAX] = {NULL};
-    void *thread_ip4_manage[CPU_MAX] = {NULL};
+    void *thread_ip4_table[CPU_MAX] = {NULL};
 
     count = _api_ip4_del_parse_count(json);
     if (count < 0) {
@@ -613,22 +625,22 @@ API_DEL(/v1/network/ip4, ip4)
         goto _quit;
     }
 
-    code = _api_ip4_manage_del(cfg, ip4_manage, api_iface, count);
+    code = _api_ip4_table_del(cfg, ip4_table, api_iface, count);
     if (code != 0) {
         goto _quit;
     }
 
-    code = _api_ip4_route_table_del(cfg, route, api_iface, count, ip4_manage[0]);
+    code = _api_ip4_route_table_del(cfg, route, api_iface, count, ip4_table[0]);
     if (code != 0) {
         goto _quit;
     }
 
     for (int i = 0; i < root->hw_info.cpu_count; i++) {
-        position[i] = &root->dpdk_thread[i]->tc->ip4_manage;
-        thread_ip4_manage[i] = ip4_manage[root->dpdk_thread[i]->numa_id];
+        position[i] = &root->dpdk_thread[i]->tc->ip4_table;
+        thread_ip4_table[i] = ip4_table[root->dpdk_thread[i]->numa_id];
     }
 
-    api_numa_config_update(cfg, position, thread_ip4_manage, _api_ip4_manage_numa_free);
+    api_numa_config_update(cfg, position, thread_ip4_table, api_ip4_table_numa_free);
 
     for (int i = 0; i < root->hw_info.cpu_count; i++) {
         struct proto_header *proto = root->dpdk_thread[i]->protocol;

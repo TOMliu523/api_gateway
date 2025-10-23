@@ -59,7 +59,8 @@ __thread struct pkt_store *tlv_ip4;
 __thread struct pkt_store *tlv_ip6;
 __thread struct pkt_store *tlv_icmp;
 __thread struct pkt_store *tlv_icmp6;
-__thread struct pkt_store *tlv_tcp;
+__thread struct pkt_store *tlv_tcp4;
+__thread struct pkt_store *tlv_tcp6;
 __thread struct pkt_store *tlv_notify;
 __thread struct pkt_store *tlv_drop;
 __thread struct pkt_store *tlv_pending;
@@ -128,7 +129,8 @@ static INLINE void _dp_thread_local_var_init(void)
     tlv_ip6 = &tlv_dp->pc->ip6;
     tlv_icmp = &tlv_dp->pc->icmp;
     tlv_icmp6 = &tlv_dp->pc->icmp6;
-    tlv_tcp = &tlv_dp->pc->tcp;
+    tlv_tcp4 = &tlv_dp->pc->tcp4;
+    tlv_tcp6 = &tlv_dp->pc->tcp6;
     tlv_drop = &tlv_dp->pc->drop;
     tlv_notify = &tlv_dp->pc->notify;
     tlv_pending = &tlv_dp->pc->pending;
@@ -165,7 +167,7 @@ static INLINE void _dp_init(void *arg)
                      &tlv_dp->hw_cpu_id);
     tlv_thread_id = tlv_dp->cpu_id;
 
-    tlv_dp->rcu = dpdk_rcu_get(tlv_dp->numa_id, tlv_dp->numa_cpu_id);
+    tlv_dp->rcu = dpdk_rcu_get(tlv_dp->cpu_id);
     if (tlv_dp->rcu == NULL) {
         LOG_ERROR("RCU init failure.");
         goto _quit;
@@ -299,6 +301,19 @@ static INLINE void _dp_mbuf_drop(void)
     }
 }
 
+// Dispatch new configuration before the data plane runs again.
+static INLINE void _dp_thread_config_refresh(void)
+{
+    struct thread_config *tc = tlv_dp->tc;
+    struct proto_header *protocol = tlv_dp->protocol;
+
+    l2_thread_config_refresh(protocol->at);
+    ip4_thread_config_refresh(tc->ip4_table);
+    route4_thread_config_refresh(protocol->route4);
+    ip6_thread_config_refresh(tc->ip6_table, protocol->nt);
+    route6_thread_config_refresh(protocol->route6);
+}
+
 int dp_startup(void *arg)
 {
     int port_nums = 0;
@@ -330,6 +345,7 @@ int dp_startup(void *arg)
         }
 
         _dp_time_update(inv_hz, inv_hz_ms);
+        _dp_thread_config_refresh();
 
         for (int i = 0; i < DP_LOOP_MAX; i++) {
             for (int j = 0; j < port_nums; j++) {
@@ -361,7 +377,7 @@ int dp_startup(void *arg)
             _dp_mbuf_drop();
         }
 
-        dpdk_rcu_quiescent(tlv_dp->rcu, tlv_dp->numa_cpu_id);
+        dpdk_rcu_quiescent(tlv_dp->rcu, 0);
     }
 
     // TODO fini

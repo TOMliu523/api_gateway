@@ -13,7 +13,7 @@
 #include "dpdk_ip6.h"
 #include "dpdk_atomic.h"
 
-#define RS_INVALID_ID (-1)
+#define RSERVER_INVALID_ID (-1)
 
 enum RSERVER_STATUS {
     RSERVER_ONLINE = 0,
@@ -37,7 +37,6 @@ struct rserver_mutable {
 struct rserver {
     int af;
     int id;
-    struct list_head node;
 };
 
 struct rserver_base {
@@ -48,15 +47,35 @@ struct rserver_base {
 
 struct rserver_v4 {
     struct rserver rs;
-    uint32_t ip;
+    uint32_t addr;
     struct rserver_base base;
 };
 
 struct rserver_v6 {
     struct rserver rs;
-    struct dpdk_ip6_addr ip6;
+    struct dpdk_ip6_addr addr;
     struct rserver_base base;
 };
 
-extern void *rserver_init(int);
-extern void rserver_fini(void *);
+extern void *rserver_thread_create(int);
+extern void rserver_thread_destroy(void *);
+
+static INLINE void rserver_v4_refcnt_inc(struct rserver_v4 *v4)
+{
+    v4->base.stat->refcnt += 1;
+}
+
+static INLINE void rerver_v4_refcnt_dec(struct rserver_v4 *v4)
+{
+    v4->base.stat->refcnt -= 1;
+}
+
+static INLINE void rserver_v6_refcnt_inc(struct rserver_v6 *v6)
+{
+    v6->base.stat->refcnt += 1;
+}
+
+static INLINE void rserver_v6_refcnt_dec(struct rserver_v6 *v6)
+{
+    v6->base.stat->refcnt -= 1;
+}
