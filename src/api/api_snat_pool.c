@@ -73,15 +73,14 @@ struct api_snat_hdr {
     struct pkt_hdr pkt;
 
     int cpu_count;
-    int numa_count;
 
     int ip4_info_count;
-    struct ip4_info *ip4_info[NUMA_MAX];
-    void *ip4_table[NUMA_MAX];
+    struct ip4_info *ip4_info[CPU_MAX];
+    void *ip4_table[CPU_MAX];
 
     int ip6_info_count;
-    struct ip6_info *ip6_info[NUMA_MAX];
-    void *ip6_table[NUMA_MAX];
+    struct ip6_info *ip6_info[CPU_MAX];
+    void *ip6_table[CPU_MAX];
 
     int snat_count;
     struct snat_pool **snat[CPU_MAX];
@@ -123,11 +122,13 @@ static void _api_snat_param_hdr_free(struct api_param_hdr *hdr)
         info_hdr = &hdr->params[i].v4_hdr;
         if (info_hdr->infos != NULL) {
             api_free(info_hdr->infos);
+            info_hdr->infos = NULL;
         }
 
         info_hdr = &hdr->params[i].v6_hdr;
         if (info_hdr->infos != NULL) {
             api_free(info_hdr->infos);
+            info_hdr->infos = NULL;
         }
     }
 
@@ -167,6 +168,7 @@ static void _api_snat_conf_list_destroy(struct snat_pool *snat[], int count)
 
     for (int i = 0; i < count; i++) {
         snat_conf_destroy(snat[i]);
+        snat[i] = NULL;
     }
 
     dpdk_free(snat);
@@ -181,37 +183,78 @@ static void _api_snat_hdr_part_free(struct api_snat_hdr *snat_hdr)
     for (int i = 0; i < snat_hdr->cpu_count; i++) {
         if (snat_hdr->snat[i] != NULL) {
             api_free(snat_hdr->snat[i]);
+            snat_hdr->snat[i] = NULL;
         }
     }
 
     api_free(snat_hdr);
 }
 
+static void _api_snat_pktmbuf_free(struct pkt_hdr *pkt)
+{
+    if (pkt == NULL || pkt->count == 0) {
+        return;
+    }
+
+    dpdk_pktmbuf_push(pkt->mbuf, pkt->count);
+    memset(pkt->mbuf, 0, pkt->count * sizeof(*pkt->mbuf));
+}
+
+static void _api_snat_hdr_ip4_free(struct api_snat_hdr *hdr)
+{
+    if (hdr == NULL || hdr->ip4_info_count == 0) {
+        return;
+    }
+
+    for (int i = 0; i < hdr->cpu_count; i++) {
+        api_free(hdr->ip4_info[i]);
+        hdr->ip4_info[i] = NULL;
+
+        ip4_conf_table_destroy(hdr->ip4_table[i]);
+        hdr->ip4_table[i] = NULL;
+    }
+}
+
+static void _api_snat_hdr_ip6_free(struct api_snat_hdr *hdr)
+{
+    if (hdr == NULL || hdr->ip6_info_count == 0) {
+        return;
+    }
+
+    for (int i = 0; i < hdr->cpu_count; i++) {
+        api_free(hdr->ip6_info[i]);
+        hdr->ip6_info[i] = NULL;
+
+        ip6_conf_table_destroy(hdr->ip6_table[i]);
+        hdr->ip6_table[i] = NULL;
+    }
+}
+
+static void _api_snat_hdr_pool_free(struct api_snat_hdr *hdr)
+{
+    if (hdr == NULL || hdr->snat_count == 0) {
+        return;
+    }
+
+    for (int i = 0; i < hdr->cpu_count; i++) {
+        snat_conf_table_destroy(hdr->snat_table[i]);
+        hdr->snat_table[i] = NULL;
+
+        _api_snat_conf_list_destroy(hdr->snat[i], hdr->snat_count);
+        hdr->snat[i] = NULL;
+    }
+}
+
 static void _api_snat_hdr_free(struct api_snat_hdr *hdr)
 {
-    int cpu_count = hdr->cpu_count;
-    int numa_count = hdr->numa_count;
-
     if (hdr == NULL) {
         return;
     }
 
-    for (int i = 0; i < cpu_count; i++) {
-        snat_conf_table_destroy(hdr->snat_table[i]);
-        _api_snat_conf_list_destroy(hdr->snat[i], hdr->snat_count);
-    }
-
-    for (int i = 0; i < numa_count; i++) {
-        api_free(hdr->ip4_info[i]);
-        ip4_conf_table_destroy(hdr->ip4_table[i]);
-
-        api_free(hdr->ip6_info[i]);
-        ip6_conf_table_destroy(hdr->ip6_table[i]);
-    }
-
-    if (hdr->pkt.count != 0) {
-        dpdk_pktmbuf_push(hdr->pkt.mbuf, hdr->pkt.count);
-    }
+    _api_snat_pktmbuf_free(&hdr->pkt);
+    _api_snat_hdr_ip4_free(hdr);
+    _api_snat_hdr_ip6_free(hdr);
+    _api_snat_hdr_pool_free(hdr);
 
     api_free(hdr);
 }
@@ -838,21 +881,6 @@ static int _api_snat_ip6_count(const struct addr_info_entry *entry)
     return count;
 }
 
-static const struct dataplane *_api_snat_root_to_dataplane(const struct root *root, int numa_id)
-{
-    const struct dataplane *dp = NULL;
-
-    for (int i = 0; i < root->hw_info.cpu_count; i++) {
-        dp = root->dpdk_thread[i];
-        if (dp->numa_id == numa_id) {
-            return dp;
-        }
-    }
-
-    LOG_ERROR("Fatal error.");
-    return NULL;
-}
-
 static int _api_snat_to_ip4_table(struct api_snat_hdr *snat_hdr, const struct root *root, const struct api_param_hdr *param_hdr)
 {
     int n = 0;
@@ -864,18 +892,16 @@ static int _api_snat_to_ip4_table(struct api_snat_hdr *snat_hdr, const struct ro
     const struct dataplane *dp = NULL;
     struct proto_header *protocol = NULL;
     const struct addr_info *addr_info = NULL;
-    int numa_count = root->hw_info.numa_count;
+    int cpu_count = root->hw_info.cpu_count;
 
     ip4_count = _api_snat_ip4_count(&param_hdr->entry);
     snat_hdr->ip4_info_count = ip4_count;
+    if (ip4_count == 0) {
+        return 0;
+    }
 
-    for (int i = 0; i < numa_count; i++) {
-        dp = _api_snat_root_to_dataplane(root, i);
-        if (dp == NULL) {
-            code = ERRCODE_INNER;
-            goto _quit;
-        }
-
+    for (int i = 0; i < cpu_count; i++) {
+        dp = root->dpdk_thread[i];
         ip4_info = snat_hdr->ip4_info[i] = dpdk_malloc_numa(ip4_count * sizeof(struct ip4_info), dp->hw_numa_id);
         if (ip4_info == NULL) {
             LOG_ERROR("OOM.");
@@ -914,13 +940,7 @@ static int _api_snat_to_ip4_table(struct api_snat_hdr *snat_hdr, const struct ro
     return 0;
 
 _quit:
-    for (int i = 0; i < numa_count; i++) {
-        dpdk_free(snat_hdr->ip4_info[i]);
-        ip4_conf_table_destroy(snat_hdr->ip4_table[i]);
-        snat_hdr->ip4_info[i] = NULL;
-        snat_hdr->ip4_table[i] = NULL;
-    }
-
+    _api_snat_hdr_ip4_free(snat_hdr);
     return code;
 }
 
@@ -935,18 +955,16 @@ static int _api_snat_to_ip6_table(struct api_snat_hdr *snat_hdr, const struct ro
     const struct dataplane *dp = NULL;
     struct proto_header *protocol = NULL;
     const struct addr_info *addr_info = NULL;
-    int numa_count = root->hw_info.numa_count;
+    int cpu_count = root->hw_info.cpu_count;
 
     ip6_count = _api_snat_ip6_count(&param_hdr->entry);
     snat_hdr->ip6_info_count = ip6_count;
+    if (ip6_count == 0) {
+        return 0;
+    }
 
-    for (int i = 0; i < numa_count; i++) {
-        dp = _api_snat_root_to_dataplane(root, i);
-        if (dp == NULL) {
-            code = ERRCODE_INNER;
-            goto _quit;
-        }
-
+    for (int i = 0; i < cpu_count; i++) {
+        dp = root->dpdk_thread[i];
         ip6_info = snat_hdr->ip6_info[i] = dpdk_malloc_numa(ip6_count * sizeof(struct ip6_info), dp->hw_numa_id);
         if (ip6_info == NULL) {
             LOG_ERROR("OOM.");
@@ -983,13 +1001,7 @@ static int _api_snat_to_ip6_table(struct api_snat_hdr *snat_hdr, const struct ro
     return 0;
 
 _quit:
-    for (int i = 0; i < numa_count; i++) {
-        dpdk_free(snat_hdr->ip6_info[i]);
-        ip6_conf_table_destroy(snat_hdr->ip6_table[i]);
-        snat_hdr->ip6_info[i] = NULL;
-        snat_hdr->ip6_table[i] = NULL;
-    }
-
+    _api_snat_hdr_ip6_free(snat_hdr);
     return code;
 }
 
@@ -1103,8 +1115,6 @@ static int _api_snat_del(struct api_snat_hdr **pp_snat_hdr, const struct root *r
     }
 
     snat_hdr->cpu_count = root->hw_info.cpu_count;
-    snat_hdr->numa_count = root->hw_info.numa_count;
-
     code = _api_snat_to_ip4_table(snat_hdr, root, param_hdr);
     if (code != 0) {
         goto _quit;
@@ -1139,7 +1149,6 @@ static int _api_snat_add(struct api_snat_hdr **psnat_hdr, const struct root *roo
     }
 
     snat_hdr->cpu_count = root->hw_info.cpu_count;
-    snat_hdr->numa_count = root->hw_info.numa_count;
 
     code = _api_snat_to_ip4_table(snat_hdr, root, param_hdr);
     if (code != 0) {
@@ -1169,7 +1178,7 @@ _quit:
     return code;
 }
 
-static void _api_snat_replace(struct root *root, const struct api_snat_hdr *hdr)
+static void _api_snat_update(struct root *root, const struct api_snat_hdr *hdr)
 {
     struct dataplane *dp = NULL;
     int cpu_count = hdr->cpu_count;
@@ -1182,7 +1191,7 @@ static void _api_snat_replace(struct root *root, const struct api_snat_hdr *hdr)
         position[i] = &dp->tc->snat_table;
     }
 
-    api_thread_config_update(root, position, (void **)hdr->snat_table, dpdk_free);
+    api_thread_config_update(root, position, (void **)hdr->snat_table, snat_conf_table_destroy);
 
     // ip4 table
     for (int i = 0; i < cpu_count; i++) {
@@ -1191,7 +1200,7 @@ static void _api_snat_replace(struct root *root, const struct api_snat_hdr *hdr)
         thread_object[i] = hdr->ip4_table[dp->numa_id];
     }
 
-    api_numa_config_update(root, position, thread_object, api_ip4_table_numa_free);
+    api_thread_config_update(root, position, thread_object, ip4_conf_table_destroy);
 
     // ip6 table
     for (int i = 0; i < cpu_count; i++) {
@@ -1200,11 +1209,13 @@ static void _api_snat_replace(struct root *root, const struct api_snat_hdr *hdr)
         thread_object[i] = hdr->ip6_table[dp->numa_id];
     }
 
-    api_numa_config_update(root, position, thread_object, api_ip6_table_numa_free);
+    api_thread_config_update(root, position, thread_object, ip6_conf_table_destroy);
 
     // arp and ndp
-    dp = root->dpdk_thread[0];
-    dpdk_ring_mp_push(dp->notice_ring, hdr->pkt.mbuf, hdr->pkt.count);
+    if (hdr->pkt.count != 0) {
+        dp = root->dpdk_thread[0];
+        dpdk_ring_mp_push(dp->notice_ring, hdr->pkt.mbuf, hdr->pkt.count);
+    }
 }
 
 static int _api_snat_ip4_policy_to_json(void *obj, const void *ptr)
@@ -1564,9 +1575,9 @@ API_POST(/v1/network/snat_pool, snat_pool)
         goto _quit;
     }
 
-    _api_snat_replace(root, snat_hdr);
-
+    _api_snat_update(root, snat_hdr);
     _api_snat_hdr_part_free(snat_hdr);
+
     return api_succ(NULL);
 
 _quit:
@@ -1597,7 +1608,7 @@ API_DEL(/v1/network/snat_pool, snat_pool)
         goto _quit;
     }
 
-    _api_snat_replace(root, snat_hdr);
+    _api_snat_update(root, snat_hdr);
 
 _quit:
     _api_snat_param_hdr_free(param_hdr);

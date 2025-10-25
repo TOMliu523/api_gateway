@@ -23,64 +23,203 @@
 #include "dpdk_common.h"
 #include "route6_conf.h"
 
-#define IP6_MODULE_NAME "ip6"
-#define IP6_LIST_NAME "entrys"
+#define API_IP6_MODULE_NAME "ip6"
+#define API_IP6_LIST_NAME "entries"
 
-#define API_INTERFACE_FORMAT "/v1:" IP6_MODULE_NAME "/" IP6_LIST_NAME "[name='%s']/*"
+#define API_INTERFACE_FORMAT "/v1:" API_IP6_MODULE_NAME "/" API_IP6_LIST_NAME "[name='%s']/*"
 
-struct api_ip6 {
+struct api_param {
     const char *name;
-    uint16_t port;
+    uint8_t port;
     int mask;
     enum IP_TYPE type;
     struct dpdk_mac mac;
     struct dpdk_ip6_addr addr;
 };
 
-static int s_ndp_thread_id = -1;
+struct api_param_hdr {
+    int count;
+    struct api_param param[];
+};
 
-static INLINE void _api_ip6_ndp_free(void **ndp, int count)
-{
-    dpdk_pktmbuf_push(ndp, count);
-}
+struct api_ip6_hdr {
+    int cpu_count;
+    int ele_count;
 
-static void _api_ip6_free(void *ptr)
+    struct ip6_info *info[CPU_MAX];
+    void *ip6_table[CPU_MAX];
+
+    struct route6_item *item[CPU_MAX];
+    void *route6_table[CPU_MAX];
+
+    void **ndp;
+};
+
+static void _api_ip6_param_hdr_free(struct api_param_hdr *param_hdr)
 {
-    if (ptr != NULL) {
-        dpdk_free(ptr);
+    if (param_hdr == NULL) {
+        return;
     }
+
+    api_free(param_hdr);
 }
 
-static void *_api_ip6_alloc(size_t size)
+static void _api_ip6_ndp_free(void *mbufs[], int count)
 {
-    void *tmp = NULL;
+    bool has = false;
 
-    tmp = dpdk_malloc(size);
-    if (tmp == NULL) {
-        LOG_ERROR("OOM.");
+    if (mbufs == NULL) {
+        return;
+    }
+
+    for (int i = 0; i < count; i++) {
+        if (mbufs[i] != NULL) {
+            has = true;
+            break;
+        }
+    }
+
+    if (has) {
+        dpdk_pktmbuf_push(mbufs, count);
+        memset(mbufs, 0, count *sizeof(*mbufs));
+    }
+
+    api_free(mbufs);
+}
+
+static void _api_ip6_hdr_free(struct api_ip6_hdr *ip6_hdr)
+{
+    if (ip6_hdr == NULL) {
+        return;
+    }
+
+    for (int i = 0; i < ip6_hdr->cpu_count; i++) {
+        if (ip6_hdr->info[i] != NULL) {
+            api_free(ip6_hdr->info[i]);
+            ip6_hdr->info[i] = NULL;
+        }
+
+        if (ip6_hdr->ip6_table[i] != NULL) {
+            ip6_conf_table_destroy(ip6_hdr->ip6_table[i]);
+            ip6_hdr->ip6_table[i] = NULL;
+        }
+
+        if (ip6_hdr->item[i] != NULL) {
+            api_free(ip6_hdr->item[i]);
+            ip6_hdr->item[i] = NULL;
+        }
+
+        if (ip6_hdr->route6_table[i] != NULL) {
+            route6_conf_destroy(ip6_hdr->route6_table[i]);
+            ip6_hdr->route6_table[i] = NULL;
+        }
+    }
+
+    _api_ip6_ndp_free(ip6_hdr->ndp, ip6_hdr->ele_count);
+    api_free(ip6_hdr);
+}
+
+static void *_api_ip6_param_hdr_alloc(int count)
+{
+    size_t total = 0;
+    struct api_param_hdr *param_hdr = NULL;
+
+    total = sizeof(*param_hdr) + count * sizeof(*param_hdr->param);
+    param_hdr = api_malloc(total);
+    if (param_hdr == NULL) {
         return NULL;
     }
 
-    memset(tmp, 0, size);
-    return tmp;
+    param_hdr->count = count;
+    return param_hdr;
 }
 
-void api_ip6_table_numa_free(void *table[], int count)
+static void *_api_ip6_hdr_alloc(void)
 {
-    for (int i = 0; i < count; i++) {
-        if (table[i] != NULL) {
-            ip6_conf_table_destroy(table[i]);
-        }
+    struct api_ip6_hdr *ip6_hdr = NULL;
+
+    ip6_hdr = api_malloc(sizeof(*ip6_hdr));
+    if (ip6_hdr == NULL) {
+        return NULL;
     }
+
+    return ip6_hdr;
 }
 
-static void _api_ip6_route_numa_free(void *ptr[], int count)
+int ip6_info_init(struct ip6_info *info, const struct dpdk_ip6_addr *addr, uint8_t mask, uint16_t port, enum IP_TYPE type, uint32_t refcnt)
 {
+    if (info == NULL) {
+        LOG_ERROR("Inner invalid parameter.");
+        return ERRCODE_INNER;
+    }
+
+    info->addr = *addr;
+    info->mask = mask;
+    info->port = port;
+    info->type = type;
+    info->refcnt = refcnt;
+
+    return 0;
+}
+
+static INLINE void _api_ip6_to_subnet(struct dpdk_ip6_addr *addr, const struct dpdk_ip6_addr *ip6, uint8_t mask)
+{
+    *addr = *ip6;
+    dpdk_ip6_addr_subnet(addr, mask);
+}
+
+static int _api_ip6_to_route_item(struct route6_item **pp_item, const struct api_param param[], int count)
+{
+    struct route6_item *item = NULL;
+    const struct api_param *one = NULL;
+
+    item = api_malloc(sizeof(*item) * count);
+    if (item == NULL) {
+        return ERRCODE_OOM;
+    }
+
     for (int i = 0; i < count; i++) {
-        if (ptr[i] != NULL) {
-            route6_conf_destroy(ptr[i]);
+        one = &param[i];
+
+        INIT_LIST_HEAD(&item[i].lru_head);
+        dpdk_ip6_addr_unspec(&item[i].nexthop);
+        _api_ip6_to_subnet(&item[i].dst_subnet, &one->addr, one->mask);
+        item[i].mask = one->mask;
+        item[i].route_type = ROUTE6_DIRECT;
+        item[i].port = one->port;
+        item[i].valid = 1;
+    }
+
+    *pp_item = item;
+    return 0;
+}
+
+static int _api_ip6_param_to_info(struct ip6_info **pp_ip6_info, const struct api_param_hdr *param_hdr)
+{
+    int code = 0;
+    int count = param_hdr->count;
+    struct ip6_info *one = NULL;
+    struct ip6_info *ip6_info = NULL;
+    const struct api_param *param = NULL;
+
+    ip6_info = api_malloc(count * sizeof(*ip6_info));
+    if (ip6_info == NULL) {
+        return ERRCODE_OOM;
+    }
+
+    for (int i = 0; i < param_hdr->count; i++) {
+        param = &param_hdr->param[i];
+        one = &ip6_info[i];
+
+        code = ip6_info_init(one, &param->addr, param->mask, param->port, param->type, 1);
+        if (code != 0) {
+            api_free(ip6_info);
+            return code;
         }
     }
+
+    *pp_ip6_info = ip6_info;
+    return 0;
 }
 
 static int _api_ip6_obj_gen(void *array, sr_val_t *val, int cnt)
@@ -135,446 +274,407 @@ static int _api_ip6_obj_gen(void *array, sr_val_t *val, int cnt)
     return 0;
 
 _quit:
-    if (obj != NULL) {
-        json_decref(obj);
-    }
-
+    api_json_free(obj);
     return ERRCODE_OOM;
 }
 
-static int _api_ip6_post_parse_count(void *json)
+static int _api_ip6_table_create(struct api_ip6_hdr *ip6_hdr, struct root *root, struct api_param_hdr *param_hdr,
+                                 int (*table_create_fn)(void **, void *, const struct ip6_info *, int, int))
 {
-    void *array = NULL;
+    int code = 0;
+    void *table = NULL;
+    struct dataplane *dp = NULL;
+    int cpu_count = ip6_hdr->cpu_count;
 
-    array = api_v1_modify_list_old(json, IP6_MODULE_NAME, IP6_LIST_NAME);
-    return json_array_size(array);
-}
-
-static int _api_ip6_del_parse_count(void *json)
-{
-    void *array = NULL;
-
-    array = api_v1_delete_list_old(json, IP6_MODULE_NAME, IP6_LIST_NAME);
-    return json_array_size(array);
-}
-
-static int _api_ip6_del_parse(void *json, struct api_ip6 *ip6, int count)
-{
-    void *array = NULL;
-    struct api_ip6 *one = NULL;
-
-    array = api_v1_delete_list_old(json, IP6_MODULE_NAME, IP6_LIST_NAME);
-    for (int i = 0; i < count; i++) {
-        json_t *obj = NULL;
-        const char *ip = NULL;
-
-        one = &ip6[i];
-        obj = json_array_get(array, i);
-        one->name = json_string_value(json_object_get(obj, "name"));
-        one->port = dpdk_port_by_name_get(one->name);
-        if (one->port == (USHRT_MAX) -1) {
-            LOG_ERROR("Not exists(%s)", one->name ? one->name : "NULL");
-            return ERRCODE_PORT_NOT_EXIST;
+    ip6_hdr->ele_count = param_hdr->count;
+    for (int i = 0; i < cpu_count; i++) {
+        code = _api_ip6_param_to_info(&ip6_hdr->info[i], param_hdr);
+        if (code != 0) {
+            return code;
         }
 
-        ip = json_string_value(json_object_get(obj, "ip"));
-        inet_pton(AF_INET6, ip, &one->addr);
-
-        one->mask = json_integer_value(json_object_get(obj, "mask"));
-    }
-
-    return 0;
-}
-
-static int _api_ip6_post_parse(struct root *root, void *json, struct api_ip6 ip6[], int count)
-{
-    int ret = 0;
-    void *array = NULL;
-    struct api_ip6 *one = NULL;
-
-    array = api_v1_modify_list_old(json, IP6_MODULE_NAME, IP6_LIST_NAME);
-    for (int i = 0; i < count; i++) {
-        json_t *obj = NULL;
-        const char *ip = NULL;
-        const char *ip_type = NULL;
-
-        one = &ip6[i];
-        obj = json_array_get(array, i);
-        one->name = json_string_value(json_object_get(obj, "name"));
-        one->port = dpdk_port_by_name_get(one->name);
-        if (one->port == (uint16_t)-1) {
-            LOG_ERROR("Not exists(%s)", one->name);
-            return ERRCODE_PORT_NOT_EXIST;
-        }
-
-        ip = json_string_value(json_object_get(obj, "ip"));
-        inet_pton(AF_INET6, ip, &one->addr);
-
-        one->mask = json_integer_value(json_object_get(obj, "mask"));
-        ret = l2_conf_port_mac(one->port, &one->mac);
-        if (ret != 0) {
-            return ERRCODE_INNER;
-        }
-
-        ip_type = json_string_value(json_object_get(obj, "type"));
-        if (strcmp(ip_type, "IP_MASTER") == 0) {
-            one->type = IP_MASTER;
-        } else {
-            one->type = IP_SECONDARY;
-        }
-
-        if (!dpdk_port_is_up(one->port)) {
-            LOG_ERROR("Port %d is down", one->port);
-            return ERRCODE_PORT_IS_DOWN;
+        dp = root->dpdk_thread[i];
+        code = table_create_fn(&table, dp->tc->ip6_table, ip6_hdr->info[i], ip6_hdr->ele_count, dp->hw_numa_id);
+        if (code != 0) {
+            return code;
         }
     }
 
     return 0;
 }
 
-static int _api_ip6_ndp_gen(struct root *root, void *ndp[], struct api_ip6 ip6[], int count)
+static int _api_ip6_route_table_del_create(struct api_ip6_hdr *ip6_hdr, struct root *root, struct api_param_hdr *param_hdr)
 {
-    int id = 0;
-    int ret = 0;
-    struct api_ip6 *one = NULL;
+    int code = 0;
+    int count = 0;
+    int hw_numa_id = 0;
+    struct dataplane *dp = NULL;
+    int cpu_count = ip6_hdr->cpu_count;
+    struct proto_header *protocol = NULL;
 
-    id = (s_ndp_thread_id + 1) % root->hw_info.cpu_count;
-    s_ndp_thread_id = id;
+    count = param_hdr->count;
+    for (int i = 0; i < cpu_count; i++) {
+        code = _api_ip6_to_route_item(&ip6_hdr->item[i], param_hdr->param, param_hdr->count);
+        if (code != 0) {
+            return code;
+        }
 
-    ret = dpdk_pktmbuf_pop(root->dpdk_thread[id]->pktmbuf_pool, ndp, count);
-    if (ret != 0) {
-        LOG_ERROR("Resource busy.");
+        dp = root->dpdk_thread[i];
+        protocol = dp->protocol;
+        hw_numa_id = dp->hw_numa_id;
+
+        code = route6_conf_create_and_delete(&ip6_hdr->route6_table[i], protocol->route6, ip6_hdr->item[i], count, hw_numa_id, false);
+        if (code != 0) {
+            return code;
+        }
+    }
+
+    return 0;
+}
+
+static int _api_ip6_route_table_create(struct api_ip6_hdr *ip6_hdr, struct root *root, struct api_param_hdr *param_hdr)
+{
+    int code = 0;
+    int count = 0;
+    int hw_numa_id = 0;
+    void *ip6_table = NULL;
+    struct dataplane *dp = NULL;
+    struct proto_header *protocol = NULL;
+    int cpu_count = ip6_hdr->cpu_count;
+
+    count = param_hdr->count;
+    for (int i = 0; i < cpu_count; i++) {
+        code = _api_ip6_to_route_item(&ip6_hdr->item[i], param_hdr->param, param_hdr->count);
+        if (code != 0) {
+            return code;
+        }
+
+        dp = root->dpdk_thread[i];
+        protocol = dp->protocol;
+        hw_numa_id = dp->hw_numa_id;
+        ip6_table = ip6_hdr->ip6_table[i];
+
+        code = route6_conf_create_and_append(&ip6_hdr->route6_table[i], protocol->route6, ip6_hdr->item[i], count, hw_numa_id, ip6_table);
+        if (code != 0) {
+            return code;
+        }
+    }
+
+    return 0;
+}
+
+static int _api_ip6_ndp_create(struct api_ip6_hdr *ip6_hdr, struct root *root, struct api_param_hdr *param_hdr)
+{
+    int code = 0;
+    struct dataplane *dp = NULL;
+    int count = ip6_hdr->ele_count;
+    struct api_param *param = NULL;
+    int cpu_count = root->hw_info.cpu_count;
+
+    ip6_hdr->ndp = api_malloc(param_hdr->count * sizeof(*ip6_hdr->ndp));
+    if (ip6_hdr->ndp == NULL) {
+        return ERRCODE_OOM;
+    }
+
+    for (int i = 0; i < cpu_count; i++) {
+        dp = root->dpdk_thread[i];
+        code = dpdk_pktmbuf_pop(dp->pktmbuf_pool, ip6_hdr->ndp, count);
+        if (code == 0) {
+            break;
+        }
+    }
+
+    if (code < 0) {
+        _api_ip6_ndp_free(ip6_hdr->ndp, count);
+        ip6_hdr->ndp = NULL;
         return ERRCODE_RESOURCE_BUSY;
     }
 
-    for (int i = 0; i < count; i++) {
-        one = &ip6[i];
-
-        ret = ip6_ndp_na_mcast_gen(ndp[i], one->port, &one->addr, &one->mac);
-        if (ret != 0) {
-            _api_ip6_ndp_free(ndp, count);
-            return ERRCODE_INNER;
+    for (int i = 0; i < param_hdr->count; i++) {
+        param = &param_hdr->param[i];
+        code = ip6_ndp_na_mcast_gen(ip6_hdr->ndp[i], param->port, &param->addr, &param->mac);
+        if (code != 0) {
+            _api_ip6_ndp_free(ip6_hdr->ndp, count);
+            ip6_hdr->ndp = NULL;
+            return code;
         }
 
-        DPDK_HEADROOM(ndp[i])->type = PKT_MBUF_NDP_AD;
+        DPDK_HEADROOM(ip6_hdr->ndp[i])->type = PKT_MBUF_NDP_AD;
     }
 
     return 0;
 }
 
-int ip6_info_init(struct ip6_info *info, const struct dpdk_ip6_addr *addr,
-                  uint8_t mask, uint16_t port, enum IP_TYPE type, uint32_t refcnt)
+static int _api_ip6_del_parse(struct api_param_hdr **pp_param_hdr, struct root *root, void *json)
 {
-    if (info == NULL) {
-        LOG_ERROR("Inner invalid parameter.");
-        return ERRCODE_INNER;
-    }
+    int code = 0;
+    void *obj = NULL;
+    size_t count = 0;
+    void *array = NULL;
+    uint64_t lvalue = 0;
+    const char *svalue = NULL;
+    struct api_param *param = NULL;
+    struct api_param_hdr *param_hdr = NULL;
 
-    info->addr = *addr;
-    info->mask = mask;
-    info->port = port;
-    info->type = type;
-    info->refcnt = refcnt;
-
-    return 0;
-}
-
-static struct ip6_info *_api_ip6_to_info(struct api_ip6 *ip6, int count)
-{
-    struct ip6_info *info = NULL;
-
-    info = _api_ip6_alloc(sizeof(*info) * count);
-    if (info == NULL) {
-        return NULL;
-    }
-
-    for (int i = 0; i < count; i++) {
-        info[i].addr = ip6[i].addr;
-        info[i].mask = ip6[i].mask;
-        info[i].port = ip6[i].port;
-        info[i].type = ip6[i].type;
-        info[i].refcnt = 1;
-    }
-
-    return info;
-}
-
-static INLINE void _api_ip6_to_subnet(struct dpdk_ip6_addr *addr, const struct dpdk_ip6_addr *ip6, uint8_t mask)
-{
-    *addr = *ip6;
-    dpdk_ip6_addr_subnet(addr, mask);
-}
-
-static struct route6_item *_api_ip6_to_route_item(const struct api_ip6 *ip6, int count)
-{
-    struct route6_item *item = NULL;
-
-    item = _api_ip6_alloc(sizeof(*item) * count);
-    if (item == NULL) {
-        return NULL;
-    }
-
-    for (int i = 0; i < count; i++) {
-        INIT_LIST_HEAD(&item[i].lru_head);
-        dpdk_ip6_addr_unspec(&item[i].nexthop);
-        _api_ip6_to_subnet(&item[i].dst_subnet, &ip6[i].addr, ip6[i].mask);
-        item[i].mask = ip6[i].mask;
-        item[i].route_type = ROUTE6_DIRECT;
-        item[i].port = ip6[i].port;
-        item[i].valid = 1;
-    }
-
-    return item;
-}
-
-static INLINE int _api_ip6_table_del(struct root *root, void *ip6_table[], struct api_ip6 *ip6, int count)
-{
-    int ret = 0;
-    int numa_count = 0;
-    struct dataplane *dp = NULL;
-    struct dataplane *one = NULL;
-    struct ip6_info *info = NULL;
-
-    info = _api_ip6_to_info(ip6, count);
-    if (info == NULL) {
-        return ERRCODE_OOM;
-    }
-
-    dp = root->dpdk_thread[0];
-    ret = ip6_conf_table_create_and_delete(&ip6_table[dp->numa_id], dp->tc->ip6_table, info, count, dp->hw_numa_id);
-    _api_ip6_free(info);
-    if (ret != 0) {
-        return ret;
-    }
-
-    numa_count = root->hw_info.numa_count;
-    for (int i = 0; i < numa_count; i++) {
-        if (i == dp->numa_id) {
-            continue;
-        }
-
-        one = root->dpdk_thread[i];
-        ret = ip6_conf_table_create_and_append(&ip6_table[i], ip6_table[dp->numa_id], NULL, 0, one->hw_numa_id);
-        if (ret != 0) {
-            goto _quit;
-        }
-    }
-
-    return 0;
-
-_quit:
-    api_ip6_table_numa_free(ip6_table, numa_count);
-    return ret;
-}
-
-static int _api_ip6_table_add(struct root *root, void *ip6_table[], struct api_ip6 *ip6, int count)
-{
-    int ret = 0;
-    int numa_count = 0;
-    struct dataplane *dp = NULL;
-    struct dataplane *one = NULL;
-    struct ip6_info *info = NULL;
-
-    info = _api_ip6_to_info(ip6, count);
-    if (info == NULL) {
-        return ERRCODE_OOM;
-    }
-
-    dp = root->dpdk_thread[0];
-    ret = ip6_conf_table_create_and_append(&ip6_table[dp->numa_id], dp->tc->ip6_table, info, count, dp->hw_numa_id);
-    _api_ip6_free(info);
-    if (ret != 0) {
-        return ret;
-    }
-
-    numa_count = root->hw_info.numa_count;
-    for (int i = 0; i < numa_count; i++) {
-        if (i == dp->numa_id) {
-            continue;
-        }
-
-        one = root->dpdk_thread[i];
-        ret = ip6_conf_table_create_and_append(&ip6_table[i], ip6_table[dp->numa_id], NULL, 0, one->hw_numa_id);
-        if (ret != 0) {
-            goto _quit;
-        }
-    }
-
-    return 0;
-
-_quit:
-    api_ip6_table_numa_free(ip6_table, numa_count);
-    return ret;
-}
-
-static int _api_ip6_route_table_del(struct root *root, void *route6[], const struct api_ip6 ip6[], int count, const void *arg)
-{
-    int ret = 0;
-    int numa_count = 0;
-    struct dataplane *dp = NULL;
-    struct route6_item *item = NULL;
-    struct proto_header *proto = NULL;
-
-    item = _api_ip6_to_route_item(ip6, count);
-    if (item == NULL) {
-        return ERRCODE_OOM;
-    }
-
-    dp = root->dpdk_thread[0];
-    proto = dp->protocol;
-    ret = route6_conf_create_and_delete(&route6[dp->numa_id], proto->route6, item, count, dp->hw_numa_id, false);
-    _api_ip6_free(item);
-    if (ret != 0) {
+    code = api_v1_delete_list(&array, &count, json, API_IP6_MODULE_NAME, API_IP6_LIST_NAME);
+    if (code != 0) {
         goto _quit;
     }
 
-    numa_count = root->hw_info.numa_count;
-    for (int i = 0; i < numa_count; i++) {
-        if (i == dp->numa_id) {
-            continue;
-        }
-
-        ret = route6_conf_create_and_append(&route6[i], route6[dp->numa_id], NULL, 0, root->dpdk_thread[i]->hw_numa_id, arg);
-        if (ret != 0) {
-            goto _quit;
-        }
+    param_hdr = _api_ip6_param_hdr_alloc(count);
+    if (param_hdr == NULL) {
+        goto _quit;
     }
 
+    for (int i = 0; i < count; i++) {
+        param = &param_hdr->param[i];
+
+        obj = api_json_array_get(array, i);
+        if (obj == NULL) {
+            goto _quit;
+        }
+
+        param->name = api_json_get_string(obj, "interface-name");
+        if (param->name == NULL) {
+            goto _quit;
+        }
+
+        param->port = dpdk_port_by_name_get(param->name);
+        if (param->port == UINT8_MAX) {
+            goto _quit;
+        }
+
+        code = l2_conf_port_mac(param->port, &param->mac);
+        if (code < 0) {
+            code = ERRCODE_INNER;
+            goto _quit;
+        }
+
+        svalue = api_json_get_string(obj, "addr");
+        if (svalue == NULL) {
+            goto _quit;
+        }
+
+        inet_pton(AF_INET6, svalue, &param->addr);
+
+        code = api_json_get_long(&lvalue, obj, "mask");
+        if (code != 0) {
+            goto _quit;
+        }
+
+        param->mask = (int) lvalue;
+        param->type = 0;
+    }
+
+    *pp_param_hdr = param_hdr;
     return 0;
 
 _quit:
-    _api_ip6_route_numa_free(route6, numa_count);
-    return ret;
+    _api_ip6_param_hdr_free(param_hdr);
+    return code;
 }
 
-static int _api_ip6_route_table_add(struct root *root, void *route6[], const struct api_ip6 ip6[], int count, const void *arg)
+static int _api_ip6_post_parse(struct api_param_hdr **pp_param_hdr, struct root *root, void *json)
 {
-    int ret = 0;
-    int numa_count = 0;
-    struct dataplane *dp = NULL;
-    struct dataplane *one = NULL;
-    struct route6_item *item = NULL;
-    struct proto_header *proto = NULL;
+    int code = 0;
+    void *obj = NULL;
+    size_t count = 0;
+    void *array = NULL;
+    uint64_t lvalue = 0;
+    const char *svalue = NULL;
+    struct api_param *param = NULL;
+    struct api_param_hdr *param_hdr = NULL;
 
-    item = _api_ip6_to_route_item(ip6, count);
-    if (item == NULL) {
+    code = api_v1_modify_list(&array, &count, json, API_IP6_MODULE_NAME, API_IP6_LIST_NAME);
+    if (code != 0) {
+        goto _quit;
+    }
+
+    param_hdr = _api_ip6_param_hdr_alloc(count);
+    if (param_hdr == NULL) {
+        goto _quit;
+    }
+
+    for (int i = 0; i < count; i++) {
+        param = &param_hdr->param[i];
+
+        obj = api_json_array_get(array, i);
+        if (obj == NULL) {
+            goto _quit;
+        }
+
+        param->name = api_json_get_string(obj, "interface-name");
+        if (param->name == NULL) {
+            goto _quit;
+        }
+
+        param->port = dpdk_port_by_name_get(param->name);
+        if (param->port == UINT8_MAX) {
+            goto _quit;
+        }
+
+        if (!dpdk_port_is_up(param->port)) {
+            LOG_ERROR("Port '%s' is down.", param->name);
+            goto _quit;
+        }
+
+        code = l2_conf_port_mac(param->port, &param->mac);
+        if (code < 0) {
+            code = ERRCODE_INNER;
+            goto _quit;
+        }
+
+        svalue = api_json_get_string(obj, "addr");
+        if (svalue == NULL) {
+            goto _quit;
+        }
+
+        inet_pton(AF_INET6, svalue, &param->addr);
+
+        code = api_json_get_long(&lvalue, obj, "mask");
+        if (code != 0) {
+            goto _quit;
+        }
+
+        param->mask = (uint16_t) lvalue;
+        param->type = 0;
+    }
+
+    *pp_param_hdr = param_hdr;
+    return 0;
+
+_quit:
+    _api_ip6_param_hdr_free(param_hdr);
+    return code;
+}
+
+static int _api_ip6_del(struct api_ip6_hdr **pp_ip6_hdr, struct root *root, struct api_param_hdr *param_hdr)
+{
+    int code = 0;
+    int count = param_hdr->count;
+    struct api_ip6_hdr *ip6_hdr = NULL;
+    int cpu_count = root->hw_info.cpu_count;
+
+    ip6_hdr = _api_ip6_hdr_alloc();
+    if (ip6_hdr == NULL) {
         return ERRCODE_OOM;
     }
 
-    dp = root->dpdk_thread[0];
-    proto = dp->protocol;
-    ret = route6_conf_create_and_append(&route6[dp->numa_id], proto->route6, item, count, dp->hw_numa_id, arg);
-    _api_ip6_free(item);
-    if (ret != 0) {
-        return ret;
+    ip6_hdr->ele_count = count;
+    ip6_hdr->cpu_count = cpu_count;
+
+    code = _api_ip6_table_create(ip6_hdr, root, param_hdr, ip6_conf_table_create_and_delete);
+    if (code != 0) {
+        goto _quit;
     }
 
-    numa_count = root->hw_info.numa_count;
-    for (int i = 0; i < numa_count; i++) {
-        if (i == dp->numa_id) {
-            continue;
-        }
-
-        one = root->dpdk_thread[i];
-        ret = route6_conf_create_and_append(&route6[i], route6[dp->numa_id], NULL, 0, one->hw_numa_id, arg);
-        if (ret != 0) {
-            goto _quit;
-        }
+    code = _api_ip6_route_table_del_create(ip6_hdr, root, param_hdr);
+    if (code != 0) {
+        goto _quit;
     }
 
+    *pp_ip6_hdr = ip6_hdr;
     return 0;
 
 _quit:
-    _api_ip6_route_numa_free(route6, numa_count);
-    return ret;
+    _api_ip6_hdr_free(ip6_hdr);
+    return code;
 }
 
-static INLINE void _api_ip6_ndp_send(struct root *root, void *ndp[], int count)
+static int _api_ip6_add(struct api_ip6_hdr **pp_ip6_hdr, struct root *root, struct api_param_hdr *param_hdr)
 {
-    struct dataplane *dp = root->dpdk_thread[s_ndp_thread_id];
-    dpdk_ring_mp_push(dp->notice_ring, ndp, count);
+    int code = 0;
+    int count = param_hdr->count;
+    struct api_ip6_hdr *ip6_hdr = NULL;
+    int cpu_count = root->hw_info.cpu_count;
+
+    ip6_hdr = _api_ip6_hdr_alloc();
+    if (ip6_hdr == NULL) {
+        return ERRCODE_OOM;
+    }
+
+    ip6_hdr->cpu_count = count;
+    ip6_hdr->cpu_count = cpu_count;
+
+    code = _api_ip6_table_create(ip6_hdr, root, param_hdr, ip6_conf_table_create_and_append);
+    if (code != 0) {
+        goto _quit;
+    }
+
+    code = _api_ip6_route_table_create(ip6_hdr, root, param_hdr);
+    if (code != 0) {
+        goto _quit;
+    }
+
+    code = _api_ip6_ndp_create(ip6_hdr, root, param_hdr);
+    if (code != 0) {
+        goto _quit;
+    }
+
+    *pp_ip6_hdr = ip6_hdr;
+    return 0;
+
+_quit:
+    _api_ip6_hdr_free(ip6_hdr);
+    return code;
+}
+
+static void _api_ip6_update(struct api_ip6_hdr *ip6_hdr, struct root *root)
+{
+    struct dataplane *dp = NULL;
+    struct proto_header *protocol = NULL;
+    void **position[CPU_MAX] = {NULL};
+    int cpu_count = root->hw_info.cpu_count;
+
+    for (int i = 0; i < cpu_count; i++) {
+        dp = root->dpdk_thread[i];
+        position[i] = &dp->tc->ip6_table;
+    }
+
+    api_thread_config_update(root, position, (void **)ip6_hdr->ip6_table, ip6_conf_table_destroy);
+
+    for (int i = 0; i < cpu_count; i++) {
+        dp = root->dpdk_thread[i];
+        protocol = dp->protocol;
+        position[i] = (void **)&protocol->route6;
+    }
+
+    api_thread_config_update(root, position, (void **)ip6_hdr->route6_table, route6_conf_destroy);
+
+    dp = root->dpdk_thread[0];
+    if (ip6_hdr->ndp != NULL) {
+        dpdk_ring_mp_push(dp->notice_ring, ip6_hdr->ndp, ip6_hdr->ele_count);
+        memset(ip6_hdr->ndp, 0, ip6_hdr->ele_count * sizeof(*ip6_hdr->ndp));
+    }
 }
 
 API_POST(/v1/network/ip6, ip6)
 {
-    int count = 0;
-    void **ndp = NULL;
-    enum ERRCODE code = 0;
+    int code = 0;
     struct root *root = cfg;
-    struct api_ip6 *ip6 = NULL;
-    void *route6[NUMA_MAX] = {NULL};
-    void **position[CPU_MAX] = {NULL};
-    void *ip6_table[NUMA_MAX] = {NULL};
-    void *thread_route6[CPU_MAX] = {NULL};
-    void *thread_ip6_table[CPU_MAX] = {NULL};
+    struct api_ip6_hdr *ip6_hdr = NULL;
+    struct api_param_hdr *param_hdr = NULL;
 
-    count = _api_ip6_post_parse_count(json);
-    if (count < 0) {
-        LOG_ERROR("Parameter exception.");
-        return api_fail(ERRCODE_INVALID);
-    }
-
-    ip6 = _api_ip6_alloc(count * sizeof(*ip6));
-    if (ip6 == NULL) {
-        code = ERRCODE_OOM;
-        goto _quit;
-    }
-
-    ndp = _api_ip6_alloc(count * sizeof(*ndp));
-    if (ndp == NULL) {
-        code = ERRCODE_OOM;
-        goto _quit;
-    }
-
-    code = _api_ip6_post_parse(cfg, json, ip6, count);
+    code = _api_ip6_post_parse(&param_hdr, root, json);
     if (code != 0) {
         goto _quit;
     }
 
-    code = _api_ip6_ndp_gen(cfg, ndp, ip6, count);
+    code = _api_ip6_add(&ip6_hdr, root, param_hdr);
     if (code != 0) {
         goto _quit;
     }
 
-    code = _api_ip6_table_add(cfg, ip6_table, ip6, count);
-    if (code != 0) {
-        goto _quit;
-    }
-
-    code = _api_ip6_route_table_add(cfg, route6, ip6, count, ip6_table[0]);
-    if (code != 0) {
-        goto _quit;
-    }
-
-    for (int i = 0; i < root->hw_info.cpu_count; i++) {
-        position[i] = &root->dpdk_thread[i]->tc->ip6_table;
-        thread_ip6_table[i] = ip6_table[root->dpdk_thread[i]->numa_id];
-    }
-
-    api_numa_config_update(cfg, position, thread_ip6_table, api_ip6_table_numa_free);
-
-    for (int i = 0; i < root->hw_info.cpu_count; i++) {
-        struct proto_header *proto = root->dpdk_thread[i]->protocol;
-        position[i] = (void **)&proto->route6;
-        thread_route6[i] = route6[root->dpdk_thread[i]->numa_id];
-    }
-
-    api_numa_config_update(cfg, position, thread_route6, _api_ip6_route_numa_free);
-
-    _api_ip6_ndp_send(cfg, ndp, count);
-    _api_ip6_free(ip6);
-    _api_ip6_free(ndp);
-
-    LOG_DEBUG("CONFIG IP6 SUCCESS.");
-    return api_succ(NULL);
+    _api_ip6_update(ip6_hdr, root);
 
 _quit:
-    _api_ip6_free(ip6);
-    if (ndp != NULL && ndp[0] != NULL) {
-        _api_ip6_ndp_free(ndp, count);
+    _api_ip6_param_hdr_free(param_hdr);
+    _api_ip6_hdr_free(ip6_hdr);
+
+    if (code != 0) {
+        return api_fail(code);
     }
-    _api_ip6_free(ndp);
-    return api_fail(code);
+    return api_succ(NULL);
 }
 
 API_PUT(/v1/network/ip6, ip6)
@@ -584,108 +684,73 @@ API_PUT(/v1/network/ip6, ip6)
 
 API_DEL(/v1/network/ip6, ip6)
 {
-    int count = 0;
-    enum ERRCODE code = 0;
+    int code = 0;
     struct root *root = cfg;
-    struct api_ip6 *api_iface = {0};
-    void *route6[NUMA_MAX] = {NULL};
-    void **position[CPU_MAX] = {NULL};
-    void *ip6_table[NUMA_MAX] = {NULL};
-    void *thread_route6[CPU_MAX] = {NULL};
-    void *thread_ip6_table[CPU_MAX] = {NULL};
+    struct api_ip6_hdr *ip6_hdr = NULL;
+    struct api_param_hdr *param_hdr = NULL;
 
-    count = _api_ip6_del_parse_count(json);
-    if (count < 0) {
-        LOG_ERROR("Parameter exception.");
-        return api_fail(ERRCODE_INVALID);
-    }
-
-    api_iface = _api_ip6_alloc(count * sizeof(*api_iface));
-    if (api_iface == NULL) {
-        return api_fail(ERRCODE_OOM);
-    }
-
-    code = _api_ip6_del_parse(json, api_iface, count);
+    code = _api_ip6_del_parse(&param_hdr, root, json);
     if (code != 0) {
         goto _quit;
     }
 
-    code = _api_ip6_table_del(cfg, ip6_table, api_iface, count);
+    code = _api_ip6_del(&ip6_hdr, root, param_hdr);
     if (code != 0) {
         goto _quit;
     }
 
-    code = _api_ip6_route_table_del(cfg, route6, api_iface, count, ip6_table[0]);
-    if (code != 0) {
-        goto _quit;
-    }
-
-    for (int i = 0; i < root->hw_info.cpu_count; i++) {
-        position[i] = &root->dpdk_thread[i]->tc->ip6_table;
-        thread_ip6_table[i] = ip6_table[root->dpdk_thread[i]->numa_id];
-    }
-
-    api_numa_config_update(cfg, position, thread_ip6_table, api_ip6_table_numa_free);
-
-    for (int i = 0; i < root->hw_info.cpu_count; i++) {
-        struct proto_header *proto = root->dpdk_thread[i]->protocol;
-        position[i] = (void **)&proto->route6;
-        thread_route6[i] = route6[root->dpdk_thread[i]->numa_id];
-    }
-
-    api_numa_config_update(cfg, position, thread_route6, _api_ip6_route_numa_free);
-
-    _api_ip6_free(api_iface);
-    return api_succ(NULL);
+    _api_ip6_update(ip6_hdr, root);
 
 _quit:
-    _api_ip6_free(api_iface);
-    return api_fail(code);
+    _api_ip6_param_hdr_free(param_hdr);
+    _api_ip6_hdr_free(ip6_hdr);
+
+    if (code != 0) {
+        return api_fail(code);
+    }
+    return api_succ(NULL);
 }
 
 API_GET(/v1/network/ip6, ip6)
 {
-    int ret = 0;
-    void *array = NULL;
+    int code = 0;
     size_t val_cnt = 0;
+    void *array = NULL;
     sr_val_t *val = NULL;
-    char path[2 * CACHE_LINE + 1] = {0};
-    const struct port_name *port_name = NULL;
-    const struct port_name_entry *one = NULL;
+    char path[2 * CACHE_LINE + 1] = "";
+    const struct port_info *port_info = NULL;
+    const struct port_info_entry *one = NULL;
 
-    array = json_array();
-    if (array == NULL) {
-        LOG_ERROR("OOM.");
-        return api_fail(ERRCODE_INNER);
+    code = api_json_array(&array);
+    if (code != 0) {
+        goto _quit;
     }
 
-    port_name = dpdk_port_name_get();
-    for (int i = 0; i < port_name->count; i++) {
-        one = &port_name->entrys[i];
+    port_info = dpdk_port_info_get();
+    for (int i = 0; i < port_info->count; i++) {
+        one = &port_info->info[i];
 
         snprintf(path, sizeof(path), API_INTERFACE_FORMAT, one->name);
-        ret = sr_get_items(sess, path, 0, 0, &val, &val_cnt);
-        if (ret != 0 && ret != SR_ERR_NOT_FOUND) {
-            LOG_ERROR("Failure path(%s) sr_get_item: %s", path, strerror(ret));
+        code = sr_get_items(sess, path, 0, 0, &val, &val_cnt);
+        if (code != 0 && code != SR_ERR_NOT_FOUND) {
+            LOG_ERROR("Failure path(%s) sr_get_item: %s", path, strerror(code));
             goto _quit;
         }
 
-        ret = _api_ip6_obj_gen(array, val, val_cnt);
-        if (ret != 0) {
+        code = _api_ip6_obj_gen(array, val, val_cnt);
+        if (code != 0) {
             goto _quit;
         }
 
         sr_free_values(val, val_cnt);
     }
 
-    return api_succ(array);
+    return api_succ(NULL);
 
 _quit:
-    if (array != NULL) {
-        json_decref(array);
-    }
+    api_json_free(array);
     if (val != NULL) {
         sr_free_values(val, val_cnt);
     }
-    return api_fail(ERRCODE_INNER);
+    return api_fail(code);
 }

@@ -329,6 +329,7 @@ int api_json_add_long(void *json, const char *name, long value)
 const char *api_json_get_string(void *obj, const char *name)
 {
     void *subobj = NULL;
+    const char *value = NULL;
 
     if (obj == NULL || name == NULL) {
         LOG_ERROR("Invalid parameter.");
@@ -341,7 +342,13 @@ const char *api_json_get_string(void *obj, const char *name)
         return NULL;
     }
 
-    return json_string_value(subobj);
+    value = json_string_value(subobj);
+    if (value == NULL) {
+        LOG_ERROR("Invalid parameter.");
+        return NULL;
+    }
+
+    return value;
 }
 
 int api_json_get_long(uint64_t *value, void *obj, const char *name)
@@ -364,49 +371,12 @@ int api_json_get_long(uint64_t *value, void *obj, const char *name)
 }
 
 // Publish the updated configuration from the control plane to the global root
-void api_numa_config_update(void *cfg, void **position[], void *update[], void (*free_cb)(void *[], int))
-{
-    struct root *root = cfg;
-    struct dataplane *dp = NULL;
-    void *old[CPU_MAX] = {NULL};
-    void *numa[NUMA_MAX] = {NULL};
-    void *numa_rcu[NUMA_MAX] = {NULL};
-    int cpu_count = root->hw_info.cpu_count;
-
-    for (int i = 0; i < cpu_count; i++) {
-        old[i] = *position[i];
-    }
-
-    for (int i = 0; i < cpu_count; i++) {
-        rcu_assign_pointer(position[i], update[i]);
-        update[i] = NULL;
-    }
-
-    for (int i = 0; i < root->hw_info.cpu_count; i++) {
-        dp = root->dpdk_thread[i];
-        numa_rcu[dp->numa_id] = dp->rcu;
-        numa[dp->numa_id] = old[dp->numa_id];
-    }
-
-    for (int i = 0; i < root->hw_info.numa_count; i++) {
-        if (numa_rcu[i] != NULL) {
-            dpdk_rcu_synchronize(numa_rcu[i]);
-        }
-    }
-
-    if (free_cb != NULL) {
-        free_cb(numa, root->hw_info.numa_count);
-    }
-}
-
 void api_thread_config_update(void *cfg, void **position[], void *update[], void (*free_cb)(void *))
 {
     struct root *root = cfg;
     void *old[CPU_MAX] = {NULL};
     struct dataplane *dp = NULL;
-    void *numa_rcu[NUMA_MAX] = {NULL};
     int cpu_count = root->hw_info.cpu_count;
-    int numa_count = root->hw_info.numa_count;
 
     for (int i = 0; i < cpu_count; i++) {
         old[i] = *position[i];
@@ -419,13 +389,7 @@ void api_thread_config_update(void *cfg, void **position[], void *update[], void
 
     for (int i = 0; i < cpu_count; i++) {
         dp = root->dpdk_thread[i];
-        numa_rcu[dp->numa_id] = dp->rcu;
-    }
-
-    for (int i = 0; i < numa_count; i++) {
-        if (numa_rcu[i] != NULL) {
-            dpdk_rcu_synchronize(numa_rcu[i]);
-        }
+        dpdk_rcu_synchronize(dp->rcu);
     }
 
     if (free_cb != NULL) {

@@ -69,7 +69,7 @@ static int _ip4_conf_table_add(struct ip4_table *table, const struct ip4_info *o
     struct ip4_info *cur = NULL;
     struct list_head *prev = NULL;
     struct ip4_info *store = NULL;
-    int idx = IP4_BUCKET_IDX(one->ip);
+    int idx = IP4_BUCKET_IDX(one->addr);
     struct list_head *head = &table->head[idx];
 
     nums = table->ip_count;
@@ -80,7 +80,7 @@ static int _ip4_conf_table_add(struct ip4_table *table, const struct ip4_info *o
         table->master[one->port] = store;
     }
 
-    host_ip = dpdk_be_to_cpu_32(one->ip);
+    host_ip = dpdk_be_to_cpu_32(one->addr);
     ret = dpdk_fib_add(table->fib[one->port], host_ip, one->mask, nums);
     if (UNLIKELY(ret != 0)) {
         LOG_ERROR("Failure dpdk_fib_add: %s", strerror(-ret));
@@ -89,9 +89,9 @@ static int _ip4_conf_table_add(struct ip4_table *table, const struct ip4_info *o
 
     prev = head;
     list_for_each_entry(cur, head, node) {
-        if (cur->ip == one->ip) {
+        if (cur->addr == one->addr) {
             if (cur->port == one->port) {
-                inet_ntop(AF_INET, &one->ip, ip_str, sizeof(ip_str));
+                inet_ntop(AF_INET, &one->addr, ip_str, sizeof(ip_str));
                 LOG_ERROR("IP(%s) and port(%d) already exists.", ip_str, one->port);
                 return ERRCODE_IP_EXIST;
             } else if (cur->port < one->port) {
@@ -99,7 +99,7 @@ static int _ip4_conf_table_add(struct ip4_table *table, const struct ip4_info *o
             } else {
                 break;
             }
-        } else if (cur->ip < one->ip) {
+        } else if (cur->addr < one->addr) {
             prev = &cur->node;
         } else {
             break;
@@ -137,7 +137,7 @@ static int _ip4_conf_table_add_check(struct ip4_table *table, const struct ip4_i
     for (int i = 0; i < count; i++) {
         one = &info[i];
 
-        ret = dpdk_fib_lookup(table->fib[one->port], (uint32_t *)&one->ip, &next_hop, 1);
+        ret = dpdk_fib_lookup(table->fib[one->port], (uint32_t *)&one->addr, &next_hop, 1);
         if (UNLIKELY(ret != 0)) {
             LOG_ERROR("Inner error.");
             return ERRCODE_INNER;
@@ -145,7 +145,7 @@ static int _ip4_conf_table_add_check(struct ip4_table *table, const struct ip4_i
 
         if (UNLIKELY(ret == 0 && next_hop != DPDK_FIB_DEFAULT && table->store[next_hop].mask == one->mask)) {
             mask = one->mask;
-            inet_ntop(AF_INET, &one->ip, ip_str, sizeof(ip_str));
+            inet_ntop(AF_INET, &one->addr, ip_str, sizeof(ip_str));
             LOG_ERROR("IP address conflict — another IP(%s/%d) in the same subnet is already configured.", ip_str, mask);
             return ERRCODE_SUBNET_EXIST;
         }
@@ -176,11 +176,11 @@ static int _ip4_conf_table_del_check(struct ip4_table *table, const struct ip4_i
         exist = 0;
         one = &info[i];
 
-        idx = IP4_BUCKET_IDX(one->ip);
+        idx = IP4_BUCKET_IDX(one->addr);
         head = &table->head[idx];
 
         list_for_each_entry(cur, head, node) {
-            if (cur->ip == one->ip && cur->port == one->port) {
+            if (cur->addr == one->addr && cur->port == one->port) {
                 exist = !0;
                 break;
             } else {
@@ -189,7 +189,7 @@ static int _ip4_conf_table_del_check(struct ip4_table *table, const struct ip4_i
         }
 
         if (!exist) {
-            inet_ntop(AF_INET, &one->ip, ip_str, sizeof(ip_str));
+            inet_ntop(AF_INET, &one->addr, ip_str, sizeof(ip_str));
             LOG_ERROR("IP: %s, port: %d not exist", ip_str, one->port);
             return ERRCODE_IP_NOT_EXIST;
         }
@@ -267,7 +267,7 @@ static int _ip4_conf_table_delete(struct ip4_table *dst, const struct ip4_table 
 
         for (int j = 0; j < count; j++) {
             one = &info[j];
-            if (one->ip == store->ip && one->port == store->port) {
+            if (one->addr == store->addr && one->port == store->port) {
                 need_delete = true;
                 break;
             }
@@ -291,7 +291,7 @@ void ip4_conf_table_destroy(void *ptr)
     _ip4_conf_table_destroy(ptr);
 }
 
-bool ip4_conf_table_ip_is_local(const void *arg, uint32_t ip, uint8_t port)
+bool ip4_conf_table_ip_is_local(const void *arg, uint32_t addr, uint8_t port)
 {
     const struct ip4_info *cur = NULL;
     const struct list_head *head = NULL;
@@ -301,9 +301,9 @@ bool ip4_conf_table_ip_is_local(const void *arg, uint32_t ip, uint8_t port)
         return false;
     }
 
-    head = &ip4_table->head[IP4_BUCKET_IDX(ip)];
+    head = &ip4_table->head[IP4_BUCKET_IDX(addr)];
     list_for_each_entry(cur, head, node) {
-        if (cur->ip == ip && cur->port == port) {
+        if (cur->addr == addr && cur->port == port) {
             return true;
         } else {
             continue;
@@ -382,19 +382,19 @@ int ip4_conf_table_create_and_delete(void **dst, void *src, const struct ip4_inf
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
 // Data plane interface
 
-static int _ip4_get_by_port(uint32_t *ip, uint32_t target_ip, int port)
+static int _ip4_get_by_port(uint32_t *addr, uint32_t target_addr, int port)
 {
     int ret = 0;
     uint64_t next_hop = 0;
     struct ip4_table *table = s_ip4_table;
     struct dpdk_fib *fib = table->fib[port];
 
-    ret = dpdk_fib_lookup(fib, &target_ip, &next_hop, 1);
+    ret = dpdk_fib_lookup(fib, &target_addr, &next_hop, 1);
     if (UNLIKELY(ret != 0 || next_hop == DPDK_FIB_DEFAULT)) {
         return -1;
     }
 
-    *ip = table->store[(uint16_t)next_hop].ip;
+    *addr = table->store[(uint16_t)next_hop].addr;
     return 0;
 }
 
@@ -417,7 +417,7 @@ static INLINE void _ip4_is_local_bulk(void *data[], bool result[], int count)
         head = &table->head[idx];
 
         list_for_each_entry(cur, head, node) {
-            if (ip4hdr->dst_addr == cur->ip) {
+            if (ip4hdr->dst_addr == cur->addr) {
                 if (mbuf->port == cur->port) {
                     hit = true;
                     break;
@@ -426,7 +426,7 @@ static INLINE void _ip4_is_local_bulk(void *data[], bool result[], int count)
                 } else {
                     break;
                 }
-            } else if (ip4hdr->dst_addr < cur->ip) {
+            } else if (ip4hdr->dst_addr < cur->addr) {
                 continue;
             } else {
                 break;
@@ -595,7 +595,7 @@ void ip4_arp_refresh(void)
     l2_arp_refresh(_ip4_get_by_port);
 }
 
-enum IP_LOCAL_CLASS ip4_local_class(uint16_t port, uint32_t ip)
+enum IP_LOCAL_CLASS ip4_local_class(uint16_t port, uint32_t addr)
 {
     int ret = 0;
     uint16_t idx = 0;
@@ -605,11 +605,11 @@ enum IP_LOCAL_CLASS ip4_local_class(uint16_t port, uint32_t ip)
     struct list_head *head = NULL;
     struct ip4_table *table = s_ip4_table;
 
-    idx = IP4_BUCKET_IDX(ip);
+    idx = IP4_BUCKET_IDX(addr);
     head = &table->head[idx];
 
     list_for_each_entry(cur, head, node) {
-        if (cur->ip == ip) {
+        if (cur->addr == addr) {
             if (cur->port == port) {
                 return IP_LOCAL_CLASS_SELF;
             } else if (cur->port < port) {
@@ -617,7 +617,7 @@ enum IP_LOCAL_CLASS ip4_local_class(uint16_t port, uint32_t ip)
             } else {
                 break;
             }
-        } else if (cur->ip < ip) {
+        } else if (cur->addr < addr) {
             continue;
         } else {
             break;
@@ -625,7 +625,7 @@ enum IP_LOCAL_CLASS ip4_local_class(uint16_t port, uint32_t ip)
     }
 
     fib = table->fib[port];
-    ret = dpdk_fib_lookup(fib, &ip, &next_hop, 1);
+    ret = dpdk_fib_lookup(fib, &addr, &next_hop, 1);
     if (ret != 0 || next_hop == DPDK_FIB_DEFAULT) {
         return IP_LOCAL_CLASS_EXTERNAL;
     }

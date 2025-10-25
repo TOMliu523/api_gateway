@@ -15,6 +15,9 @@
 #include "dpdk_common.h"
 #include "route6_conf.h"
 
+#define API_ROUTE6_MODULE_NAME "route6"
+#define API_ROUTE6_LIST_NAME "entries"
+
 static INLINE void _api_route6_item_free(struct route6_item *item)
 {
     if (item != NULL) {
@@ -22,11 +25,12 @@ static INLINE void _api_route6_item_free(struct route6_item *item)
     }
 }
 
-static INLINE void _api_route6_numa_free(void *route[], int count)
+static INLINE void _api_route6_table_free(void *route[], int count)
 {
     for (int i = 0; i < count; i++) {
         if (route[i] != NULL) {
             route6_conf_destroy(route[i]);
+            route[i] = NULL;
         }
     }
 }
@@ -55,13 +59,15 @@ static INLINE bool _api_route6_is_valid_subnet(const struct dpdk_ip6_addr *addr,
 static int _api_route6_post_parse(struct route6_item **pp_item, int *p_count, void *json)
 {
     int code = 0;
-    int count = 0;
+    size_t count = 0;
     void *array = NULL;
     char ip_str[CACHE_LINE] = "";
     struct route6_item *item = NULL;
 
-    array = api_v1_modify_list_old(json, "route6", "entrys");
-    count = json_array_size(array);
+    code = api_v1_modify_list(&array, &count, json, API_ROUTE6_MODULE_NAME, API_ROUTE6_LIST_NAME);
+    if (code != 0) {
+        return code;
+    }
 
     item = _api_route6_item_alloc(count);
     if (item == NULL) {
@@ -90,7 +96,7 @@ static int _api_route6_post_parse(struct route6_item **pp_item, int *p_count, vo
 
         name = json_string_value(json_object_get(obj, "interface"));
         one->port = dpdk_port_by_name_get(name);
-        if (one->port == (uint16_t) -1) {
+        if (one->port == UINT8_MAX) {
             code = ERRCODE_PORT_NOT_EXIST;
             goto _quit;
         }
@@ -123,12 +129,15 @@ _quit:
 
 static int _api_route6_del_parse(struct route6_item **pp_item, int *p_count, void *json)
 {
-    int count = 0;
+    int code = 0;
+    size_t count = 0;
     void *array = NULL;
     struct route6_item *item = NULL;
 
-    array = api_v1_delete_list_old(json, "route6", "entrys");
-    count = json_array_size(array);
+    code = api_v1_delete_list(&array, &count, json, API_ROUTE6_MODULE_NAME, API_ROUTE6_LIST_NAME);
+    if (code != 0) {
+        return code;
+    }
 
     item = _api_route6_item_alloc(count);
     if (item == NULL) {
@@ -155,67 +164,24 @@ static int _api_route6_del_parse(struct route6_item **pp_item, int *p_count, voi
 
     *pp_item = item;
     *p_count = count;
+
     return 0;
 }
 
 static int _api_route6_table_add(struct root *root, void *route6[], struct route6_item *item, int count)
 {
-    int ret = 0;
-    int hw_numa_id = 0;
-    int numa_count = 0;
-    struct dataplane *dp = NULL;
-    struct proto_header *proto = NULL;
-
-    dp = root->dpdk_thread[0];
-    proto = dp->protocol;
-    ret = route6_conf_create_and_append(&route6[dp->numa_id], proto->route6, item, count, dp->hw_numa_id, dp->tc->ip6_table);
-    if (ret != 0) {
-        return ret;
-    }
-
-    numa_count = root->hw_info.numa_count;
-    for (int i = 0; i < numa_count; i++) {
-        if (i == dp->numa_id) {
-            continue;
-        }
-
-        hw_numa_id = root->dpdk_thread[i]->hw_numa_id;
-        ret = route6_conf_create_and_append(&route6[i], route6[dp->numa_id], NULL, 0, hw_numa_id, dp->tc->ip6_table);
-        if (ret != 0) {
-            goto _quit;
-        }
-    }
-
-    return 0;
-
-_quit:
-    _api_route6_numa_free(route6, numa_count);
-    return ret;
-}
-
-static int _api_route6_table_del(struct root *root, void *route6[], struct route6_item *item, int count)
-{
     int code = 0;
     int hw_numa_id = 0;
-    int numa_count = 0;
     struct dataplane *dp = NULL;
-    struct proto_header *proto = NULL;
+    struct proto_header *protocol = NULL;
+    int cpu_count = root->hw_info.cpu_count;
 
-    dp = root->dpdk_thread[0];
-    proto = dp->protocol;
-    code = route6_conf_create_and_delete(&route6[dp->numa_id], proto->route6, item, count, dp->hw_numa_id, true);
-    if (code != 0) {
-        return code;
-    }
+    for (int i = 0; i < cpu_count; i++) {
+        dp = root->dpdk_thread[i];
+        hw_numa_id = dp->hw_numa_id;
+        protocol = dp->protocol;
 
-    numa_count = root->hw_info.numa_count;
-    for (int i = 0; i < numa_count; i++) {
-        if (i == dp->numa_id) {
-            continue;
-        }
-
-        hw_numa_id = root->dpdk_thread[i]->hw_numa_id;
-        code = route6_conf_create_and_append(&route6[i], route6[dp->numa_id], NULL, 0, hw_numa_id, dp->tc->ip6_table);
+        code = route6_conf_create_and_append(&route6[i], protocol->route6, item, count, hw_numa_id, dp->tc->ip6_table);
         if (code != 0) {
             goto _quit;
         }
@@ -224,8 +190,50 @@ static int _api_route6_table_del(struct root *root, void *route6[], struct route
     return 0;
 
 _quit:
-    _api_route6_numa_free(route6, numa_count);
+    _api_route6_table_free(route6, cpu_count);
     return code;
+}
+
+static int _api_route6_table_del(struct root *root, void *route6[], struct route6_item *item, int count)
+{
+    int code = 0;
+    int hw_numa_id = 0;
+    struct dataplane *dp = NULL;
+    struct proto_header *protocol = NULL;
+    int cpu_count = root->hw_info.cpu_count;
+
+    for (int i = 0; i < cpu_count; i++) {
+        dp = root->dpdk_thread[i];
+        hw_numa_id = dp->hw_numa_id;
+        protocol = dp->protocol;
+
+        code = route6_conf_create_and_delete(&route6[i], protocol->route6, item, count, hw_numa_id, true);
+        if (code != 0) {
+            goto _quit;
+        }
+    }
+
+    return 0;
+
+_quit:
+    _api_route6_table_free(route6, cpu_count);
+    return code;
+}
+
+static void _api_route6_update(void *route[], struct root *root)
+{
+    struct dataplane *dp = NULL;
+    void **position[CPU_MAX] = {NULL};
+    struct proto_header *protocol = NULL;
+    int cpu_count = root->hw_info.cpu_count;
+
+    for (int i = 0; i < cpu_count; i++) {
+        dp = root->dpdk_thread[i];
+        protocol = dp->protocol;
+        position[i] = (void **)&protocol->route6;
+    }
+
+    api_thread_config_update(root, position, route, route6_conf_destroy);
 }
 
 API_POST(/v1/network/route6, route6)
@@ -233,10 +241,8 @@ API_POST(/v1/network/route6, route6)
     int code = 0;
     int count = 0;
     struct root *root = cfg;
-    void *route[NUMA_MAX] = {NULL};
+    void *route[CPU_MAX] = {NULL};
     struct route6_item *item = NULL;
-    void **position[CPU_MAX] = {NULL};
-    void *thread_route[CPU_MAX] = {NULL};
 
     code = _api_route6_post_parse(&item, &count, json);
     if (code != 0) {
@@ -248,13 +254,7 @@ API_POST(/v1/network/route6, route6)
         goto _quit;
     }
 
-    for (int i = 0; i < root->hw_info.cpu_count; i++) {
-        struct proto_header *proto = root->dpdk_thread[i]->protocol;
-        position[i] = (void **)&proto->route6;
-        thread_route[i] = route[root->dpdk_thread[i]->numa_id];
-    }
-
-    api_numa_config_update(cfg, position, thread_route, _api_route6_numa_free);
+    _api_route6_update(route, root);
     _api_route6_item_free(item);
 
     LOG_DEBUG("CONFIG ROUTE6 SUCCESS.");
@@ -277,8 +277,6 @@ API_DEL(/v1/network/route6, route6)
     struct root *root = cfg;
     void *route[NUMA_MAX] = {NULL};
     struct route6_item *item = NULL;
-    void **position[CPU_MAX] = {NULL};
-    void *thread_route[CPU_MAX] = {NULL};
 
     code = _api_route6_del_parse(&item, &count, json);
     if (code != 0) {
@@ -290,15 +288,9 @@ API_DEL(/v1/network/route6, route6)
         goto _quit;
     }
 
-    for (int i = 0; i < root->hw_info.cpu_count; i++) {
-        struct proto_header *proto = root->dpdk_thread[i]->protocol;
-        position[i] = (void **)&proto->route6;
-        thread_route[i] = route[root->dpdk_thread[i]->numa_id];
-    }
-
-    api_numa_config_update(cfg, position, thread_route, _api_route6_numa_free);
-
+    _api_route6_update(route, root);
     _api_route6_item_free(item);
+
     return api_succ(NULL);
 
 _quit:

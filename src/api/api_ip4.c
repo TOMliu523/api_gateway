@@ -24,38 +24,150 @@
 #include "dpdk_common.h"
 #include "route4_conf.h"
 
-#define IP4_MODULE_NAME "ip4"
-#define IP4_LIST_NAME "entrys"
+#define API_IP4_MODULE_NAME "ip4"
+#define API_IP4_LIST_NAME "entries"
 
-#define API_INTERFACE_FORMAT "/v1:" IP4_MODULE_NAME "/" IP4_LIST_NAME "[name='%s']/*"
+#define API_INTERFACE_FORMAT "/v1:" API_IP4_MODULE_NAME "/" API_IP4_LIST_NAME "[name='%s']/*"
 
-struct api_ip4 {
+struct api_param {
     const char *name;
-    uint16_t port;
+    uint8_t port;
     int mask;
     enum IP_TYPE ip_type;
-    uint32_t ip;
+    uint32_t addr;
     struct dpdk_mac mac;
 };
 
-static int s_arp_thread_id = -1;
+struct api_param_hdr {
+    int count;
+    struct api_param param[];
+};
 
-static int _api_ip4_obj_gen(void *array, sr_val_t *val, int cnt)
+struct api_ip4_hdr {
+    int cpu_count;
+    int ele_count;
+    struct ip4_info *info[CPU_MAX];
+    void *ip4_table[CPU_MAX];
+
+    struct route4_item *item[CPU_MAX];
+    void *route4_table[CPU_MAX];
+
+    void **arp;
+};
+
+static void _api_ip4_arp_free(void **arp, int count)
+{
+    bool has = false;
+
+    if (arp == NULL) {
+        return;
+    }
+
+    for (int i = 0; i < count; i++) {
+        if (arp[i] != NULL) {
+            has = true;
+            break;
+        }
+    }
+
+    if (has) {
+        dpdk_pktmbuf_push(arp, count);
+        for (int i = 0; i < count; i++) {
+            arp[i] = NULL;
+        }
+    }
+
+    api_free(arp);
+}
+
+static void _api_ip4_hdr_free(struct api_ip4_hdr *ip4_hdr)
+{
+    if (ip4_hdr == NULL) {
+        return;
+    }
+
+    for (int i = 0; i < ip4_hdr->cpu_count; i++) {
+        if (ip4_hdr->info[i] != NULL) {
+            api_free(ip4_hdr->info[i]);
+            ip4_hdr->info[i] = NULL;
+        }
+
+        if (ip4_hdr->ip4_table[i] != NULL) {
+            ip4_conf_table_destroy(ip4_hdr->ip4_table[i]);
+            ip4_hdr->ip4_table[i] = NULL;
+        }
+
+        if (ip4_hdr->item[i] != NULL) {
+            api_free(ip4_hdr->item[i]);
+            ip4_hdr->item[i] = NULL;
+        }
+
+        if (ip4_hdr->route4_table[i] != NULL) {
+            route4_conf_destroy(ip4_hdr->route4_table[i]);
+            ip4_hdr->route4_table[i] = NULL;
+        }
+    }
+
+    _api_ip4_arp_free(ip4_hdr->arp, ip4_hdr->ele_count);
+    ip4_hdr->arp = NULL;
+
+    api_free(ip4_hdr);
+}
+
+static void _api_ip4_param_hdr_free(struct api_param_hdr *param_hdr)
+{
+    if (param_hdr == NULL) {
+        return;
+    }
+
+    api_free(param_hdr);
+}
+
+static void *_api_ip4_param_hdr_alloc(size_t count)
+{
+    size_t total = 0;
+    struct api_param_hdr *param_hdr = NULL;
+
+    total = sizeof(*param_hdr) + count * sizeof(struct api_param);
+    param_hdr = api_malloc(total);
+    if (param_hdr == NULL) {
+        return NULL;
+    }
+
+    param_hdr->count = count;
+    return param_hdr;
+}
+
+static void *_api_ip4_hdr_alloc(int cpu_count)
+{
+    struct api_ip4_hdr *ip4_hdr = NULL;
+
+    ip4_hdr = api_malloc(sizeof(struct api_ip4_hdr));
+    if (ip4_hdr == NULL) {
+        return NULL;
+    }
+
+    ip4_hdr->cpu_count = cpu_count;
+    return ip4_hdr;
+}
+
+static int _api_ip4_obj_gen(void *array, sr_val_t *val, size_t val_cnt)
 {
     int i = 0;
     int j = 0;
     int m = 0;
     int ret = 0;
+    int code = 0;
     int group = 0;
     void *obj = NULL;
     const int ele_cnt = 4;
 
-    group = cnt / ele_cnt;
+    group = val_cnt / ele_cnt;
     for (i = 0; i < group; i++) {
-        obj = json_object();
-        if (obj == NULL) {
-            LOG_ERROR("OOM");
-            return ERRCODE_OOM;
+        obj = NULL;
+        code = api_json_object(&obj);
+        if (code != 0) {
+            goto _quit;
         }
 
         m = j + ele_cnt;
@@ -64,8 +176,8 @@ static int _api_ip4_obj_gen(void *array, sr_val_t *val, int cnt)
             const char *xpath = val[j].xpath;
 
             len = strlen(xpath);
-            if (len >= 3 && strcmp(xpath + len - 3, "/ip") == 0) {
-                ret = api_json_add_string(obj, "ip", val[j].data.string_val);
+            if (len >= 5 && strcmp(xpath + len - 5, "/addr") == 0) {
+                ret = api_json_add_string(obj, "addr", val[j].data.string_val);
             } else if (len >= 5 && strcmp(xpath + len - 5, "/mask") == 0) {
                 ret = api_json_add_long(obj, "mask", val[j].data.uint8_val);
             } else if (len >= 5 && strcmp(xpath + len - 5, "/type") == 0) {
@@ -73,7 +185,7 @@ static int _api_ip4_obj_gen(void *array, sr_val_t *val, int cnt)
             } else if (len >= 5 && strcmp(xpath + len - 5, "/name") == 0) {
                 ret = api_json_add_string(obj, "name", val[j].data.string_val);
             } else {
-                LOG_ERROR("Not exists element(%s)", xpath);
+                LOG_ERROR("Not exist element '%s'.", xpath);
                 goto _quit;
             }
 
@@ -82,9 +194,8 @@ static int _api_ip4_obj_gen(void *array, sr_val_t *val, int cnt)
             }
         }
 
-        ret = json_array_append_new(array, obj);
-        if (ret != 0) {
-            LOG_ERROR("OOM");
+        code = api_json_array_append(array, obj);
+        if (code != 0) {
             goto _quit;
         }
     }
@@ -92,193 +203,162 @@ static int _api_ip4_obj_gen(void *array, sr_val_t *val, int cnt)
     return 0;
 
 _quit:
-    if (obj != NULL) {
-        json_decref(obj);
-    }
-
-    return ERRCODE_OOM;
+    api_json_free(obj);
+    return code;
 }
 
-static INLINE void _api_ip4_broadcast_free(void **arp, int count)
+static int _api_ip4_del_parse(struct api_param_hdr **pp_param_hdr, struct root *root, void *json)
 {
-    dpdk_pktmbuf_push(arp, count);
-}
-
-void api_ip4_table_numa_free(void *table[], int count)
-{
-    for (int i = 0; i < count; i++) {
-        if (table[i] != NULL) {
-            ip4_table_destroy(table[i]);
-        }
-    }
-}
-
-static INLINE void _api_ip4_route_numa_free(void *route[], int count)
-{
-    for (int i = 0; i < count; i++) {
-        if (route[i] != NULL) {
-            route4_conf_destroy(route[i]);
-        }
-    }
-}
-
-static INLINE void _api_ip4_info_free(struct ip4_info *info)
-{
-    if (info == NULL) {
-        return;
-    }
-
-    dpdk_free(info);
-}
-
-static INLINE void _api_ip4_free(void *ptr)
-{
-    dpdk_free(ptr);
-}
-
-static INLINE void *_api_ip4_alloc(size_t total)
-{
-    void *tmp = NULL;
-
-    tmp = dpdk_malloc(total);
-    if (tmp == NULL) {
-        LOG_ERROR("OOM.");
-        return NULL;
-    }
-
-    memset(tmp, 0, total);
-    return tmp;
-}
-
-static enum ERRCODE _api_ip4_broadcast_gen(struct root *root, void **arp, struct api_ip4 *iface, int count)
-{
-    int id = 0;
-    int ret = 0;
-    struct api_ip4 *one = NULL;
-
-    id = (s_arp_thread_id + 1) % root->hw_info.cpu_count;
-    s_arp_thread_id = id;
-
-    ret = dpdk_pktmbuf_pop(root->dpdk_thread[id]->pktmbuf_pool, arp, count);
-    if (ret != 0) {
-        LOG_ERROR("Resource busy");
-        return ERRCODE_RESOURCE_BUSY;
-    }
-
-    for (int i = 0; i < count; i++) {
-        one = &iface[i];
-
-        ret = l2_gratuitous_arp_gen(arp[i], one->port, one->ip, &one->mac);
-        if (ret != 0) {
-            _api_ip4_broadcast_free(arp, count);
-            return ERRCODE_INNER;
-        }
-
-        DPDK_HEADROOM(arp[i])->type = PKT_MBUF_GARP;
-    }
-
-    return ERRCODE_SUCCESS;
-}
-
-static INLINE int _api_ip4_post_parse_count(void *json)
-{
+    int code = 0;
+    void *obj = NULL;
+    size_t count = 0;
     void *array = NULL;
+    uint64_t lvalue = 0;
+    const char *svalue = NULL;
+    struct api_param *param = NULL;
+    struct api_param_hdr *param_hdr = NULL;
 
-    array = api_v1_modify_list_old(json, IP4_MODULE_NAME, IP4_LIST_NAME);
-    return json_array_size(array);
-}
-
-static INLINE int _api_ip4_del_parse_count(void *json)
-{
-    void *array = NULL;
-
-    array = api_v1_delete_list_old(json, IP4_MODULE_NAME, IP4_LIST_NAME);
-    return json_array_size(array);
-}
-
-static enum ERRCODE _api_ip4_post_parse(struct root *root, void *json, struct api_ip4 *iface, int count)
-{
-    int ret = 0;
-    void *array = NULL;
-    struct api_ip4 *one = NULL;
-
-    array = api_v1_modify_list_old(json, IP4_MODULE_NAME, IP4_LIST_NAME);
-    for (int i = 0; i < count; i++) {
-        json_t *obj = NULL;
-        const char *ip = NULL;
-        const char *ip_type = NULL;
-
-        one = &iface[i];
-
-        obj = json_array_get(array, i);
-        one->name = json_string_value(json_object_get(obj, "name"));
-        one->port = dpdk_port_by_name_get(one->name);
-        if (one->port == (uint16_t)-1) {
-            LOG_ERROR("Not exists(%s)", one->name);
-            return ERRCODE_PORT_NOT_EXIST;
-        }
-
-        ip = json_string_value(json_object_get(obj, "ip"));
-        inet_pton(AF_INET, ip, &one->ip);
-
-        one->mask = json_integer_value(json_object_get(obj, "mask"));
-        ret = l2_conf_port_mac(one->port, &one->mac);
-        if (ret != 0) {
-            return ERRCODE_INNER;
-        }
-
-        ip_type = json_string_value(json_object_get(obj, "type"));
-        if (strcmp(ip_type, "IP_MASTER") == 0) {
-            one->ip_type = IP_MASTER;
-        } else {
-            one->ip_type = IP_SECONDARY;
-        }
-
-        if (!dpdk_port_is_up(one->port)) {
-            LOG_ERROR("Port %d is down", one->port);
-            return ERRCODE_PORT_IS_DOWN;
-        }
+    code = api_v1_delete_list(&array, &count, json, API_IP4_MODULE_NAME, API_IP4_LIST_NAME);
+    if (code != 0) {
+        return code;
     }
 
+    param_hdr = _api_ip4_param_hdr_alloc(count);
+    if (param_hdr == NULL) {
+        code = ERRCODE_OOM;
+        goto _quit;
+    }
+
+    for (int i = 0; i < count; i++) {
+        param = &param_hdr->param[i];
+
+        obj = api_json_array_get(array, i);
+        if (obj == NULL) {
+            goto _quit;
+        }
+
+        param->name = api_json_get_string(obj, "interface-name");
+        if (param->name == NULL) {
+            goto _quit;
+        }
+
+        param->port = dpdk_port_by_name_get(param->name);
+        if (param->port == UINT8_MAX) {
+            goto _quit;
+        }
+
+        code = l2_conf_port_mac(param->port, &param->mac);
+        if (code != 0) {
+            goto _quit;
+        }
+
+        svalue = api_json_get_string(obj, "addr");
+        if (svalue == NULL) {
+            goto _quit;
+        }
+
+        inet_pton(AF_INET, svalue, &param->addr);
+
+        code = api_json_get_long(&lvalue, obj, "mask");
+        if (code != 0) {
+            goto _quit;
+        }
+
+        param->mask = (uint8_t)lvalue;
+    }
+
+    *pp_param_hdr = param_hdr;
     return 0;
+
+_quit:
+    _api_ip4_param_hdr_free(param_hdr);
+    return code;
 }
 
-static int _api_ip4_del_parse(void *json, struct api_ip4 *iface, int count)
+static int _api_ip4_post_parse(struct api_param_hdr **pp_param_hdr, struct root *root, void *json)
 {
+    int code = 0;
+    size_t count = 0;
+    void *obj = NULL;
     void *array = NULL;
-    struct api_ip4 *one = NULL;
+    uint64_t lvalue = 0;
+    const char *svalue = NULL;
+    struct api_param *param = NULL;
+    struct api_param_hdr *param_hdr = NULL;
 
-    array = api_v1_delete_list_old(json, IP4_MODULE_NAME, IP4_LIST_NAME);
-    for (int i = 0; i < count; i++) {
-        json_t *obj = NULL;
-        const char *ip = NULL;
-
-        one = &iface[i];
-        obj = json_array_get(array, i);
-        one->name = json_string_value(json_object_get(obj, "name"));
-        one->port = dpdk_port_by_name_get(one->name);
-        if (one->port == (uint16_t) -1) {
-            LOG_ERROR("Not exists(%s)", one->name);
-            return ERRCODE_PORT_NOT_EXIST;
-        }
-
-        ip = json_string_value(json_object_get(obj, "ip"));
-        inet_pton(AF_INET, ip, &one->ip);
-
-        one->mask = json_integer_value(json_object_get(obj, "mask"));
+    code = api_v1_modify_list(&array, &count, json, API_IP4_MODULE_NAME, API_IP4_LIST_NAME);
+    if (code != 0) {
+        goto _quit;
     }
 
+    param_hdr = _api_ip4_param_hdr_alloc(count);
+    if (param_hdr == NULL) {
+        goto _quit;
+    }
+
+    code = ERRCODE_PARAMETER_INVALID;
+    for (size_t i = 0; i < count; i++) {
+        param = &param_hdr->param[i];
+
+        obj = api_json_array_get(array, i);
+        if (obj == NULL) {
+            LOG_ERROR("Invalid parameter");
+            goto _quit;
+        }
+
+        param->name = api_json_get_string(obj, "interface-name");
+        if (param->name == NULL) {
+            goto _quit;
+        }
+
+        param->port = dpdk_port_by_name_get(param->name);
+        if (param->port == UINT8_MAX) {
+            goto _quit;
+        }
+
+        if (!dpdk_port_is_up(param->port)) {
+            LOG_ERROR("Port '%s' is down.", param->name);
+            goto _quit;
+        }
+
+        code = l2_conf_port_mac(param->port, &param->mac);
+        if (code < 0) {
+            code = ERRCODE_INNER;
+            goto _quit;
+        }
+
+        svalue = api_json_get_string(obj, "addr");
+        if (svalue == NULL) {
+            goto _quit;
+        }
+
+        inet_pton(AF_INET, svalue, &param->addr);
+
+        code = api_json_get_long(&lvalue, obj, "mask");
+        if (code != 0) {
+            goto _quit;
+        }
+
+        param->mask = (uint16_t) lvalue;
+        param->ip_type = 0;
+    }
+
+    *pp_param_hdr = param_hdr;
     return 0;
+
+_quit:
+    _api_ip4_param_hdr_free(param_hdr);
+    return code;
 }
 
-int ip4_info_init(struct ip4_info *info, uint32_t ip, uint8_t mask, uint16_t port, enum IP_TYPE type, uint32_t refcnt)
+int ip4_info_init(struct ip4_info *info, uint32_t addr, uint8_t mask, uint16_t port, enum IP_TYPE type, uint32_t refcnt)
 {
     if (info == NULL) {
         LOG_ERROR("Inner parameter invalid.");
         return ERRCODE_INNER;
     }
 
-    info->ip = ip;
+    info->addr = addr;
     info->mask = mask;
     INIT_LIST_HEAD(&info->node);
     info->port = port;
@@ -288,308 +368,319 @@ int ip4_info_init(struct ip4_info *info, uint32_t ip, uint8_t mask, uint16_t por
     return 0;
 }
 
-static INLINE void *_api_ip4_to_info(const struct api_ip4 *iface, int count)
+static int _api_ip4_param_to_info(struct ip4_info **pp_ip4_info, const struct api_param_hdr *param_hdr)
 {
-    struct ip4_info *info = NULL;
+    int code = 0;
+    int count = param_hdr->count;
+    struct ip4_info *one = NULL;
+    struct ip4_info *ip4_info = NULL;
+    const struct api_param *param = NULL;
 
-    info = dpdk_malloc(count * sizeof(*info));
-    if (info == NULL) {
-        LOG_ERROR("OOM");
-        return NULL;
+    ip4_info = api_malloc(count * sizeof(*ip4_info));
+    if (ip4_info == NULL) {
+        return ERRCODE_OOM;
     }
 
-    memset(info, 0, count * sizeof(*info));
+    for (int i = 0; i < param_hdr->count; i++) {
+        param = &param_hdr->param[i];
+        one = &ip4_info[i];
+
+        code = ip4_info_init(one, param->addr, param->mask, param->port, param->ip_type, 1);
+        if (code != 0) {
+            api_free(ip4_info);
+            return code;
+        }
+    }
+
+    *pp_ip4_info = ip4_info;
+    return 0;
+}
+
+static INLINE uint32_t _api_ip4_to_subnet(uint32_t addr_be, int mask)
+{
+    uint32_t addr = dpdk_be_to_cpu_32(addr_be);
+    uint32_t addr_mask = L3_MASK_TO_IP(mask);
+
+    return dpdk_cpu_to_be_32(addr & addr_mask);
+}
+
+static int _api_ip4_to_route_item(struct route4_item **pp_item, const struct api_param params[], int count)
+{
+    struct route4_item *one = NULL;
+    struct route4_item *items = NULL;
+    const struct api_param *param = NULL;
+
+    items = api_malloc(count * sizeof(*items));
+    if (items == NULL) {
+        return ERRCODE_OOM;
+    }
 
     for (int i = 0; i < count; i++) {
-        ip4_info_init(&info[i], iface[i].ip, iface[i].mask, iface[i].port, iface[i].ip_type, 1);
+        param = &params[i];
+        one = &items[i];
+
+        INIT_LIST_HEAD(&one->lru_head);
+        one->nexthop = 0;
+        one->dst_subnet = _api_ip4_to_subnet(param->addr, param->mask);
+        one->mask = param->mask;
+        one->route_type = ROUTE4_DIRECT;
+        one->priority = 0;
+        one->port = param->port;
+        one->last_access_time = 0;
+        one->last_probe_time = 0;
+        one->valid = 1;
+        one->direct_id = 0;
     }
 
-    return info;
+    return 0;
 }
 
-static INLINE uint32_t _api_ip4_to_subnet(uint32_t ip_be, int mask)
+static int _api_ip4_table_create(struct api_ip4_hdr *ip4_hdr, struct root *root, const struct api_param_hdr *param_hdr,
+                                 int (*table_create_fn)(void **, void *, const struct ip4_info *, int, int))
 {
-    uint32_t ip = dpdk_be_to_cpu_32(ip_be);
-    uint32_t ip_mask = L3_MASK_TO_IP(mask);
-
-    return dpdk_cpu_to_be_32(ip & ip_mask);
-}
-
-static INLINE void *_api_ip4_to_route_item(const struct api_ip4 *iface, int count)
-{
-    struct route4_item *item = NULL;
-
-    item = dpdk_malloc(count * sizeof(*item));
-    if (item == NULL) {
-        LOG_ERROR("OOM");
-        return NULL;
-    }
-
-    memset(item, 0, count * sizeof(*item));
-
-    for (int i = 0; i < count; i++) {
-        INIT_LIST_HEAD(&item[i].lru_head);
-        item[i].nexthop = 0;
-        item[i].dst_subnet = _api_ip4_to_subnet(iface[i].ip, iface[i].mask);
-        item[i].mask = iface[i].mask;
-        item[i].route_type = ROUTE4_DIRECT;
-        item[i].priority = 0;
-        item[i].port = iface[i].port;
-        item[i].last_access_time = 0;
-        item[i].last_probe_time = 0;
-        item[i].valid = 1;
-        item[i].direct_id = 0;
-    }
-
-    return item;
-}
-
-static INLINE int _api_ip4_table_del(struct root *root, void *ip4_table[], struct api_ip4 *iface, int count)
-{
-    int ret = 0;
-    int numa_count = 0;
+    int code = 0;
+    void *table = NULL;
     struct dataplane *dp = NULL;
-    struct ip4_info *info = NULL;
+    int cpu_count = ip4_hdr->cpu_count;
 
-    info = _api_ip4_to_info(iface, count);
-    if (info == NULL) {
-        return ERRCODE_OOM;
-    }
-
-    dp = root->dpdk_thread[0];
-    ret = ip4_conf_table_create_and_delete(&ip4_table[dp->numa_id], dp->tc->ip4_table, info, count, dp->hw_numa_id);
-    _api_ip4_info_free(info);
-    if (ret != 0) {
-        return ret;
-    }
-
-    numa_count = root->hw_info.numa_count;
-    for (int i = 0; i < numa_count; i++) {
-        if (i == dp->numa_id) {
-            continue;
+    ip4_hdr->ele_count = param_hdr->count;
+    for (int i = 0; i < cpu_count; i++) {
+        code = _api_ip4_param_to_info(&ip4_hdr->info[i], param_hdr);
+        if (code != 0) {
+            return code;
         }
 
-        ret = ip4_conf_table_create_and_append(&ip4_table[i], ip4_table[dp->numa_id], NULL, 0, rte_socket_id_by_idx(i));
-        if (ret != 0) {
-            goto _quit;
+        dp = root->dpdk_thread[i];
+        code = table_create_fn(&table, dp->tc->ip4_table, ip4_hdr->info[i], ip4_hdr->ele_count, dp->hw_numa_id);
+        if (code != 0) {
+            return code;
         }
     }
 
     return 0;
-
-_quit:
-    api_ip4_table_numa_free(ip4_table, numa_count);
-    return ret;
 }
 
-static INLINE int _api_ip4_table_add(struct root *root, void *ip4_table[], const struct api_ip4 *iface, int count)
+static int _api_ip4_route_table_create(struct api_ip4_hdr *ip4_hdr, struct root *root, const struct api_param_hdr *param_hdr)
 {
-    int ret = 0;
-    int numa_count = 0;
+    int code = 0;
+    int count = 0;
+    int hw_numa_id = 0;
+    void *ip4_table = NULL;
     struct dataplane *dp = NULL;
-    struct dataplane *one = NULL;
-    struct ip4_info *info = NULL;
-
-    info = _api_ip4_to_info(iface, count);
-    if (info == NULL) {
-        return ERRCODE_OOM;
-    }
-
-    dp = root->dpdk_thread[0];
-    ret = ip4_conf_table_create_and_append(&ip4_table[dp->numa_id], dp->tc->ip4_table, info, count, dp->hw_numa_id);
-    _api_ip4_info_free(info);
-    if (ret != 0) {
-        return ret;
-    }
-
-    numa_count = root->hw_info.numa_count;
-    for (int i = 0; i < numa_count; i++) {
-        one = root->dpdk_thread[i];
-        if (i == dp->numa_id) {
-            continue;
-        }
-
-        ret = ip4_conf_table_create_and_append(&ip4_table[i], ip4_table[dp->numa_id], NULL, 0, one->hw_numa_id);
-        if (ret != 0) {
-            goto _quit;
-        }
-    }
-
-    return 0;
-
-_quit:
-    api_ip4_table_numa_free(ip4_table, numa_count);
-    return ret;
-}
-
-static int _api_ip4_route_table_add(struct root *root, void *route[], const struct api_ip4 *iface, int count, const void *arg)
-{
-    int ret = 0;
-    int numa_count = 0;
-    struct dataplane *dp = NULL;
-    struct route4_item *item = NULL;
     struct proto_header *proto = NULL;
+    int cpu_count = ip4_hdr->cpu_count;
 
-    item = _api_ip4_to_route_item(iface, count);
-    if (item == NULL) {
-        return ERRCODE_OOM;
-    }
-
-    dp = root->dpdk_thread[0];
-    proto = dp->protocol;
-    ret = route4_conf_create_and_append(&route[dp->numa_id], proto->route4, item, count, dp->hw_numa_id, arg);
-    _api_ip4_free(item);
-    if (ret != 0) {
-        return ret;
-    }
-
-    numa_count = root->hw_info.numa_count;
-    for (int i = 0; i < numa_count; i++) {
-        if (i == dp->numa_id) {
-            continue;
+    count = param_hdr->count;
+    for (int i = 0; i < cpu_count; i++) {
+        code = _api_ip4_to_route_item(&ip4_hdr->item[i], param_hdr->param, param_hdr->count);
+        if (code != 0) {
+            return code;
         }
 
-        ret = route4_conf_create_and_append(&route[i], route[dp->numa_id], NULL, 0, root->dpdk_thread[i]->hw_numa_id, arg);
-        if (ret != 0) {
-            goto _quit;
+        dp = root->dpdk_thread[i];
+        proto = dp->protocol;
+        hw_numa_id = dp->hw_numa_id;
+        ip4_table = ip4_hdr->ip4_table[i];
+
+        code = route4_conf_create_and_append(&ip4_hdr->route4_table[i], proto->route4, ip4_hdr->item[i], count, hw_numa_id, ip4_table);
+        if (code != 0) {
+            return code;
         }
     }
 
     return 0;
-
-_quit:
-    _api_ip4_route_numa_free(route, numa_count);
-    return ret;
 }
 
-static int _api_ip4_route_table_del(struct root *root, void *route[], const struct api_ip4 *iface, int count, const void *arg)
+static int _api_ip4_route_table_delete(struct api_ip4_hdr *ip4_hdr, struct root *root, const struct api_param_hdr *param_hdr)
+{
+    int code = 0;
+    int count = 0;
+    int hw_numa_id = 0;
+    struct dataplane *dp = NULL;
+    struct proto_header *proto = NULL;
+    int cpu_count = ip4_hdr->cpu_count;
+
+    count = param_hdr->count;
+    for (int i = 0; i < cpu_count; i++) {
+        code = _api_ip4_to_route_item(&ip4_hdr->item[i], param_hdr->param, param_hdr->count);
+        if (code != 0) {
+            return code;
+        }
+
+        dp = root->dpdk_thread[i];
+        proto = dp->protocol;
+        hw_numa_id = dp->hw_numa_id;
+
+        code = route4_conf_create_and_delete(&ip4_hdr->route4_table[i], proto->route4, ip4_hdr->item[i], count, hw_numa_id, false);
+        if (code != 0) {
+            return code;
+        }
+    }
+
+    return 0;
+}
+
+static int _api_ip4_arp_create(struct api_ip4_hdr *ip4_hdr, struct root *root, const struct api_param_hdr *param_hdr)
 {
     int ret = 0;
-    int numa_count = 0;
+    int code = 0;
     struct dataplane *dp = NULL;
-    struct route4_item *item = NULL;
-    struct proto_header *proto = NULL;
+    int count = param_hdr->count;
+    const struct api_param *param = NULL;
+    int cpu_count = root->hw_info.cpu_count;
 
-    item = _api_ip4_to_route_item(iface, count);
-    if (item == NULL) {
+    ip4_hdr->arp = api_malloc(param_hdr->count * sizeof(*ip4_hdr->arp));
+    if (ip4_hdr->arp == NULL) {
         return ERRCODE_OOM;
     }
 
-    dp = root->dpdk_thread[0];
-    proto = dp->protocol;
-    ret = route4_conf_create_and_delete(&route[dp->numa_id], proto->route4, item, count, dp->hw_numa_id, false);
-    _api_ip4_free(item);
-    if (ret != 0) {
+    for (int i = 0; i < cpu_count; i++) {
+        dp = root->dpdk_thread[i];
+        ret = dpdk_pktmbuf_pop(dp->pktmbuf_pool, ip4_hdr->arp, count);
+        if (ret == 0) {
+            break;
+        }
+    }
+
+    if (ret < 0) {
+        _api_ip4_arp_free(ip4_hdr->arp, ip4_hdr->ele_count);
+        ip4_hdr->arp = NULL;
+        return ERRCODE_RESOURCE_BUSY;
+    }
+
+    for (int i = 0; i < param_hdr->count; i++) {
+        param = &param_hdr->param[i];
+        code = l2_gratuitous_arp_gen(ip4_hdr->arp[i], param->port, param->addr, &param->mac);
+        if (code != 0) {
+            _api_ip4_arp_free(ip4_hdr->arp, ip4_hdr->ele_count);
+            ip4_hdr->arp = NULL;
+            return code;
+        }
+
+        DPDK_HEADROOM(ip4_hdr->arp[i])->type = PKT_MBUF_GARP;
+    }
+
+    return 0;
+}
+
+static int _api_ip4_del(struct api_ip4_hdr **pp_ip4_hdr, struct root *root, struct api_param_hdr *param_hdr)
+{
+    int code = 0;
+    struct api_ip4_hdr *ip4_hdr = NULL;
+
+    ip4_hdr = _api_ip4_hdr_alloc(root->hw_info.cpu_count);
+    if (ip4_hdr == NULL) {
+        code = ERRCODE_OOM;
         goto _quit;
     }
 
-    numa_count = root->hw_info.numa_count;
-    for (int i = 0; i < numa_count; i++) {
-        if (i == dp->numa_id) {
-            continue;
-        }
-
-        ret = route4_conf_create_and_append(&route[i], route[dp->numa_id], NULL, 0, root->dpdk_thread[i]->hw_numa_id, arg);
-        if (ret != 0) {
-            goto _quit;
-        }
+    code = _api_ip4_table_create(ip4_hdr, root, param_hdr, ip4_conf_table_create_and_delete);
+    if (code != 0) {
+        goto _quit;
     }
 
+    code = _api_ip4_route_table_delete(ip4_hdr, root, param_hdr);
+    if (code != 0) {
+        goto _quit;
+    }
+
+    *pp_ip4_hdr = ip4_hdr;
     return 0;
 
 _quit:
-    _api_ip4_route_numa_free(route, numa_count);
-    return ret;
+    _api_ip4_hdr_free(ip4_hdr);
+    return code;
 }
 
-static INLINE void _api_ip4_arp_send(struct root *root, void *arp_mbuf[], int count)
+static int _api_ip4_add(struct api_ip4_hdr **pp_ip4_hdr, struct root *root, const struct api_param_hdr *param_hdr)
 {
-    struct dataplane *dp = root->dpdk_thread[s_arp_thread_id];
-    dpdk_ring_mp_push(dp->notice_ring, arp_mbuf, count);
+    int code = 0;
+    struct api_ip4_hdr *ip4_hdr = NULL;
+
+    ip4_hdr = _api_ip4_hdr_alloc(root->hw_info.cpu_count);
+    if (ip4_hdr == NULL) {
+        goto _quit;
+    }
+
+    code = _api_ip4_table_create(ip4_hdr, root, param_hdr, ip4_conf_table_create_and_append);
+    if (code != 0) {
+        goto _quit;
+    }
+
+    code = _api_ip4_route_table_create(ip4_hdr, root, param_hdr);
+    if (code != 0) {
+        goto _quit;
+    }
+
+    code = _api_ip4_arp_create(ip4_hdr, root, param_hdr);
+    if (code != 0) {
+        goto _quit;
+    }
+
+    *pp_ip4_hdr = ip4_hdr;
+    return 0;
+
+_quit:
+    _api_ip4_hdr_free(ip4_hdr);
+    return code;
+}
+
+static void _api_ip4_update(struct api_ip4_hdr *ip4_hdr, struct root *root)
+{
+    struct dataplane *dp = NULL;
+    void **position[CPU_MAX] = {NULL};
+    struct proto_header *protocol = NULL;
+    int cpu_count = root->hw_info.cpu_count;
+
+    for (int i = 0; i < cpu_count; i++) {
+        dp = root->dpdk_thread[i];
+        position[i] = &dp->tc->ip4_table;
+    }
+
+    api_thread_config_update(root, position, ip4_hdr->ip4_table, ip4_conf_table_destroy);
+
+    for (int i = 0; i < cpu_count; i++) {
+        dp = root->dpdk_thread[i];
+        protocol = dp->protocol;
+        position[i] = (void **)&protocol->route4;
+    }
+
+    api_thread_config_update(root, position, ip4_hdr->route4_table, route4_conf_destroy);
+
+    dp = root->dpdk_thread[0];
+    dpdk_ring_mp_push(dp->notice_ring, ip4_hdr->arp, ip4_hdr->ele_count);
+    for (int i = 0; i < ip4_hdr->ele_count; i++) {
+        ip4_hdr->arp[i] = NULL;
+    }
 }
 
 API_POST(/v1/network/ip4, ip4)
 {
-    int count = 0;
-    void **arp = NULL;
-    enum ERRCODE code = 0;
+    int code = 0;
     struct root *root = cfg;
-    struct api_ip4 *api_iface = {0};
-    void *route[NUMA_MAX] = {NULL};
-    void **position[CPU_MAX] = {NULL};
-    void *ip4_table[NUMA_MAX] = {NULL};
-    void *thread_route[CPU_MAX] = {NULL};
-    void *thread_ip4_table[CPU_MAX] = {NULL};
+    struct api_ip4_hdr *ip4_hdr = NULL;
+    struct api_param_hdr *param_hdr = NULL;
 
-    count = _api_ip4_post_parse_count(json);
-    if (count < 0) {
-        LOG_ERROR("Parameter exception.");
-        return api_fail(ERRCODE_INVALID);
-    }
-
-    arp = _api_ip4_alloc(count * sizeof(*arp));
-    if (arp == NULL) {
-        code = ERRCODE_OOM;
-        goto _quit;
-    }
-
-    api_iface = _api_ip4_alloc(count * sizeof(*api_iface));
-    if (api_iface == NULL) {
-        code = ERRCODE_OOM;
-        goto _quit;
-    }
-
-    code = _api_ip4_post_parse(cfg, json, api_iface, count);
+    code = _api_ip4_post_parse(&param_hdr, root, json);
     if (code != 0) {
         goto _quit;
     }
 
-    code = _api_ip4_broadcast_gen(cfg, arp, api_iface, count);
+    code = _api_ip4_add(&ip4_hdr, root, param_hdr);
     if (code != 0) {
         goto _quit;
     }
 
-    code = _api_ip4_table_add(cfg, ip4_table, api_iface, count);
-    if (code != 0) {
-        goto _quit;
-    }
-
-    code = _api_ip4_route_table_add(cfg, route, api_iface, count, ip4_table[0]);
-    if (code != 0) {
-        goto _quit;
-    }
-
-    for (int i = 0; i < root->hw_info.cpu_count; i++) {
-        position[i] = &root->dpdk_thread[i]->tc->ip4_table;
-        thread_ip4_table[i] = ip4_table[root->dpdk_thread[i]->numa_id];
-    }
-
-    api_numa_config_update(cfg, position, thread_ip4_table, api_ip4_table_numa_free);
-
-    for (int i = 0; i < root->hw_info.cpu_count; i++) {
-        struct proto_header *proto = root->dpdk_thread[i]->protocol;
-        position[i] = (void **)&proto->route4;
-        thread_route[i] = route[root->dpdk_thread[i]->numa_id];
-    }
-
-    api_numa_config_update(cfg, position, thread_route, _api_ip4_route_numa_free);
-
-    _api_ip4_arp_send(cfg, arp, count);
-    _api_ip4_free(api_iface);
-    _api_ip4_free(arp);
-
-    LOG_DEBUG("CONFIG IP4 SUCCESS.");
-    return api_succ(NULL);
+    _api_ip4_update(ip4_hdr, root);
 
 _quit:
-    if (arp != NULL && arp[0] != NULL) {
-        _api_ip4_broadcast_free(arp, count);
+    _api_ip4_hdr_free(ip4_hdr);
+    _api_ip4_param_hdr_free(param_hdr);
+
+    if (code != 0) {
+        return api_fail(code);
     }
-    _api_ip4_free(arp);
-    _api_ip4_free(api_iface);
-    _api_ip4_route_numa_free(route, root->hw_info.numa_count);
-    api_ip4_table_numa_free(ip4_table, root->hw_info.numa_count);
-    return api_fail(code);
+    return api_succ(NULL);
 }
 
 API_PUT(/v1/network/ip4, ip4)
@@ -599,110 +690,73 @@ API_PUT(/v1/network/ip4, ip4)
 
 API_DEL(/v1/network/ip4, ip4)
 {
-    int count = 0;
-    enum ERRCODE code = 0;
+    int code = 0;
     struct root *root = cfg;
-    struct api_ip4 *api_iface = {0};
-    void *route[NUMA_MAX] = {NULL};
-    void **position[CPU_MAX] = {NULL};
-    void *ip4_table[NUMA_MAX] = {NULL};
-    void *thread_route[CPU_MAX] = {NULL};
-    void *thread_ip4_table[CPU_MAX] = {NULL};
+    struct api_ip4_hdr *ip4_hdr = NULL;
+    struct api_param_hdr *param_hdr = NULL;
 
-    count = _api_ip4_del_parse_count(json);
-    if (count < 0) {
-        LOG_ERROR("Parameter exception.");
-        return api_fail(ERRCODE_INVALID);
-    }
-
-    api_iface = _api_ip4_alloc(count * sizeof(*api_iface));
-    if (api_iface == NULL) {
-        return api_fail(ERRCODE_OOM);
-    }
-
-    code = _api_ip4_del_parse(json, api_iface, count);
+    code = _api_ip4_del_parse(&param_hdr, root, json);
     if (code != 0) {
         goto _quit;
     }
 
-    code = _api_ip4_table_del(cfg, ip4_table, api_iface, count);
+    code = _api_ip4_del(&ip4_hdr, root, param_hdr);
     if (code != 0) {
         goto _quit;
     }
 
-    code = _api_ip4_route_table_del(cfg, route, api_iface, count, ip4_table[0]);
-    if (code != 0) {
-        goto _quit;
-    }
-
-    for (int i = 0; i < root->hw_info.cpu_count; i++) {
-        position[i] = &root->dpdk_thread[i]->tc->ip4_table;
-        thread_ip4_table[i] = ip4_table[root->dpdk_thread[i]->numa_id];
-    }
-
-    api_numa_config_update(cfg, position, thread_ip4_table, api_ip4_table_numa_free);
-
-    for (int i = 0; i < root->hw_info.cpu_count; i++) {
-        struct proto_header *proto = root->dpdk_thread[i]->protocol;
-        position[i] = (void **)&proto->route4;
-        thread_route[i] = route[root->dpdk_thread[i]->numa_id];
-    }
-
-    api_numa_config_update(cfg, position, thread_route, _api_ip4_route_numa_free);
-
-    _api_ip4_free(api_iface);
-    return api_succ(NULL);
+    _api_ip4_update(ip4_hdr, root);
 
 _quit:
-    _api_ip4_free(api_iface);
-    return api_fail(code);
+    _api_ip4_hdr_free(ip4_hdr);
+    _api_ip4_param_hdr_free(param_hdr);
+
+    if (code != 0) {
+        return api_fail(code);
+    }
+    return api_succ(NULL);
 }
 
 API_GET(/v1/network/ip4, ip4)
 {
-    int ret = 0;
+    int code = 0;
     void *array = NULL;
     size_t val_cnt = 0;
     sr_val_t *val = NULL;
     char path[2 * CACHE_LINE + 1] = {0};
-    const struct port_name *port_name = NULL;
-    const struct port_name_entry *one = NULL;
+    const struct port_info_entry *one = NULL;
+    const struct port_info *port_info = NULL;
 
-    array = json_array();
-    if (array == NULL) {
-        LOG_ERROR("OOM.");
-        return api_fail(ERRCODE_INNER);
+    code = api_json_array(&array);
+    if (code != 0) {
+        return api_fail(code);
     }
 
-    port_name = dpdk_port_name_get();
-    for (int i = 0; i < port_name->count; i++) {
-        one = &port_name->entrys[i];
+    port_info = dpdk_port_info_get();
+    for (int i = 0; i < port_info->count; i++) {
+        one = &port_info->info[i];
 
         snprintf(path, sizeof(path), API_INTERFACE_FORMAT, one->name);
-        ret = sr_get_items(sess, path, 0, 0, &val, &val_cnt);
-        if (ret != 0 && ret != SR_ERR_NOT_FOUND) {
-            LOG_ERROR("Failure path(%s) sr_get_item: %s", path, strerror(ret));
+        code = sr_get_items(sess, path, 0, 0, &val, &val_cnt);
+        if (code != 0 && code != SR_ERR_NOT_FOUND) {
+            LOG_ERROR("Failure path '%s' sr_get_item: %s", path, strerror(code));
             goto _quit;
         }
 
-        ret = _api_ip4_obj_gen(array, val, val_cnt);
-        if (ret != 0) {
+        code = _api_ip4_obj_gen(array, val, val_cnt);
+        if (code != 0) {
             goto _quit;
         }
 
         sr_free_values(val, val_cnt);
     }
 
-    return api_succ(array);
+    return api_succ(NULL);
 
 _quit:
-    if (array != NULL) {
-        json_decref(array);
-    }
-
+    api_json_free(array);
     if (val != NULL) {
         sr_free_values(val, val_cnt);
     }
-
     return api_fail(ERRCODE_INNER);
 }

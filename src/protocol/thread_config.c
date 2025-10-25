@@ -13,12 +13,14 @@
 #include "log.h"
 #include "type.h"
 #include "rserver.h"
+#include "dpdk_port.h"
 #include "thread_config.h"
 
-static struct iface *_tc_iface_init(int hw_numa_id)
+static struct iface *_tc_iface_init(int nic_count, int hw_numa_id)
 {
     struct iface *iface = NULL;
-    size_t size = sizeof(struct iface);
+    const struct port_info *port_info = NULL;
+    size_t size = sizeof(struct iface) + nic_count * sizeof(uint16_t);
 
     iface = dpdk_malloc_numa(size, hw_numa_id);
     if (UNLIKELY(iface == NULL)) {
@@ -27,6 +29,12 @@ static struct iface *_tc_iface_init(int hw_numa_id)
     }
 
     memset(iface, 0, size);
+
+    port_info = dpdk_port_info_get();
+    for (int i = 0; i < nic_count; i++) {
+        iface->port[i] = port_info->info[i].port;
+    }
+
     return iface;
 }
 
@@ -67,7 +75,7 @@ struct thread_config *tc_init(int nic_count, int hw_numa_id)
         return NULL;
     }
 
-    tc->iface = _tc_iface_init(hw_numa_id);
+    tc->iface = _tc_iface_init(nic_count, hw_numa_id);
     if (UNLIKELY(tc->iface == NULL)) {
         goto _quit;
     }

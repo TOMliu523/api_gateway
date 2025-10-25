@@ -17,6 +17,9 @@
 #include "dpdk_common.h"
 #include "route4_conf.h"
 
+#define API_ROUTE4_MODULE_NAME "route4"
+#define API_ROUTE4_LIST_NAME "entries"
+
 static INLINE void _api_route4_item_free(struct route4_item *item)
 {
     if (item != NULL) {
@@ -24,11 +27,12 @@ static INLINE void _api_route4_item_free(struct route4_item *item)
     }
 }
 
-static INLINE void _api_route4_numa_free(void *route[], int count)
+static INLINE void _api_route4_table_free(void *route[], int count)
 {
     for (int i = 0; i < count; i++) {
         if (route[i] != NULL) {
             route4_conf_destroy(route[i]);
+            route[i] = NULL;
         }
     }
 }
@@ -58,13 +62,15 @@ static INLINE bool _api_route4_is_valid_subnet(uint32_t ip_be, uint8_t mask)
 static int _api_route4_post_parse(struct route4_item **pp_item, int *p_count, void *json)
 {
     int code = 0;
-    int count = 0;
+    size_t count = 0;
     void *array = NULL;
     char ip_str[CACHE_LINE] = "";
     struct route4_item *item = NULL;
 
-    array = api_v1_modify_list_old(json, "route4", "entrys");
-    count = json_array_size(array);
+    code = api_v1_modify_list(&array, &count, json, API_ROUTE4_MODULE_NAME, API_ROUTE4_LIST_NAME);
+    if (code != 0) {
+        return code;
+    }
 
     item = _api_route4_item_alloc(count);
     if (item == NULL) {
@@ -93,7 +99,7 @@ static int _api_route4_post_parse(struct route4_item **pp_item, int *p_count, vo
 
         name = json_string_value(json_object_get(obj, "interface"));
         one->port = dpdk_port_by_name_get(name);
-        if (one->port == (uint8_t)-1) {
+        if (one->port == UINT8_MAX) {
             code = ERRCODE_PORT_NOT_EXIST;
             goto _quit;
         }
@@ -126,12 +132,15 @@ _quit:
 
 static int _api_route4_del_parse(struct route4_item **pp_item, int *p_count, void *json)
 {
-    int count = 0;
+    int code = 0;
+    size_t count = 0;
     void *array = NULL;
     struct route4_item *item = NULL;
 
-    array = api_v1_delete_list_old(json, "route4", "entrys");
-    count = json_array_size(array);
+    code = api_v1_delete_list(&array, &count, json, API_ROUTE4_MODULE_NAME, API_ROUTE4_LIST_NAME);
+    if (code != 0) {
+        return code;
+    }
 
     item = _api_route4_item_alloc(count);
     if (item == NULL) {
@@ -158,67 +167,23 @@ static int _api_route4_del_parse(struct route4_item **pp_item, int *p_count, voi
 
     *pp_item = item;
     *p_count = count;
+
     return 0;
 }
 
 static int _api_route4_table_add(struct root *root, void *route[], struct route4_item *item, int count)
 {
-    int ret = 0;
-    int hw_numa_id = 0;
-    int numa_count = 0;
-    struct dataplane *dp = NULL;
-    struct proto_header *proto = NULL;
-
-    dp = root->dpdk_thread[0];
-    proto = dp->protocol;
-    ret = route4_conf_create_and_append(&route[dp->numa_id], proto->route4, item, count, dp->hw_numa_id, dp->tc->ip4_table);
-    if (ret != 0) {
-        return ret;
-    }
-
-    numa_count = root->hw_info.numa_count;
-    for (int i = 0; i < numa_count; i++) {
-        if (i == dp->numa_id) {
-            continue;
-        }
-
-        hw_numa_id = root->dpdk_thread[i]->hw_numa_id;
-        ret = route4_conf_create_and_append(&route[i], route[dp->numa_id], NULL, 0, hw_numa_id, dp->tc->ip4_table);
-        if (ret != 0) {
-            goto _quit;
-        }
-    }
-
-    return 0;
-
-_quit:
-    _api_route4_numa_free(route, numa_count);
-    return ret;
-}
-
-static int _api_route4_table_del(struct root *root, void *route[], struct route4_item *item, int count)
-{
     int code = 0;
+    int cpu_count = 0;
     int hw_numa_id = 0;
-    int numa_count = 0;
     struct dataplane *dp = NULL;
-    struct proto_header *proto = NULL;
+    struct proto_header *protocol = NULL;
 
-    dp = root->dpdk_thread[0];
-    proto = dp->protocol;
-    code = route4_conf_create_and_delete(&route[dp->numa_id], proto->route4, item, count, dp->hw_numa_id, true);
-    if (code != 0) {
-        return code;
-    }
-
-    numa_count = root->hw_info.numa_count;
-    for (int i = 0; i < numa_count; i++) {
-        if (i == dp->numa_id) {
-            continue;
-        }
-
-        hw_numa_id = root->dpdk_thread[i]->hw_numa_id;
-        code = route4_conf_create_and_append(&route[i], route[dp->numa_id], NULL, 0, hw_numa_id, dp->tc->ip4_table);
+    for (int i = 0; i < cpu_count; i++) {
+        dp = root->dpdk_thread[i];
+        hw_numa_id = dp->hw_numa_id;
+        protocol = dp->protocol;
+        code = route4_conf_create_and_append(&route[i], protocol->route4, item, count, hw_numa_id, dp->tc->iface);
         if (code != 0) {
             goto _quit;
         }
@@ -227,8 +192,50 @@ static int _api_route4_table_del(struct root *root, void *route[], struct route4
     return 0;
 
 _quit:
-    _api_route4_numa_free(route, numa_count);
+    _api_route4_table_free(route, cpu_count);
     return code;
+}
+
+static int _api_route4_table_del(struct root *root, void *route[], struct route4_item *item, int count)
+{
+    int code = 0;
+    int hw_numa_id = 0;
+    struct dataplane *dp = NULL;
+    struct proto_header *protocol = NULL;
+    int cpu_count = root->hw_info.cpu_count;
+
+    for (int i = 0; i < cpu_count; i++) {
+        dp = root->dpdk_thread[i];
+        hw_numa_id = dp->hw_numa_id;
+        protocol = dp->protocol;
+
+        code = route4_conf_create_and_delete(&route[i], protocol->route4, item, count, hw_numa_id, true);
+        if (code != 0) {
+            goto _quit;
+        }
+    }
+
+    return 0;
+
+_quit:
+    _api_route4_table_free(route, cpu_count);
+    return code;
+}
+
+static void _api_route4_update(void *route[], struct root *root)
+{
+    struct dataplane *dp = NULL;
+    struct proto_header *protocol = NULL;
+    void **position[CPU_MAX] = {NULL};
+    int cpu_count = root->hw_info.cpu_count;
+
+    for (int i = 0; i < cpu_count; i++) {
+        dp = root->dpdk_thread[i];
+        protocol = dp->protocol;
+        position[i] = (void **)&protocol->route4;
+    }
+
+    api_thread_config_update(root, position, route, route4_conf_destroy);
 }
 
 API_POST(/v1/network/route4, route4)
@@ -236,10 +243,8 @@ API_POST(/v1/network/route4, route4)
     int code = 0;
     int count = 0;
     struct root *root = cfg;
-    void *route[NUMA_MAX] = {NULL};
     struct route4_item *item = NULL;
-    void **position[CPU_MAX] = {NULL};
-    void *thread_route[CPU_MAX] = {NULL};
+    void *route[CPU_MAX] = {NULL};
 
     code = _api_route4_post_parse(&item, &count, json);
     if (code != 0) {
@@ -251,13 +256,7 @@ API_POST(/v1/network/route4, route4)
         goto _quit;
     }
 
-    for (int i = 0; i < root->hw_info.cpu_count; i++) {
-        struct proto_header *proto = root->dpdk_thread[i]->protocol;
-        position[i] = (void **)&proto->route4;
-        thread_route[i] = route[root->dpdk_thread[i]->numa_id];
-    }
-
-    api_numa_config_update(cfg, position, thread_route, _api_route4_numa_free);
+    _api_route4_update(route, root);
     _api_route4_item_free(item);
 
     LOG_DEBUG("CONFIG ROUTE4 SUCCESS.");
@@ -278,10 +277,8 @@ API_DEL(/v1/network/route4, route4)
     int code = 0;
     int count = 0;
     struct root *root = cfg;
-    void *route[NUMA_MAX] = {NULL};
     struct route4_item *item = NULL;
-    void **position[CPU_MAX] = {NULL};
-    void *thread_route[CPU_MAX] = {NULL};
+    void *route[CPU_MAX] = {NULL};
 
     code = _api_route4_del_parse(&item, &count, json);
     if (code != 0) {
@@ -293,15 +290,9 @@ API_DEL(/v1/network/route4, route4)
         goto _quit;
     }
 
-    for (int i = 0; i < root->hw_info.cpu_count; i++) {
-        struct proto_header *proto = root->dpdk_thread[i]->protocol;
-        position[i] = (void **)&proto->route4;
-        thread_route[i] = route[root->dpdk_thread[i]->numa_id];
-    }
-
-    api_numa_config_update(cfg, position, thread_route, _api_route4_numa_free);
-
+    _api_route4_update(route, root);
     _api_route4_item_free(item);
+
     return api_succ(NULL);
 
 _quit:

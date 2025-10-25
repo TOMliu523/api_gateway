@@ -29,7 +29,7 @@ enum IP_TYPE {
 
 struct ip4_info {
     struct list_head node;
-    uint32_t ip;
+    uint32_t addr;
     uint16_t port;
     uint8_t mask;
     uint8_t type; // enum IP_TYPE

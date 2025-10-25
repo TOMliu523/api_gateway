@@ -48,7 +48,7 @@ struct dpdk_port_st {
     uint64_t nic_rx_offload[DPDK_ETHPORT_MAX];
     uint64_t nic_tx_offload[DPDK_ETHPORT_MAX];
     struct dpdk_speed speed;
-    struct port_name port_name;
+    struct port_info port_info;
     struct rte_eth_conf eth_conf;
 };
 
@@ -215,7 +215,7 @@ static int _dpdk_port_startup(int port)
     }
 }
 
-static int dpdk_port_name_init(void)
+static int dpdk_port_info_init(void)
 {
     int ret = 0;
     int port = 0;
@@ -223,11 +223,11 @@ static int dpdk_port_name_init(void)
     int speed_nums = 0;
     uint32_t speed_capa = 0;
     struct rte_eth_dev_info dev = {0};
-    struct port_name *pn = &s_dpdk_port.port_name;
+    struct port_info *pn = &s_dpdk_port.port_info;
 
     RTE_ETH_FOREACH_DEV(port) {
         struct dpdk_speed_ex *ex = NULL;
-        struct port_name_entry *one = &pn->entrys[port];
+        struct port_info_entry *one = &pn->info[port];
 
         one->port = port;
         ret = rte_eth_dev_get_name_by_port(port, one->pci);
@@ -276,9 +276,9 @@ static int dpdk_port_name_init(void)
     return 0;
 }
 
-const struct port_name *dpdk_port_name_get(void)
+const struct port_info *dpdk_port_info_get(void)
 {
-    return &s_dpdk_port.port_name;
+    return &s_dpdk_port.port_info;
 }
 
 int dpdk_port_startup(int port)
@@ -387,21 +387,21 @@ int dpdk_port_startup(int port)
     return 0;
 }
 
-uint16_t dpdk_port_by_name_get(const char *name)
+uint8_t dpdk_port_by_name_get(const char *name)
 {
     const char *tmp = NULL;
     const char *anchor = NULL;
 
     if (UNLIKELY(name == NULL)) {
         LOG_ERROR("Parameter exception.");
-        return (uint16_t)-1;
+        return (uint8_t)-1;
     }
 
     LOG_INFO("port name: %s", name);
     anchor = strrchr(name, '.');
     if (UNLIKELY(anchor == NULL)) {
         LOG_ERROR("Interface name format error: %s", name);
-        return (uint16_t)-1;
+        return (uint8_t)-1;
     }
 
     anchor += 1;
@@ -428,12 +428,12 @@ const char *dpdk_port_id_to_name(int port)
 {
     struct dpdk_port_st *st = &s_dpdk_port;
 
-    if (port > st->port_name.count) {
+    if (port > st->port_info.count) {
         LOG_ERROR("Invalid port id(%d)", port);
         return NULL;
     }
 
-    return st->port_name.entrys[port].name;
+    return st->port_info.info[port].name;
 }
 
 uint64_t dpdk_port_rx_offload_get(int nic_number)
@@ -482,7 +482,7 @@ int dpdk_port_init(void)
         }
     }
 
-    ret = dpdk_port_name_init();
+    ret = dpdk_port_info_init();
     if (ret != 0) {
         return -1;
     }

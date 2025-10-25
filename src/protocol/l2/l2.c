@@ -566,7 +566,7 @@ int l2_mac_get(struct dpdk_mac *mac, int port, uint32_t be_ip)
     return -1;
 }
 
-int l2_gratuitous_arp_gen(struct dpdk_mbuf *mbuf, uint16_t port, uint32_t addr, struct dpdk_mac *mac)
+int l2_gratuitous_arp_gen(struct dpdk_mbuf *mbuf, uint16_t port, uint32_t addr, const struct dpdk_mac *mac)
 {
     struct dpdk_eth_hdr *eth = NULL;
     struct dpdk_arp_hdr *arp = NULL;

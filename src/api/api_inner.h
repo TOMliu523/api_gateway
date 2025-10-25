@@ -213,22 +213,6 @@ extern void api_free(void *);
 extern int api_v1_modify_list(void **, size_t *, void *, const char *, const char *);
 extern int api_v1_delete_list(void **, size_t *, void *, const char *, const char *);
 
-static INLINE void *api_v1_modify_list_old(void *json, const char *module_name, const char *list_name)
-{
-    char buffer[256] = "";
-
-    snprintf(buffer, sizeof(buffer), "v1:%s", module_name);
-    return json_object_get(json_object_get(json, buffer), list_name);
-}
-
-static INLINE void *api_v1_delete_list_old(void *json, const char *module_name, const char *list_name)
-{
-    char buffer[256] = "";
-
-    snprintf(buffer, sizeof(buffer), "/v1:%s/%s", module_name, list_name);
-    return json_object_get(json, buffer);
-}
-
 static INLINE void *api_json_array_get(void *array, int id)
 {
     return json_array_get(array, id);

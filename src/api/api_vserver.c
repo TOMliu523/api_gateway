@@ -112,7 +112,6 @@ struct api_ip6 {
 
 struct api_vs_hdr {
     int cpu_count;
-    int numa_count;
     struct api_ip4 ip4;
     struct api_ip6 ip6;
     struct api_vs vs;
@@ -163,6 +162,8 @@ static void _api_vs_pkt_free(struct api_pkt *pkt)
     }
 
     dpdk_pktmbuf_push(pkt->array, pkt->count);
+    memset(pkt->array, 0, pkt->count * sizeof(*pkt->array));
+    pkt->count = 0;
 }
 
 static void _api_vs_free(struct api_vs *p_vs)
@@ -197,16 +198,12 @@ static void _api_vs_free(struct api_vs *p_vs)
 
 static void _api_vs_hdr_free(struct api_vs_hdr *vs_hdr)
 {
-    int numa_count = 0;
-
     if (vs_hdr == NULL) {
         return;
     }
 
-    numa_count = vs_hdr->numa_count;
-
-    _api_vs_ip4_free(&vs_hdr->ip4, numa_count);
-    _api_vs_ip6_free(&vs_hdr->ip6, numa_count);
+    _api_vs_ip4_free(&vs_hdr->ip4, vs_hdr->cpu_count);
+    _api_vs_ip6_free(&vs_hdr->ip6, vs_hdr->cpu_count);
     _api_vs_pkt_free(&vs_hdr->pkt);
     _api_vs_free(&vs_hdr->vs);
 
@@ -272,7 +269,7 @@ static int _api_vs_param_addr_parse(struct api_param *param, struct param_info *
 {
     int code = 0;
     uint64_t port = 0;
-    uint16_t port_id = 0;
+    uint8_t port_id = 0;
     uint32_t ip4_addr = 0;
     enum VSERVER_TYPE type = 0;
     const char *addr_str = NULL;
@@ -310,7 +307,7 @@ static int _api_vs_param_addr_parse(struct api_param *param, struct param_info *
     }
 
     port_id = dpdk_port_by_name_get(interface);
-    if (port_id == USHRT_MAX) {
+    if (port_id == UINT8_MAX) {
         LOG_ERROR("Interface name '%s' invalid.", interface);
         return ERRCODE_PARAMETER_INVALID;
     }
@@ -428,10 +425,9 @@ static int _api_vs_ip4_table_create(struct api_ip4 *ip4, struct root *root, cons
                                     int (*table_create_fn)(void **, void *, const struct ip4_info *, int, int))
 {
     int code = 0;
-    bool has = false;
     void *ip4_table = NULL;
     struct ip4_info *info = NULL;
-    int numa_count = root->hw_info.numa_count;
+    int cpu_count = root->hw_info.cpu_count;
     const struct addr_v4_info *v4_info = NULL;
     struct dataplane *dp = root->dpdk_thread[0];
     struct proto_header *proto = dp->protocol;
@@ -442,7 +438,7 @@ static int _api_vs_ip4_table_create(struct api_ip4 *ip4, struct root *root, cons
         v4_info = &param_info->v4_info[i];
 
         INIT_LIST_HEAD(&info->node);
-        info->ip = v4_info->addr;
+        info->addr = v4_info->addr;
         info->refcnt = v4_info->refcnt;
         info->port = v4_info->port;
         info->type = 0;
@@ -456,21 +452,8 @@ static int _api_vs_ip4_table_create(struct api_ip4 *ip4, struct root *root, cons
     ip4->count = param_info->ip4_count;
 
     // to ip4_table
-    for (int i = 0; i < numa_count; i++) {
-        has = false;
-
-        for (int j = 0; j < root->hw_info.cpu_count; j++) {
-            dp = root->dpdk_thread[j];
-            if (dp->numa_id == i) {
-                has = true;
-                break;
-            }
-        }
-
-        if (!has) {
-            LOG_ERROR("CPU and NUMA mismatch error.");
-            goto _quit;
-        }
+    for (int i = 0; i < cpu_count; i++) {
+        dp = root->dpdk_thread[i];
 
         ip4_table = dp->tc->ip4_table;
         code = table_create_fn(&ip4->table[i], ip4_table, ip4->array, ip4->count, dp->hw_numa_id);
@@ -482,7 +465,7 @@ static int _api_vs_ip4_table_create(struct api_ip4 *ip4, struct root *root, cons
     return 0;
 
 _quit:
-    _api_vs_ip4_free(ip4, numa_count);
+    _api_vs_ip4_free(ip4, cpu_count);
     return code;
 }
 
@@ -490,10 +473,9 @@ static int _api_vs_ip6_table_create(struct api_ip6 *ip6, struct root *root, cons
                                     int (*table_create_fn)(void **, void *, const struct ip6_info *, int, int))
 {
     int code = 0;
-    bool has = false;
     void *ip6_table = NULL;
     struct ip6_info *info = NULL;
-    int numa_count = root->hw_info.numa_count;
+    int cpu_count = root->hw_info.cpu_count;
     const struct addr_v6_info *v6_info = NULL;
     struct dataplane *dp = root->dpdk_thread[0];
     struct proto_header *proto = dp->protocol;
@@ -517,22 +499,8 @@ static int _api_vs_ip6_table_create(struct api_ip6 *ip6, struct root *root, cons
     ip6->count = param_info->ip6_count;
 
     // to ip6_table
-    for (int i = 0; i < numa_count; i++) {
-        has = false;
-
-        for (int j = 0; j < root->hw_info.numa_count; j++) {
-            dp = root->dpdk_thread[j];
-            if (dp->numa_id == i) {
-                has = true;
-                break;
-            }
-        }
-
-        if (!has) {
-            LOG_ERROR("CPU and NUMA mismatch error.");
-            goto _quit;
-        }
-
+    for (int i = 0; i < cpu_count; i++) {
+        dp = root->dpdk_thread[i];
         ip6_table = dp->tc->ip6_table;
         code = table_create_fn(&ip6->table[i], ip6_table, ip6->array, ip6->count, dp->hw_numa_id);
         if (code != 0) {
@@ -543,7 +511,7 @@ static int _api_vs_ip6_table_create(struct api_ip6 *ip6, struct root *root, cons
     return 0;
 
 _quit:
-    _api_vs_ip6_free(ip6, numa_count);
+    _api_vs_ip6_free(ip6, cpu_count);
     return 0;
 }
 
@@ -933,7 +901,6 @@ static int _api_vs_add(struct api_vs_hdr **pp_vs_hdr, struct root *root, const s
     }
 
     vs_hdr->cpu_count = root->hw_info.cpu_count;
-    vs_hdr->numa_count = root->hw_info.numa_count;
 
     code = _api_vs_ip4_table_create(&vs_hdr->ip4, root, &param_hdr->info, ip4_conf_table_create_and_append);
     if (code != 0) {
@@ -1184,7 +1151,6 @@ static int _api_vs_del(struct api_vs_hdr **pp_vs_hdr, struct root *root, struct 
     }
 
     vs_hdr->cpu_count = root->hw_info.cpu_count;
-    vs_hdr->numa_count = root->hw_info.numa_count;
 
     code = _api_vs_ip4_table_create(&vs_hdr->ip4, root, &param_hdr->info, ip4_conf_table_create_and_delete);
     if (code != 0) {
@@ -1231,7 +1197,7 @@ static void _api_vs_dep_update(struct api_param_hdr *param_hdr)
  * If the object of thread 0 can be safely deleted,
  * all other thread objects are considered deletable as well.
  */
-static void _api_vs_replace(struct root *root, struct api_vs_hdr *vs_hdr)
+static void _api_vs_update(struct root *root, struct api_vs_hdr *vs_hdr)
 {
     struct dataplane *dp = NULL;
     struct api_vs *vs = &vs_hdr->vs;
@@ -1246,14 +1212,14 @@ static void _api_vs_replace(struct root *root, struct api_vs_hdr *vs_hdr)
         position[i] = &dp->tc->ip4_table;
     }
 
-    api_numa_config_update(root, position, ip4->table, api_ip4_table_numa_free);
+    api_thread_config_update(root, position, ip4->table, ip4_conf_table_destroy);
 
     for (int i = 0; i < cpu_count; i++) {
         dp = root->dpdk_thread[i];
         position[i] = &dp->tc->ip6_table;
     }
 
-    api_numa_config_update(root, position, ip6->table, api_ip6_table_numa_free);
+    api_thread_config_update(root, position, ip6->table, ip6_conf_table_destroy);
 
     for (int i = 0; i < cpu_count; i++) {
         dp = root->dpdk_thread[i];
@@ -1265,6 +1231,7 @@ static void _api_vs_replace(struct root *root, struct api_vs_hdr *vs_hdr)
     dp = root->dpdk_thread[0];
     if (pkt->count != 0) {
         dpdk_ring_mp_push(dp->notice_ring, pkt->array, pkt->count);
+        memset(pkt->array, 0, pkt->count * sizeof(*pkt->array));
     }
 }
 
@@ -1285,7 +1252,7 @@ API_POST(/v1/network/vserver, vserver)
         goto _quit;
     }
 
-    _api_vs_replace(root, vs_hdr);
+    _api_vs_update(root, vs_hdr);
     _api_vs_dep_update(param_hdr);
 
 _quit:
@@ -1321,7 +1288,7 @@ API_DEL(/v1/network/vserver, vserver)
         goto _quit;
     }
 
-    _api_vs_replace(root, vs_hdr);
+    _api_vs_update(root, vs_hdr);
     _api_vs_dep_update(param_hdr);
 
 _quit:

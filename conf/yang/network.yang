@@ -7,19 +7,23 @@ submodule network {
         prefix "inet";
     }
 
+    import types {
+        prefix "tps"
+    }
+
     container ip4 {
-        list entrys {
-            key "name ip mask";
-            leaf name {
+        list entries {
+            key "interface-name addr mask";
+            leaf interface-name {
                 mandatory true;
-                type string {
-                    pattern '[-0-9a-zA-Z.]{3,63}';
-                }
+                typedef tps:interface-name;
             }
-            leaf ip {
+
+            leaf addr {
                 mandatory true;
                 type inet:ipv4-address;
             }
+
             leaf mask {
                 mandatory true;
                 type uint8 {
@@ -27,6 +31,7 @@ submodule network {
                 }
                 description "A mask value from 0 to 32 inclusive.";
             }
+
             leaf type {
                 mandatory true;
                 type enumeration {
@@ -42,18 +47,18 @@ submodule network {
     }
 
     container ip6 {
-        list entrys {
-            key "name ip mask";
-            leaf name {
+        list entries {
+            key "interface-name addr mask";
+            leaf interface-name {
                 mandatory true;
-                type string {
-                    pattern '[-0-9a-zA-Z.]{3,63}';
-                }
+                typedef tys:interface-name;
             }
-            leaf ip {
+
+            leaf addr {
                 mandatory true;
                 type inet:ipv6-address;
             }
+
             leaf mask {
                 mandatory true;
                 type uint8 {
@@ -61,6 +66,7 @@ submodule network {
                 }
                 description "A mask value from 0 to 128 inclusive.";
             }
+
             leaf type {
                 mandatory true;
                 type enumeration {
@@ -76,7 +82,7 @@ submodule network {
     }
 
     container route4 {
-        list entrys {
+        list entries {
             key "net mask";
 
             leaf net {
@@ -97,15 +103,13 @@ submodule network {
             }
 
             leaf interface {
-                type string {
-                    pattern '[-0-9a-zA-Z.]{3,63}';
-                }
+                type tys:interface-name;
             }
         }
     }
 
     container route6 {
-        list entrys {
+        list entries {
             key "net mask";
 
             leaf net {
@@ -126,9 +130,7 @@ submodule network {
             }
 
             leaf interface {
-                type string {
-                    pattern '[-0-9a-zA-Z.]{3,63}';
-                }
+                type tys:interface-name
             }
         }
     }
