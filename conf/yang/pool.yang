@@ -19,7 +19,7 @@ submodule pool {
      * Each entry is uniquely identified by the composite key (addr, port).
      ********************************************************************/
     container rserver {
-        list entrys {
+        list entries {
             key "addr port";
             description "Global reusable backend server repository. Key = (addr. port).";
 
@@ -46,7 +46,7 @@ submodule pool {
      * - rs_count must equal the number of referenced rservers.
      ***********************************************************************/
     container pool {
-        list entrys {
+        list entries {
             key "name";
             description "Virtual service pool definition.";
 

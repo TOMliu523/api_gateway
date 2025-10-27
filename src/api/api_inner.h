@@ -197,11 +197,8 @@ extern int api_json_array(void **arr);
 extern void api_json_free(void *ptr);
 
 extern const char *api_json_get_string(void *obj, const char *name);
+extern void *api_json_get_object(void *obj, const char *name);
 extern int api_json_get_long(uint64_t *value, void *obj, const char *name);
-
-extern void api_config_update(void **[], void *[], int, void (*)(void *));
-extern void api_thread_config_update(void *, void **[], void *[], void (*)(void *));
-extern void api_numa_config_update(void *, void **[], void *[], void (*)(void *[], int));
 
 extern int api_string_to_addr(int *af, union inet_addr *addr, const char *str);
 
@@ -212,6 +209,8 @@ extern void api_free(void *);
 
 extern int api_v1_modify_list(void **, size_t *, void *, const char *, const char *);
 extern int api_v1_delete_list(void **, size_t *, void *, const char *, const char *);
+
+extern void api_thread_config_update(void *, void **[], void *[], void (*)(void *));
 
 static INLINE void *api_json_array_get(void *array, int id)
 {

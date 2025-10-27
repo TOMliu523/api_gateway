@@ -14,481 +14,114 @@
 #include "dpdk_common.h"
 #include "rserver_conf.h"
 
-#define API_RS_LIST_NAME "entrys"
+#define API_RS_LIST_NAME "entries"
 #define API_RS_MODULE_NAME "rserver"
 
-struct api_rs_base {
+struct api_param {
     int af;
     uint16_t port;
     union inet_addr addr;
 };
 
-struct api_rs {
+struct api_param_hdr {
     int count;
-    struct rserver **array;
-    struct rserver **delete;
+    struct api_param param[];
 };
 
-struct api_rs_hdr {
+struct api_vs_hdr {
     int cpu_count;
-    struct api_rs rs[];
+    int ele_count;
+
+    bool is_delete;
+
+    struct rserver **rs[CPU_MAX];
+    void *rs_table[CPU_MAX];
 };
 
-static void _api_rs_table_destroy(void *rs_thread[], int cpu_count)
+static void _api_rs_param_hdr_free(struct api_param_hdr *param_hdr)
 {
-    for (int i = 0; i < cpu_count; i++) {
-        rs_conf_table_destroy(rs_thread[i]);
-    }
-}
-
-static void _api_rs_batch_free(struct api_rs *rs)
-{
-    if (rs == NULL) {
+    if (param_hdr == NULL) {
         return;
     }
 
-    if (rs->array != NULL) {
-        for (int i = 0; i < rs->count; i++) {
-            rs_conf_rs_free(rs->array[i]);
-        }
-
-        api_free(rs->array);
-    }
-
-    if (rs->delete != NULL) {
-        api_free(rs->delete);
-    }
-
-    rs->array = NULL;
+    api_free(param_hdr);
 }
 
-static void _api_rs_hdr_free(struct api_rs_hdr *hdr)
+static void _api_rs_hdr_free(struct api_vs_hdr *vs_hdr)
 {
-    if (hdr == NULL) {
+    if (vs_hdr == NULL) {
         return;
     }
 
-    for (int i = 0; i < hdr->cpu_count; i++) {
-        _api_rs_batch_free(&hdr->rs[i]);
-    }
-
-    api_free(hdr);
-}
-
-static void _api_rs_hdr_only_frame_free(struct api_rs_hdr *hdr)
-{
-    if (hdr == NULL) {
-        return;
-    }
-
-    for (int i = 0; i < hdr->cpu_count; i++) {
-        api_free(hdr->rs[i].array);
-    }
-
-    api_free(hdr);
-}
-
-static void _api_rs_v4_init(struct rserver_v4 *v4, uint32_t addr, uint16_t port)
-{
-    v4->rs.af = AF_INET;
-    v4->rs.id = RSERVER_INVALID_ID;
-    v4->addr = addr;
-    v4->base.port = port;
-}
-
-static void _api_rs_v6_init(struct rserver_v6 *v6, struct dpdk_ip6_addr *addr, uint16_t port)
-{
-    v6->rs.af = AF_INET6;
-    v6->rs.id = RSERVER_INVALID_ID;
-    dpdk_memcpy(&v6->addr, addr, sizeof(*addr));
-    v6->base.port = port;
-}
-
-static int _api_rs_add_parse_data(struct api_rs *one, void *json, int hw_numa_id)
-{
-    int code = 0;
-    size_t count = 0;
-    uint64_t port = 0;
-    void *array = NULL;
-    const char *ip = NULL;
-
-    code = api_v1_modify_list(&array, &count, json, API_RS_MODULE_NAME, API_RS_LIST_NAME);
-    if (code != 0) {
-        return code;
-    }
-
-    one->array = api_malloc_numa(count * sizeof(*one->array), hw_numa_id);
-    if (one->array == NULL) {
-        return ERRCODE_OOM;
-    }
-
-    one->count = count;
-
-    for (int i = 0; i < count; i++) {
-        void *obj = NULL;
-
-        obj = json_array_get(array, i);
-        ip = api_json_get_string(obj, "addr");
-        if (ip == NULL) {
-            goto _quit;
+    for (int i = 0; i < vs_hdr->cpu_count; i++) {
+        struct rserver **rss = vs_hdr->rs[i];
+        if (rss == NULL) {
+            continue;
         }
 
-        code = api_json_get_long(&port, obj, "port");
-        if (code != 0) {
-            goto _quit;
-        }
-
-        if (strchr(ip, ':') == NULL) { // IPv4
-            struct rserver_v4 *v4 = NULL;
-
-            v4 = rs_conf_v4_alloc(hw_numa_id);
-            if (v4 == NULL) {
-                code = ERRCODE_OOM;
-                goto _quit;
+        if (vs_hdr->is_delete) {
+            for (int j = 0; j < vs_hdr->ele_count; j++) {
+                if (rss[j] != NULL) {
+                    rs_conf_free(rss[j]);
+                    rss[j] = NULL;
+                }
             }
+        }
 
-            inet_pton(AF_INET, ip, &v4->addr);
-            _api_rs_v4_init(v4, v4->addr, (uint16_t)port);
+        api_free(rss);
+        vs_hdr->rs[i] = NULL;
 
-            one->array[i] = &v4->rs;
-        } else { // IPv6
-            struct rserver_v6 *v6 = NULL;
-
-            v6 = rs_conf_v6_alloc(hw_numa_id);
-            if (v6 == NULL) {
-                code = ERRCODE_OOM;
-                goto _quit;
-            }
-
-            inet_pton(AF_INET6, ip, &v6->addr);
-            _api_rs_v6_init(v6, &v6->addr, (uint16_t)port);
-
-            one->array[i] = &v6->rs;
+        if (vs_hdr->rs_table[i] != NULL) {
+            rs_conf_table_destroy(vs_hdr->rs_table[i]);
+            vs_hdr->rs_table[i] = NULL;
         }
     }
-
-    return 0;
-
-_quit:
-    _api_rs_batch_free(one);
-    return code;
 }
 
-static int _api_rs_del_parse_data(struct api_rs_base *base, void *array, int count)
+static void *_api_rs_hdr_alloc(int cpu_count, int ele_count, bool flags)
 {
-    int code = 0;
-    void *obj = NULL;
-    uint64_t port = 0;
-    const char *addr = NULL;
-    struct api_rs_base *one = NULL;
+    struct api_vs_hdr *vs_hdr = NULL;
 
-    for (int i = 0; i < count; i++) {
-        one = &base[i];
-        obj = json_array_get(array, i);
-
-        addr = api_json_get_string(obj, "addr");
-        if (addr == NULL) {
-            return ERRCODE_PARAMETER_INVALID;
-        }
-
-        code = api_json_get_long(&port, obj, "port");
-        if (code != 0) {
-            return code;
-        }
-
-        if (strchr(addr, ':') == NULL) {
-            one->af = AF_INET;
-        } else {
-            one->af = AF_INET6;
-        }
-
-        inet_pton(one->af, addr, &one->addr);
-        one->port = (port & 0xFFFF);
+    vs_hdr = api_malloc(sizeof(*vs_hdr));
+    if (vs_hdr == NULL) {
+        return NULL;
     }
-
-    return 0;
-}
-
-static int _api_rs_del_find(void *table, struct rserver *rss[], struct api_rs_base *base, int count)
-{
-    int code = 0;
-    struct api_rs_base *one = NULL;
-
-    for (int i = 0; i < count; i++) {
-        code = rs_conf_find(table, &rss[i], one->af, &one->addr, one->port);
-        if (code != 0) {
-            LOG_ERROR("Real server not exists.");
-            return code;
-        }
-    }
-
-    return 0;
-}
-
-static int _api_rs_del_parse(struct root *root, struct api_rs_hdr **phdr, void *json)
-{
-    int code = 0;
-    size_t count = 0;
-    void *array = NULL;
-    struct api_rs *rs = NULL;
-    struct dataplane *dp = NULL;
-    struct api_rs_hdr *hdr = NULL;
-    struct api_rs_base *base = NULL;
-    int cpu_count = root->hw_info.cpu_count;
-
-    code = api_v1_delete_list(&array, &count, json, API_RS_MODULE_NAME, API_RS_LIST_NAME);
-    if (code != 0) {
-        return code;;
-    }
-
-    base = api_malloc(count * sizeof(*base));
-    if (base == NULL) {
-        return ERRCODE_OOM;
-    }
-
-    code = _api_rs_del_parse_data(base, array, count);
-    if (code != 0) {
-        goto _quit;
-    }
-
-    hdr = api_malloc(sizeof(*hdr) + sizeof(struct api_rs) * cpu_count);
-    if (hdr == NULL) {
-        goto _quit;
-    }
-
-    hdr->cpu_count = cpu_count;
 
     for (int i = 0; i < cpu_count; i++) {
-        rs = &hdr->rs[i];
-        rs->delete = api_malloc(sizeof(uint32_t) * count);
-        if (rs->delete == NULL) {
-            goto _quit;
-        }
-
-        rs->count = count;
-
-        dp = root->dpdk_thread[i];
-        code = _api_rs_del_find(dp->tc->rs_table, rs->delete, base, count);
-        if (code != 0) {
-            goto _quit;
+        vs_hdr->rs[i] = api_malloc(ele_count * sizeof(*vs_hdr->rs[i]));
+        if (vs_hdr->rs[i] == NULL) {
+            _api_rs_hdr_free(vs_hdr);
+            return NULL;
         }
     }
 
-    *phdr = hdr;
-    api_free(base);
+    vs_hdr->is_delete = false;
+    vs_hdr->cpu_count = cpu_count;
+    vs_hdr->ele_count = ele_count;
 
-    return 0;
-
-_quit:
-    _api_rs_hdr_free(hdr);
-    api_free(base);
-    return code;
+    return vs_hdr;
 }
 
-static int _api_rs_copy(struct api_rs *dst, struct api_rs *src, int hw_numa_id)
+static void *_api_rs_param_hdr_alloc(int count)
 {
-    int code = 0;
+    struct api_param_hdr *param_hdr = NULL;
 
-    dst->array = api_malloc_numa(src->count * sizeof(*dst->array), hw_numa_id);
-    if (dst->array == NULL) {
-        LOG_ERROR("OOM.");
-        return ERRCODE_OOM;
+    param_hdr = api_malloc(sizeof(*param_hdr) + count * sizeof(struct api_param));
+    if (param_hdr == NULL) {
+        return NULL;
     }
 
-    dst->count = src->count;
-
-    for (int i = 0; i < dst->count; i++) {
-        struct rserver *rs = NULL;
-        struct rserver_v4 *rs_v4 = NULL;
-        struct rserver_v6 *rs_v6 = NULL;
-        struct rserver_base *rs_base = NULL;
-
-        rs = src->array[i];
-        if (rs->af == AF_INET) {
-            rs_v4 = (struct rserver_v4 *)rs;
-            rs_base = &rs_v4->base;
-        } else {
-            rs_v6 = (struct rserver_v6 *)rs;
-            rs_base = &rs_v6->base;
-        }
-
-        if (rs->af == AF_INET) {
-            struct rserver_v4 *v4 = NULL;
-
-            v4 = rs_conf_v4_alloc(hw_numa_id);
-            if (v4 == NULL) {
-                code = ERRCODE_OOM;
-                goto _quit;
-            }
-
-            _api_rs_v4_init(v4, rs_v4->addr, rs_base->port);
-            dst->array[i] = &v4->rs;
-        } else {
-            struct rserver_v6 *v6 = NULL;
-
-            v6 = rs_conf_v6_alloc(hw_numa_id);
-            if (v6 == NULL) {
-                code = ERRCODE_OOM;
-                goto _quit;
-            }
-
-            _api_rs_v6_init(v6, &rs_v6->addr, rs_base->port);
-            dst->array[i] = &v6->rs;
-        }
-    }
-
-    return 0;
-
-_quit:
-    _api_rs_batch_free(dst);
-    return code;
+    param_hdr->count = count;
+    return param_hdr;
 }
 
-static int _api_rs_add_parse(const struct root *root, struct api_rs_hdr **phdr, void *json)
-{
-    int code = 0;
-    struct dataplane *dp = NULL;
-    struct api_rs_hdr *hdr = NULL;
-    int cpu_count = root->hw_info.cpu_count;
-
-    hdr = api_malloc(sizeof(struct api_rs_hdr) + cpu_count * sizeof(struct api_rs));
-    if (hdr == NULL) {
-        return ERRCODE_OOM;
-    }
-
-    hdr->cpu_count = cpu_count;
-
-    // one
-    dp = root->dpdk_thread[0];
-    code = _api_rs_add_parse_data(&hdr->rs[0], json, dp->hw_numa_id);
-    if (code != 0) {
-        goto _quit;
-    }
-
-    // other
-    for (int i = 1; i < cpu_count; i++) {
-        dp = root->dpdk_thread[i];
-        code = _api_rs_copy(&hdr->rs[i], &hdr->rs[0], dp->hw_numa_id);
-        if (code != 0) {
-            goto _quit;
-        }
-    }
-
-    *phdr = hdr;
-    return 0;
-
-_quit:
-    _api_rs_hdr_free(hdr);
-    return code;
-}
-
-static int _api_rs_add(struct root *root, void *rs_thread[], struct api_rs_hdr *hdr)
-{
-    int code = 0;
-    struct api_rs *rs = NULL;
-    struct dataplane *dp = NULL;
-    int cpu_count = root->hw_info.cpu_count;
-
-    for (int i = 0; i < cpu_count; i++) {
-        rs = &hdr->rs[i];
-        dp = root->dpdk_thread[i];
-
-        code = rs_conf_add(&rs_thread[i], dp->tc->rs_table, (struct rserver **)rs->array, rs->count, dp->hw_numa_id);
-        if (code != 0) {
-            goto _quit;
-        }
-    }
-
-    return 0;
-
-_quit:
-    _api_rs_table_destroy(rs_thread, cpu_count);
-    return code;
-}
-
-static void _api_rs_collection_mutable(void **position[], struct api_rs_hdr *hdr)
-{
-    int n = 0;
-    struct api_rs *ars = NULL;
-    struct rserver *rs = NULL;
-    struct rserver_v4 *v4 = NULL;
-    struct rserver_v6 *v6 = NULL;
-    struct rserver_base *base = NULL;
-
-    for (int i = 0; i < hdr->cpu_count; i++) {
-        ars = &hdr->rs[i];
-        for (int j = 0; j < ars->count; j++) {
-            rs = ars->delete[j];
-            if (rs->af == AF_INET) {
-                v4 = (struct rserver_v4 *) rs;
-                base = &v4->base;
-            } else {
-                v6 = (struct rserver_v6 *) rs;
-                base = &v6->base;
-            }
-
-            position[n++] = (void **)&base->mtb;
-        }
-    }
-}
-
-static int _api_rs_del(struct root *root, void *update[], struct api_rs_hdr *hdr)
-{
-    int n = 0;
-    int code = 0;
-    struct rserver *one = NULL;
-    struct dataplane *dp = NULL;
-    struct rserver_v4 *v4 = NULL;
-    struct rserver_v6 *v6 = NULL;
-    struct rserver_mutable *mtb = NULL;
-    int cpu_count = root->hw_info.cpu_count;
-
-    for (int i = 0; i < cpu_count; i++) {
-        int count = hdr->rs[i].count;
-        struct rserver_base *base = NULL;
-        struct rserver **rss = hdr->rs[i].delete;
-
-        dp = root->dpdk_thread[i];
-
-        for (int j = 0; j < count; j++) {
-            one = rss[j];
-            if (one->af == AF_INET) {
-                v4 = (struct rserver_v4 *) one;
-                base = &v4->base;
-            } else {
-                v6 = (struct rserver_v6 *) one;
-                base = &v6->base;
-            }
-
-            mtb = api_malloc_numa(sizeof(*mtb), dp->hw_numa_id);
-            if (mtb == NULL) {
-                code = ERRCODE_OOM;
-                goto _quit;
-            }
-
-            mtb->pool_refcnt = base->mtb->pool_refcnt;
-            mtb->status = RSERVER_OFFLINE;
-
-            update[n++] = mtb;
-        }
-    }
-
-    return 0;
-
-_quit:
-    for (int i = 0; i < n; i++) {
-        api_free(update[i]);
-    }
-    return code;
-}
-
-static int _api_rs_info_get(json_t **ptr, struct rserver *rs)
+static int _api_rs_info_get(json_t **ptr, const struct rserver *rs)
 {
     int ret = 0;
     json_t *obj = NULL;
-    struct rserver_v4 *v4 = NULL;
-    struct rserver_v6 *v6 = NULL;
-    struct rserver_base *base = NULL;
+    const struct rserver_v4 *v4 = NULL;
+    const struct rserver_v6 *v6 = NULL;
+    const struct rserver_base *base = NULL;
 
     obj = json_object();
     if (obj == NULL) {
@@ -497,7 +130,7 @@ static int _api_rs_info_get(json_t **ptr, struct rserver *rs)
     }
 
     if (rs->af == AF_INET) {
-        v4 = (struct rserver_v4 *)rs;
+        v4 = (const struct rserver_v4 *)rs;
         ret = api_json_add_string(obj, "ip", conf_ip4_to_str(v4->addr));
         if (ret != 0) {
             goto _quit;
@@ -505,7 +138,7 @@ static int _api_rs_info_get(json_t **ptr, struct rserver *rs)
 
         base = &v4->base;
     } else {
-        v6 = (struct rserver_v6 *)rs;
+        v6 = (const struct rserver_v6 *)rs;
         ret = api_json_add_string(obj, "ip", conf_ip6_to_str(&v6->addr));
         if (ret != 0) {
             goto _quit;
@@ -527,38 +160,245 @@ _quit:
     return ERRCODE_OOM;
 }
 
-API_POST(/v1/app/rserver, rserver)
+static int _api_rs_post_parse(struct api_param_hdr **pp_param_hdr, void *json)
 {
     int code = 0;
-    struct root *root = cfg;
+    void *obj = NULL;
+    size_t count = 0;
+    void *array = NULL;
+    uint64_t port = 0;
+    const char *svalue = NULL;
+    struct api_param *param = NULL;
+    struct api_param_hdr *param_hdr = NULL;
+
+    code = api_v1_modify_list(&array, &count, json, API_RS_MODULE_NAME, API_RS_LIST_NAME);
+    if (code != 0) {
+        return code;
+    }
+
+    param_hdr = _api_rs_param_hdr_alloc(count);
+    if (param_hdr == NULL) {
+        code = ERRCODE_OOM;
+        goto _quit;
+    }
+
+    for (size_t i = 0; i < count; i++) {
+        param = &param_hdr->param[i];
+
+        obj = api_json_array_get(array, i);
+        if (obj != NULL) {
+            goto _quit;
+        }
+
+        svalue = api_json_get_string(obj, "addr");
+        if (svalue == NULL) {
+            goto _quit;
+        }
+
+        if (strchr(svalue, ':') == 0) {
+            param->af = AF_INET;
+            inet_pton(AF_INET, svalue, &param->addr);
+        } else {
+            param->af = AF_INET6;
+            inet_pton(AF_INET6, svalue, &param->addr);
+        }
+
+        code = api_json_get_long(&port, obj, "port");
+        if (code != 0) {
+            goto _quit;
+        }
+
+        param->port = (uint16_t) port;
+    }
+
+    *pp_param_hdr = param_hdr;
+    return 0;
+
+_quit:
+    _api_rs_param_hdr_free(param_hdr);
+    return code;
+}
+
+static int _api_rs_del_parse(struct api_param_hdr **pp_param_hdr, void *json)
+{
+    return _api_rs_post_parse(pp_param_hdr, json);
+}
+
+static int _api_rs_del(struct api_vs_hdr **pp_vs_hdr, struct root *root, struct api_param_hdr *param_hdr)
+{
+    int code = 0;
+    struct rserver *rs = NULL;
     struct dataplane *dp = NULL;
-    struct api_rs_hdr *hdr = NULL;
+    struct rserver_v4 *v4 = NULL;
+    struct rserver_v6 *v6 = NULL;
+    struct api_param *param = NULL;
+    struct api_vs_hdr *vs_hdr = NULL;
+    int cpu_count = root->hw_info.cpu_count;
+
+    vs_hdr = _api_rs_hdr_alloc(cpu_count, param_hdr->count, false);
+    if (vs_hdr == NULL) {
+        code= ERRCODE_OOM;
+        goto _quit;
+    }
+
+    for (int i = 0; i < cpu_count; i++) {
+        dp = root->dpdk_thread[i];
+
+        for (int j = 0; j < param_hdr->count; j++) {
+            param = &param_hdr->param[j];
+
+            code = rs_conf_get_by_key(&rs, dp->tc->rs_table, param->af, &param->addr, param->port);
+            if (code != 0) {
+                goto _quit;
+            }
+
+            if (rs->af == AF_INET) {
+                v4 = (struct rserver_v4 *) rs;
+                if (v4->base.mtb->pool_refcnt != 0) {
+                    LOG_ERROR("Resource busy.");
+                    code = ERRCODE_RESOURCE_BUSY;
+                    goto _quit;
+                }
+            } else {
+                v6 = (struct rserver_v6 *) rs;
+                if (v6->base.mtb->pool_refcnt != 0) {
+                    LOG_ERROR("Resource busy.");
+                    code = ERRCODE_RESOURCE_BUSY;
+                    goto _quit;
+                }
+            }
+
+            vs_hdr->rs[i][j] = rs;
+        }
+
+        code = rs_conf_table_create_and_delete(&vs_hdr->rs_table[i], dp->tc->rs_table, vs_hdr->rs[i], vs_hdr->ele_count, dp->hw_numa_id);
+        if (code != 0) {
+            goto _quit;
+        }
+    }
+
+    vs_hdr->is_delete = true;
+    *pp_vs_hdr = vs_hdr;
+
+    return 0;
+
+_quit:
+    _api_rs_hdr_free(vs_hdr);
+    return code;
+}
+
+static int _api_rs_add(struct api_vs_hdr **pp_vs_hdr, struct root *root, struct api_param_hdr *param_hdr)
+{
+    int code = 0;
+    struct dataplane *dp = NULL;
+    struct rserver_v4 *v4 = NULL;
+    struct rserver_v6 *v6 = NULL;
+    struct api_param *param = NULL;
+    struct api_vs_hdr *vs_hdr = NULL;
+    int cpu_count = root->hw_info.cpu_count;
+
+    vs_hdr = _api_rs_hdr_alloc(cpu_count, param_hdr->count, true);
+    if (vs_hdr == NULL) {
+        code = ERRCODE_OOM;
+        goto _quit;
+    }
+
+    for (int i = 0; i < cpu_count; i++) {
+        dp = root->dpdk_thread[i];
+
+        for (int j = 0; j < param_hdr->count; j++) {
+            param = &param_hdr->param[i];
+
+            if (param->af == AF_INET) {
+                v4 = rs_conf_v4_alloc(dp->hw_cpu_id);
+                if (v4 == NULL) {
+                    goto _quit;
+                }
+
+                v4->rs.af = param->af;
+                v4->addr = param->addr.ip;
+                v4->base.port = param->port;
+                v4->base.mtb->pool_refcnt = 0;
+                v4->base.mtb->status = RSERVER_ONLINE;
+                v4->base.stat->refcnt = 0;
+
+                vs_hdr->rs[i][j] = &v4->rs;
+            } else {
+                v6 = rs_conf_v6_alloc(dp->hw_numa_id);
+                if (v6 == NULL) {
+                    goto _quit;
+                }
+
+                v6->rs.af = param->af;
+                v6->addr = param->addr.addr;
+                v6->base.port = param->port;
+                v6->base.mtb->pool_refcnt = 0;
+                v6->base.mtb->status = RSERVER_ONLINE;
+                v6->base.stat->refcnt = 0;
+
+                vs_hdr->rs[i][j] = &v6->rs;
+            }
+        }
+
+        code = rs_conf_table_create_and_append(&vs_hdr->rs_table[i], dp->tc->rs_table, vs_hdr->rs[i], param_hdr->count, dp->hw_numa_id);
+        if (code != 0) {
+            goto _quit;
+        }
+    }
+
+    for (int i = 0; i < cpu_count; i++) {
+        memset(vs_hdr->rs[i], 0, vs_hdr->ele_count * sizeof(*vs_hdr->rs[i]));
+    }
+
+    *pp_vs_hdr = vs_hdr;
+    return 0;
+
+_quit:
+    _api_rs_hdr_free(vs_hdr);
+    return code;
+}
+
+static void _api_vs_update(struct api_vs_hdr *vs_hdr, struct root *root)
+{
+    struct dataplane *dp = NULL;
     void **position[CPU_MAX] = {NULL};
-    void *rs_thread[CPU_MAX] = {NULL};
+    int cpu_count = root->hw_info.cpu_count;
 
-    code = _api_rs_add_parse(root, &hdr, json);
-    if (code != 0) {
-        goto _quit;
-    }
-
-    code = _api_rs_add(root, rs_thread, hdr);
-    if (code != 0) {
-        goto _quit;
-    }
-
-    for (int i = 0; i < root->hw_info.cpu_count; i++) {
+    for (int i = 0; i < cpu_count; i++) {
         dp = root->dpdk_thread[i];
         position[i] = &dp->tc->rs_table;
     }
 
-    api_thread_config_update(root, position, rs_thread, dpdk_free);
-    _api_rs_hdr_only_frame_free(hdr);
+    api_thread_config_update(root, position, vs_hdr->rs_table, rs_conf_table_destroy);
+}
 
-    return api_succ(NULL);
+API_POST(/v1/app/rserver, rserver)
+{
+    int code = 0;
+    struct root *root = cfg;
+    struct api_vs_hdr *vs_hdr = NULL;
+    struct api_param_hdr *param_hdr = NULL;
+
+    code = _api_rs_post_parse(&param_hdr, json);
+    if (code != 0) {
+        goto _quit;
+    }
+
+    code = _api_rs_add(&vs_hdr, root, param_hdr);
+    if (code != 0) {
+        goto _quit;
+    }
+
+    _api_vs_update(vs_hdr, root);
 
 _quit:
-    _api_rs_hdr_free(hdr);
-    return api_fail(code);
+    _api_rs_param_hdr_free(param_hdr);
+    _api_rs_hdr_free(vs_hdr);
+
+    if (code != 0) {
+        return api_fail(code);
+    }
+    return api_succ(NULL);
 }
 
 /*
@@ -573,48 +413,30 @@ API_PUT(/v1/app/rserver, rserver)
 API_DEL(/v1/app/rserver, rserver)
 {
     int code = 0;
-    int count = 0;
-    int total_count = 0;
-    void **update = NULL;
-    void ***position = NULL;
     struct root *root = cfg;
-    struct api_rs_hdr *hdr = NULL;
-    int cpu_count = root->hw_info.cpu_count;
+    struct api_vs_hdr *vs_hdr = NULL;
+    struct api_param_hdr *param_hdr = NULL;
 
-    code = _api_rs_del_parse(root, &hdr, json);
+    code = _api_rs_del_parse(&param_hdr, json);
     if (code != 0) {
         goto _quit;
     }
 
-    count = hdr->rs[0].count;
-    total_count = cpu_count * count;
-    update = api_malloc(total_count * sizeof(*update));
-    if (update == NULL) {
-        goto _quit;
-    }
-
-    code = _api_rs_del(root, update, hdr);
+    code = _api_rs_del(&vs_hdr, root, param_hdr);
     if (code != 0) {
         goto _quit;
     }
 
-    position = api_malloc(total_count * sizeof(*position));
-    if (position == NULL) {
-        goto _quit;
-    }
-
-    _api_rs_collection_mutable(position, hdr);
-    api_config_update(position, update, cpu_count * hdr->rs[0].count, dpdk_free);
+    _api_vs_update(vs_hdr, root);
 
 _quit:
-    api_free(update);
-    api_free(position);
-    _api_rs_hdr_free(hdr);
-    if (code == 0) {
-        return api_succ(NULL);
-    } else {
+    _api_rs_param_hdr_free(param_hdr);
+    _api_rs_hdr_free(vs_hdr);
+
+    if (code != 0) {
         return api_fail(code);
     }
+    return api_succ(NULL);
 }
 
 API_GET(/v1/app/rserver, rserver)
@@ -632,7 +454,7 @@ API_GET(/v1/app/rserver, rserver)
         return api_fail(ERRCODE_OOM);
     }
 
-    code = rs_conf_get(tc->rs_table, &count, NULL, 0);
+    code = rs_conf_table_get_count(&count, tc->rs_table);
     if (code == 0) {
         return api_succ(array);
     }
@@ -643,7 +465,11 @@ API_GET(/v1/app/rserver, rserver)
         goto _quit;
     }
 
-    rs_conf_get(tc->rs_table, &count, rs_array, count);
+    code = rs_conf_table_get_element(tc->rs_table, rs_array, &count);
+    if (code != 0) {
+        goto _quit;
+    }
+
     for (int i = 0; i < count; i++) {
         code = _api_rs_info_get(&obj, rs_array[i]);
         if (code != 0) {
@@ -656,9 +482,11 @@ API_GET(/v1/app/rserver, rserver)
         }
     }
 
+    api_free(rs_array);
     return api_succ(NULL);
 
 _quit:
+    api_free(rs_array);
     json_decref(array);
     return api_fail(code);
 }

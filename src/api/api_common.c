@@ -351,6 +351,24 @@ const char *api_json_get_string(void *obj, const char *name)
     return value;
 }
 
+void *api_json_get_object(void *obj, const char *name)
+{
+    void *ret = NULL;
+
+    if (obj == NULL || name == NULL) {
+        LOG_ERROR("Invalid parameter.");
+        return NULL;
+    }
+
+    ret = json_object_get(obj, name);
+    if (ret == NULL) {
+        LOG_ERROR("Invalid parameter.");
+        return NULL;
+    }
+
+    return ret;
+}
+
 int api_json_get_long(uint64_t *value, void *obj, const char *name)
 {
     void *subobj = NULL;
@@ -395,24 +413,6 @@ void api_thread_config_update(void *cfg, void **position[], void *update[], void
     if (free_cb != NULL) {
         for (int i = 0; i < cpu_count; i++) {
             free_cb(old[i]);
-        }
-    }
-}
-
-// need delete
-void api_config_update(void **position[], void *update[], int count, void (*free_cb)(void *))
-{
-    void *old = NULL;
-
-    for (int i = 0; i < count; i++) {
-        old = *position[i];
-        rcu_assign_pointer(position[i], update[i]);
-        update[i] = old;
-    }
-
-    if (free_cb != NULL) {
-        for (int i = 0; i < count; i++) {
-            free_cb(update[i]);
         }
     }
 }

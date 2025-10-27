@@ -172,10 +172,11 @@ void pool_conf_table_destroy(void *arg)
 
 struct pool *pool_conf_create(const char *name, enum RS_SELECT_ALGO type, int rs_count, int hw_numa_id)
 {
+    size_t size = 0;
     struct pool *pool = NULL;
     size_t name_len = strlen(name);
-    size_t size = name_len + 1 + sizeof(struct pool);
 
+    size = name_len + 1 + sizeof(struct pool);
     pool = dpdk_malloc_numa(size, hw_numa_id);
     if (UNLIKELY(pool == NULL)) {
         LOG_ERROR("OOM.");
@@ -187,14 +188,18 @@ struct pool *pool_conf_create(const char *name, enum RS_SELECT_ALGO type, int rs
     switch (type) {
     case RS_ALGO_RR:
         pool->pool_rs_get_next = _pool_rs_rr_get_next;
-        pool->rr = dpdk_malloc_numa(sizeof(struct rserver_rr) + sizeof(uint32_t) * rs_count, hw_numa_id);
+
+        size = sizeof(struct rserver_rr) + rs_count * sizeof(uint32_t);
+        pool->rr = dpdk_malloc_numa(size, hw_numa_id);
         if (UNLIKELY(pool->rr == NULL)) {
             LOG_ERROR("OOM.");
             goto _quit;
         }
 
+        memset(pool->rr, 0, size);
         pool->rr->rs_count = 0;
         pool->rr->next = 0;
+
         break;
     default:
         LOG_ERROR("Pool select real server algo not support.");
@@ -226,7 +231,7 @@ int pool_conf_get_by_id(void *arg, struct pool **pp_pool, uint32_t id)
     return 0;
 }
 
-int pool_conf_get_by_name(void *arg, struct pool **target, const char *name)
+int pool_conf_get_by_name(struct pool **target, void *arg, const char *name)
 {
     struct pool *one = NULL;
     struct pool_table *table = (struct pool_table *)arg;
@@ -250,20 +255,20 @@ int pool_conf_get_by_name(void *arg, struct pool **target, const char *name)
     return 0;
 }
 
-int pool_conf_get_count(const void *arg, int *pcount)
+int pool_conf_table_get_count(const void *arg, int *p_count)
 {
     const struct pool_table *table = (const struct pool_table *)arg;
 
-    if (UNLIKELY(arg == NULL || pcount == NULL)) {
+    if (UNLIKELY(arg == NULL || p_count == NULL)) {
         LOG_ERROR("Invalid parameter.");
         return ERRCODE_PARAMETER_INVALID;
     }
 
-    *pcount = table->store_count;
+    *p_count = table->store_count;
     return 0;
 }
 
-int pool_conf_get_all(const void *arg, struct pool *pools[], int max)
+int pool_conf_table_get_element(const struct pool *pools[], const void *arg, int max)
 {
     int n = 0;
     const struct pool_table *table = arg;

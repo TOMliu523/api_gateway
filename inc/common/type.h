@@ -76,11 +76,26 @@ struct pkt_classifier {
     struct pkt_tx *tx;
 };
 
+struct thread_ctx {
+    void **pp_iface;
+    void **pp_ip4_table;
+    void **pp_ip6_table;
+    void **pp_rs_table;
+    void **pp_pool_table;
+    void **pp_snat_pool;
+    void **pp_vs_table;
+
+    void **pp_arp_table;
+    void **pp_route4_table;
+    void **pp_ndp_table;
+    void **pp_route6_table;
+};
+
 struct dataplane {
     void *rcu;
     struct thread_config *tc; // Pointer to the configuration for this NUMA node
-    struct pkt_classifier *pc;
     void *protocol;
+    struct pkt_classifier *pc;
     void *pktmbuf_pool;
     struct {
         uint8_t numa_id; // NUMA index in your application (0-based)
@@ -95,10 +110,12 @@ struct dataplane {
     uint64_t off_time_ms;
     uint64_t timer_cycles;
 
+    struct stats *stats;
     void *indirect_pool;
     void *notice_ring;
     void *frag_handle;
-    struct stats *stats;
+
+    struct thread_ctx *ctx;
 } ALIGNED(CACHE_LINE);
 
 struct hw_info {

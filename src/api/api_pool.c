@@ -18,824 +18,861 @@
 #include "rserver_conf.h"
 
 #define API_POOL_MODULE_NAME "pool"
-#define API_POOL_LIST_NAME "entrys"
+#define API_POOL_LIST_NAME "entries"
 
-struct api_pool_rs {
-    int new_refcnt;
-    const struct rserver *rs;
-};
-
-struct api_pool_rs_hdr {
-    int count;
-    // dense object table
-    struct api_pool_rs *dense[DP_RSERVER_MAX];
-    // sparse object list
-    struct api_pool_rs sparse[DP_RSERVER_MAX];
-};
-
-struct rs_entry {
+struct rserver_list {
     int af;
-    union inet_addr addr;
     uint16_t port;
-    struct api_pool_rs *ptr;
+    union inet_addr addr;
 };
 
-struct api_pool_entry {
-    char name[CONF_NAME_LEN_MAX];
-    const struct pool *pool; // del
-    enum RS_SELECT_ALGO type;
+struct api_param {
+    const char *name;
+    enum RS_SELECT_ALGO algo;
     int rs_count;
-    struct rs_entry *rs_entry;
+    struct rserver_list *rs_list;
+};
+
+struct api_param_hdr {
+    int count;
+    struct api_param param[];
+};
+
+struct rserver_info {
+    struct rserver *rs;
+    int refcnt;
 };
 
 struct api_pool_hdr {
-    struct api_pool_rs_hdr rs_hdr;
+    int cpu_count;
 
-    int count;
-    struct api_pool_entry *pool_entry;
+    int rs_cap;
+    int rs_count;
+    struct rserver_info *rs_info[CPU_MAX];
+
+    bool need_delete;
+    int ele_count;
+    struct pool **array[CPU_MAX];
+
+    void *pool_table[CPU_MAX];
 };
 
-struct api_pool_query_hdr {
-    struct rserver *rs[DP_RSERVER_MAX];
-    int count;
-    struct pool *pools[];
-};
-
-static const char *s_pool_rs_select_algo[] = {
+static const char *s_rs_select_algo[] = {
     "rr",
     "random",
     "wrr",
 };
 
-static void _api_pool_hdr_free(void *ptr)
+static void _api_pool_hdr_free(struct api_pool_hdr *pool_hdr)
 {
-    struct api_pool_hdr *hdr = ptr;
-
-    if (hdr == NULL) {
+    if (pool_hdr == NULL) {
         return;
     }
 
-    for (int i = 0; i < hdr->count; i++) {
-        struct api_pool_entry *entry = &hdr->pool_entry[i];
-        if (entry->rs_entry != NULL) {
-            dpdk_free(entry->rs_entry);
+    for (int i = 0; i < pool_hdr->cpu_count; i++) {
+        if (pool_hdr->rs_info[i] != NULL) {
+            api_free(pool_hdr->rs_info[i]);
+            pool_hdr->rs_info[i] = NULL;
+        }
+
+        if (pool_hdr->need_delete) {
+            if (pool_hdr->array[i] != NULL) {
+                for (int j = 0; j < pool_hdr->ele_count; j++) {
+                    if (pool_hdr->array[i][j] != NULL) {
+                        pool_conf_free(pool_hdr->array[i][j]);
+                        pool_hdr->array[i][j] = NULL;
+                    }
+                }
+            }
+        }
+
+        if (pool_hdr->array[i] != NULL) {
+            api_free(pool_hdr->array[i]);
+            pool_hdr->array[i] = NULL;
+        }
+
+        if (pool_hdr->pool_table[i] != NULL) {
+            pool_conf_table_destroy(pool_hdr->pool_table[i]);
+            pool_hdr->pool_table[i] = NULL;
         }
     }
 
-    dpdk_free(hdr);
+    api_free(pool_hdr);
 }
 
-static void _api_pool_table_batch_free(void *pool_table[], int count)
+static void _api_pool_param_hdr_free(struct api_param_hdr *param_hdr)
 {
-    if (pool_table == NULL) {
+    struct api_param *param = NULL;
+
+    if (param_hdr == NULL) {
         return;
     }
 
-    for (int i = 0; i < count; i++) {
-        pool_conf_table_destroy(pool_table[i]);
+    for (int i = 0; i < param_hdr->count; i++) {
+        param = &param_hdr->param[i];
+        if (param->rs_list != NULL) {
+            api_free(param->rs_list);
+            param->rs_list = NULL;
+        }
     }
+
+    api_free(param_hdr);
 }
 
-static void _api_pool_rs_table_batch_free(void *rs_table[], int count)
+static int _api_pool_hdr_vs_extend(struct api_pool_hdr *pool_hdr, int cap)
 {
-    if (rs_table == NULL) {
-        return;
+    struct rserver_info *rs_info = NULL;
+
+    if (cap == 0) {
+        return 0;
     }
 
-    for (int i = 0; i < count; i++) {
-        pool_conf_table_destroy(rs_table[i]);
-    }
-}
-
-static void _api_pool_rs_batch_free(struct rserver *pp_rs[], int count)
-{
-    if (pp_rs == NULL) {
-        return;
-    }
-
-    for (int i = 0; i < count; i++) {
-        if (pp_rs[i] == NULL) {
-            continue;
+    for (int i = 0; i < pool_hdr->cpu_count; i++) {
+        rs_info = api_malloc(cap * sizeof(*rs_info));
+        if (rs_info == NULL) {
+            return ERRCODE_OOM;
         }
 
-        rs_conf_part_free(pp_rs[i]);
-        pp_rs[i] = NULL;
+        pool_hdr->rs_info[i] = rs_info;
     }
+
+    pool_hdr->rs_cap = cap;
+    pool_hdr->rs_count = 0;
+
+    return 0;
 }
 
-static void _api_pool_rs_multi_batch_free(struct rserver **ppp_rs[], int batch_count, int count)
+static void *_api_pool_hdr_alloc(int cpu_count, int pool_count, int max_rs_count, bool need_delete)
 {
-    if (ppp_rs == NULL) {
-        return;
-    }
+    struct pool **pp_pool = NULL;
+    struct rserver_info *rs_info = NULL;
+    struct api_pool_hdr *pool_hdr = NULL;
 
-    for (int i = 0; i < batch_count; i++) {
-        _api_pool_rs_batch_free(ppp_rs[i], count);
-        api_free(ppp_rs[i]);
-    }
-}
-
-static void _api_pool_batch_free(struct pool *pp_pool[], int count)
-{
-    if (pp_pool == NULL) {
-        return;
-    }
-
-    for (int i = 0; i < count; i++) {
-        pool_conf_free(pp_pool[i]);
-    }
-}
-
-static void _api_pool_multi_batch_free(struct pool **ppp_pool[], int batch_count, int count)
-{
-    if (ppp_pool == NULL) {
-        return;
-    }
-
-    for (int i = 0; i < batch_count; i++) {
-        _api_pool_batch_free(ppp_pool[i], count);
-        api_free(ppp_pool[i]);
-    }
-}
-
-static void _api_pool_rs_array_free(struct rserver **pp_rs[], int count)
-{
-    for (int i = 0; i < count; i++) {
-        dpdk_free(pp_rs[i]);
-    }
-}
-
-static void _api_pool_array_free(struct pool **pp_pool[], int count)
-{
-    for (int i = 0; i < count; i++) {
-        dpdk_free(pp_pool[i]);
-    }
-}
-
-static struct api_pool_hdr *_api_pool_hdr_alloc(int count)
-{
-    size_t size = 0;
-    struct api_pool_hdr *hdr = NULL;
-
-    size = sizeof(struct api_pool_hdr) + count * sizeof(struct api_pool_entry);
-    hdr = api_malloc(size);
-    if (hdr == NULL) {
-        LOG_ERROR("OOM.");
+    pool_hdr = api_malloc(sizeof(*pool_hdr));
+    if (pool_hdr == NULL) {
         return NULL;
     }
 
-    hdr->count = count;
-    hdr->pool_entry = (struct api_pool_entry *)(hdr + 1);
+    for (int i = 0; i < cpu_count; i++) {
+        if (max_rs_count != 0) {
+            rs_info = api_malloc(max_rs_count * sizeof(*rs_info));
+            if (rs_info == NULL) {
+                goto _quit;
+            }
 
-    return hdr;
-}
+            pool_hdr->rs_info[i] = rs_info;
+        }
 
-static int _api_pool_rs_count(const struct pool *pool)
-{
-    switch (pool->type) {
-    case RS_ALGO_RR:
-        return pool->rr->rs_count;
-    default:
-        return 0;
+        pp_pool = api_malloc(pool_count * sizeof(*pp_pool));
+        if (pp_pool == NULL) {
+            goto _quit;
+        }
+
+        pool_hdr->array[i] = pp_pool;
     }
+
+    pool_hdr->cpu_count = cpu_count;
+    pool_hdr->rs_cap = max_rs_count;
+    pool_hdr->ele_count = pool_count;
+    pool_hdr->need_delete = need_delete;
+
+    return pool_hdr;
+
+_quit:
+    _api_pool_hdr_free(pool_hdr);
+    return NULL;
 }
 
-static int _api_pool_post_parse(struct root *root, struct api_pool_hdr **pp, void *json)
+static void *_api_pool_param_hdr_alloc(int count)
+{
+    int total = 0;
+    struct api_param_hdr *param_hdr = NULL;
+
+    total = sizeof(*param_hdr) + count * sizeof(struct api_param);
+    param_hdr = api_malloc(total);
+    if (param_hdr == NULL) {
+        return NULL;
+    }
+
+    memset(param_hdr, 0, total);
+    param_hdr->count = count;
+
+    return param_hdr;
+}
+
+static int _api_pool_rs_cap(struct api_pool_hdr *pool_hdr)
+{
+    int count = 0;
+    struct pool *pool = NULL;
+
+    for (int i = 0; i < pool_hdr->ele_count; i++) {
+        pool = pool_hdr->array[0][i];
+        count += pool->rr->rs_count;
+    }
+
+    return count;
+}
+
+static int _api_pool_hdr_extern(struct api_pool_hdr *pool_hdr, struct root *root)
+{
+    int cap = 0;
+    int code = 0;
+    int rs_count = 0;
+    struct dataplane *dp = NULL;
+
+    cap = _api_pool_rs_cap(pool_hdr);
+
+    dp = root->dpdk_thread[0];
+    code = rs_conf_table_get_count(&rs_count, dp->tc->rs_table);
+    if (code != 0) {
+        return code;
+    }
+
+    if (cap > rs_count) {
+        cap = rs_count;
+    }
+
+    code = _api_pool_hdr_vs_extend(pool_hdr, cap);
+    if (code != 0) {
+        return code;
+    }
+
+    return 0;
+}
+
+static int _api_pool_algo_get(enum RS_SELECT_ALGO *p_algo, const char *value)
+{
+    for (int i = 0; i < ARR_NUMS(s_rs_select_algo); i++) {
+        if (strcmp(value, s_rs_select_algo[i]) == 0) {
+            *p_algo = (enum RS_SELECT_ALGO) i;
+            return 0;
+        }
+    }
+
+    LOG_ERROR("Invalid parameter.");
+    return ERRCODE_PARAMETER_INVALID;
+}
+
+static int _api_pool_rs_parse(struct api_param *param, void *obj)
 {
     int code = 0;
-    void *obj = NULL;
-    size_t count = 0;
     void *array = NULL;
-    const char *ip = NULL;
-    struct api_pool_hdr *hdr = NULL;
-    struct api_pool_entry *entry = NULL;
-    struct dataplane *dp = root->dpdk_thread[0];
+    uint64_t lvalue = 0;
+    const char *svalue = NULL;
+    struct rserver_list *one = NULL;
+    struct rserver_list *rs_list = NULL;
+
+    code = api_json_get_long(&lvalue, obj, "rs_count");
+    if (code != 0) {
+        goto _quit;
+    }
+
+    if (lvalue == 0) {
+        param->rs_count = 0;
+        param->rs_list = NULL;
+
+        return 0;
+    }
+
+    array = api_json_get_object(obj, "rserver");
+    if (array == NULL) {
+        code = ERRCODE_PARAMETER_INVALID;
+        goto _quit;
+    }
+
+    rs_list = api_malloc(lvalue * sizeof(struct rserver_list));
+    if (rs_list == NULL) {
+        code = ERRCODE_OOM;
+        goto _quit;
+    }
+
+    for (uint64_t i = 0; i < lvalue; i++) {
+        void *subobj = NULL;
+
+        one = &rs_list[i];
+
+        subobj = api_json_array_get(array, i);
+        if (subobj == NULL) {
+            code = ERRCODE_PARAMETER_INVALID;
+            goto _quit;
+        }
+
+        svalue = api_json_get_string(subobj, "addr");
+        if (svalue == NULL) {
+            code = ERRCODE_PARAMETER_INVALID;
+            goto _quit;
+        }
+
+        if (strchr(svalue, ':') == 0) {
+            one->af = AF_INET;
+        } else {
+            one->af = AF_INET6;
+        }
+
+        inet_pton(one->af, svalue, &one->addr);
+
+        code = api_json_get_long(&lvalue, subobj, "port");
+        if (code != 0) {
+            goto _quit;
+        }
+
+        one->port = (uint16_t) lvalue;
+    }
+
+    param->rs_list = rs_list;
+    param->rs_count = (int) lvalue;
+
+    return 0;
+
+_quit:
+    api_free(rs_list);
+    return code;
+}
+
+static int _api_pool_del_parse(struct api_param_hdr **pp_param_hdr, struct root *root, void *json)
+{
+    int code = 0;
+    size_t count = 0;
+    void *obj = NULL;
+    void *array = NULL;
+    struct api_param *param = NULL;
+    struct api_param_hdr *param_hdr = NULL;
+
+    code = api_v1_delete_list(&array, &count, json, API_POOL_MODULE_NAME, API_POOL_LIST_NAME);
+    if (code != 0) {
+        goto _quit;
+    }
+
+    param_hdr = _api_pool_param_hdr_alloc(count);
+    if (param_hdr == NULL) {
+        code = ERRCODE_OOM;
+        goto _quit;
+    }
+
+    for (size_t i = 0; i < count; i++) {
+        param = &param_hdr->param[i];
+
+        obj = api_json_array_get(array, i);
+        if (obj == NULL) {
+            LOG_ERROR("Invalid parameter.");
+            code = ERRCODE_PARAMETER_INVALID;
+            goto _quit;
+        }
+
+        param->name = api_json_get_string(obj, "name");
+        if (param->name == NULL) {
+            code = ERRCODE_PARAMETER_INVALID;
+            goto _quit;
+        }
+    }
+
+    param_hdr->count = count;
+    *pp_param_hdr = param_hdr;
+
+    return 0;
+
+_quit:
+    _api_pool_param_hdr_free(param_hdr);
+    return code;
+}
+
+static int _api_pool_del_get(struct api_pool_hdr *pool_hdr, struct root *root, const struct api_param_hdr *param_hdr)
+{
+    int code = 0;
+    struct pool *pool = NULL;
+    struct dataplane *dp = NULL;
+    const struct api_param *param = NULL;
+    int cpu_count = root->hw_info.cpu_count;
+
+    for (int i = 0; i < cpu_count; i++) {
+        dp = root->dpdk_thread[i];
+        for (int j = 0; j < param_hdr->count; j++) {
+            param = &param_hdr->param[j];
+
+            code = pool_conf_get_by_name(&pool, dp->tc->rs_table, param->name);
+            if (code != 0) {
+                return code;
+            }
+
+            pool_hdr->array[i][j] = pool;
+        }
+    }
+
+    pool_hdr->ele_count = param_hdr->count;
+    return 0;
+}
+
+static int _api_pool_del_rs_expand(struct pool *pool, struct dataplane *dp, struct api_pool_hdr *pool_hdr)
+{
+    int code = 0;
+    int count = 0;
+    uint32_t rs_id = 0;
+    struct rserver *rs = NULL;
+
+    for (int i = 0; i < pool->rr->rs_count; i++) {
+        int j = 0;
+        bool has = false;
+        struct rserver_info *rs_info = NULL;
+
+        rs_id = pool->rr->ids[i];
+        code = rs_conf_get_by_id(&rs, dp->tc->rs_table, rs_id);
+        if (code != 0) {
+            return code;
+        }
+
+        rs_info = pool_hdr->rs_info[dp->cpu_id];
+        for (j = 0; j < pool_hdr->rs_cap; j++) {
+            if (rs_info[j].rs == NULL) {
+                count += 1;
+                break;
+            }
+
+            if (rs_info[j].rs->id == rs_id) {
+                has = true;
+                rs_info[j].refcnt -= 1;
+                break;
+            }
+
+            if (!has) {
+                rs_info[j].rs = rs;
+                rs_info[j].refcnt = -1;
+            }
+        }
+    }
+
+    if (pool_hdr->rs_count == 0) {
+        pool_hdr->rs_count = count;
+    }
+    return 0;
+}
+
+static int _api_pool_del_rs_get(struct api_pool_hdr *pool_hdr, struct root *root, const struct api_param_hdr *param_hdr)
+{
+    int code = 0;
+    struct pool *pool = NULL;
+    struct dataplane *dp = NULL;
+    struct pool **pp_pool = NULL;
+    int cpu_count = root->hw_info.cpu_count;
+
+    code = _api_pool_hdr_extern(pool_hdr, root);
+    if (code != 0) {
+        return code;
+    }
+
+    for (int i = 0; i < cpu_count; i++) {
+        dp = root->dpdk_thread[i];
+        pp_pool = pool_hdr->array[i];
+
+        for (int j = 0; j < pool_hdr->ele_count; j++) {
+            pool = pp_pool[j];
+
+            code = _api_pool_del_rs_expand(pool, dp, pool_hdr);
+            if (code != 0) {
+                return code;
+            }
+        }
+    }
+
+    return 0;
+}
+
+static int _api_pool_post_parse(struct api_param_hdr **pp_param_hdr, struct root *root, void *json)
+{
+    int code = 0;
+    size_t count = 0;
+    void *obj = NULL;
+    void *array = NULL;
+    const char *svalue = NULL;
+    struct api_param *param = NULL;
+    struct api_param_hdr *param_hdr = NULL;
 
     code = api_v1_modify_list(&array, &count, json, API_POOL_MODULE_NAME, API_POOL_LIST_NAME);
     if (code != 0) {
         return code;
     }
 
-    hdr = _api_pool_hdr_alloc(count);
-    if (hdr == NULL) {
-        return ERRCODE_OOM;
-    }
-
-    for (int i = 0; i < count; i++) {
-        uint64_t value = 0;
-        const char *type = NULL;
-        const char *name = NULL;
-
-        obj = json_array_get(array, i);
-        entry = &hdr->pool_entry[i];
-
-        name = api_json_get_string(obj, "name");
-        if (name == NULL) {
-            code = ERRCODE_PARAMETER_INVALID;
-            goto _quit;
-        }
-
-        code = pool_conf_get_by_name(dp->tc->pool_table, NULL, name);
-        if (code != 0) {
-            if (code == ERRCODE_POOL_EXISTS) {
-                LOG_ERROR("Pool(%s) exists.", name);
-            }
-            goto _quit;
-        }
-
-        strcpy(entry->name, name);
-
-        type = api_json_get_string(obj, "algo");
-        if (type == NULL) {
-            LOG_ERROR("Invalid parameter.");
-            code = ERRCODE_PARAMETER_INVALID;
-            goto _quit;
-        } else if (strcmp(type, "rr") == 0) {
-            entry->type = RS_ALGO_RR;
-        } else {
-            LOG_ERROR("Pool select algo type not support");
-            code = ERRCODE_POOL_NOT_SUPPORT;
-            goto _quit;
-        }
-
-        code = api_json_get_long(&value, obj, "rs_count");
-        if (code != 0) {
-            goto _quit;
-        }
-
-        entry->rs_count = (int)value;
-
-        entry->rs_entry = api_malloc(entry->rs_count * sizeof(struct rs_entry));
-        if (entry->rs_entry == NULL) {
-            code = ERRCODE_OOM;
-            goto _quit;
-        }
-
-        for (int j = 0; j < entry->rs_count; j++) {
-            struct rs_entry *one = &entry->rs_entry[j];
-
-            ip = api_json_get_string(obj, "addr");
-            if (ip == NULL) {
-                goto _quit;
-            }
-
-            code = api_string_to_addr(&one->af, &one->addr, ip);
-            if (code != 0) {
-                goto _quit;
-            }
-
-            code = api_json_get_long(&value, obj, "port");
-            if (code != 0) {
-                goto _quit;
-            }
-
-            one->port = (int)value;
-        }
-    }
-
-    *pp = hdr;
-    return 0;
-
-_quit:
-    _api_pool_hdr_free(hdr);
-    return code;
-}
-
-static int _api_pool_delete_parse(struct root *root, struct api_pool_hdr **phdr, void *json)
-{
-    int code = 0;
-    size_t count = 0;
-    void *obj = NULL;
-    void *array = NULL;
-    const char *name = NULL;
-    struct pool *pool = NULL;
-    struct api_pool_hdr *hdr = NULL;
-    struct api_pool_entry *entry = NULL;
-    struct dataplane *dp = root->dpdk_thread[0];
-
-    code = api_v1_delete_list(&array, &count, json, API_POOL_MODULE_NAME, API_POOL_LIST_NAME);
-    if (code != 0) {
-        return code;
-    }
-
-    hdr = _api_pool_hdr_alloc(count);
-    if (hdr == NULL) {
+    param_hdr = _api_pool_param_hdr_alloc(count);
+    if (param_hdr == NULL) {
         return ERRCODE_OOM;
     }
 
     for (size_t i = 0; i < count; i++) {
-        obj = json_array_get(array, i);
-        name = api_json_get_string(obj, "name");
-        if (name == NULL) {
-            LOG_ERROR("Invalid parameter");
+        param = &param_hdr->param[i];
+        obj = api_json_array_get(array, i);
+        if (obj == NULL) {
             code = ERRCODE_PARAMETER_INVALID;
             goto _quit;
         }
 
-        code = pool_conf_get_by_name(dp->tc->pool_table, &pool, name);
+        param->name = api_json_get_string(obj, "name");
+        if (param->name == NULL) {
+            code = ERRCODE_PARAMETER_INVALID;
+            goto _quit;
+        }
+
+        svalue = api_json_get_string(obj, "algo");
+        if (svalue == NULL) {
+            code = ERRCODE_PARAMETER_INVALID;
+            goto _quit;
+        }
+
+        code = _api_pool_algo_get(&param->algo, svalue);
         if (code != 0) {
-            LOG_ERROR("Pool '%s' not exists", name);
             goto _quit;
         }
 
-        if (pool->refcnt != 0) {
-            LOG_ERROR("Pool '%s' resource busy.", name);
-            goto _quit;
-        }
-
-        entry = &hdr->pool_entry[i];
-        entry->pool = pool;
-
-        entry->rs_entry = api_malloc(_api_pool_rs_count(pool) * sizeof(struct rs_entry));
-        if (entry->rs_entry == NULL) {
-            code = ERRCODE_OOM;
+        code = _api_pool_rs_parse(param, obj);
+        if (code != 0) {
             goto _quit;
         }
     }
 
-    *phdr = hdr;
+    *pp_param_hdr = param_hdr;
     return 0;
 
 _quit:
-    _api_pool_hdr_free(hdr);
+    _api_pool_param_hdr_free(param_hdr);
     return code;
 }
 
-static int _api_pool_add_prepare(const struct dataplane *dp, struct api_pool_hdr *hdr)
+static int _api_pool_rs_process(struct pool *pool, struct dataplane *dp, struct api_pool_hdr *pool_hdr, const struct api_param *param)
 {
     int code = 0;
-    uint32_t id = 0;
+    int count = 0;
     struct rserver *rs = NULL;
-    struct api_pool_rs *ref = NULL;
-    struct rs_entry *rs_entry = NULL;
-    struct api_pool_rs_hdr *rs_hdr = NULL;
-    struct api_pool_entry *pool_entry = NULL;
+    struct rserver_info *info = NULL;
+    struct rserver_list *rs_one = NULL;
 
-    rs_hdr = &hdr->rs_hdr;
-    for (int i = 0; i < hdr->count; i++) {
-        pool_entry = &hdr->pool_entry[i];
-        for (int j = 0; j < pool_entry->rs_count; j++) {
-            rs_entry = &pool_entry->rs_entry[j];
-            code = rs_conf_find(dp->tc->rs_table, &rs, rs_entry->af, &rs_entry->addr, rs_entry->port);
-            if (code != 0) {
-                return code;
-            }
-
-            id = rs->id;
-            ref = &rs_hdr->sparse[id];
-
-            if (ref->rs == NULL) {
-                rs_hdr->dense[rs_hdr->count++] = ref;
-            }
-
-            ref->rs = rs;
-            ref->new_refcnt += 1;
-
-            rs_entry->ptr = ref;
-        }
+    if (param->rs_count == 0) {
+        return 0;
     }
 
-    return 0;
-}
+    for (int i = 0; i < param->rs_count; i++) {
+        int j = 0;
+        bool has = false;
 
-static int _api_pool_delete_prepare(const struct dataplane *dp, struct api_pool_hdr *hdr)
-{
-    uint32_t id = 0;
-    struct rserver_rr *rr = NULL;
-    const struct rserver *rs = NULL;
-    struct api_pool_rs *ref = NULL;
-    struct api_pool_rs_hdr *rs_hdr = NULL;
-
-    rs_hdr = &hdr->rs_hdr;
-    for (int i = 0; i < hdr->count; i++) {
-        const struct pool *pool = NULL;
-        struct api_pool_entry *pool_entry = NULL;
-
-        pool = pool_entry->pool;
-        pool_entry = &hdr->pool_entry[i];
-
-        switch (pool->type) {
-        case RS_ALGO_RR:
-            rr = pool->rr;
-            for (int j = 0; j < rr->rs_count; j++) {
-                rs = rs_conf_get_by_id(dp->tc->rs_table, rr->ids[j]);
-                if (rs == NULL) {
-                    LOG_ERROR("The real server does not exist in the pool.");
-                    return ERRCODE_RSERVER_NOT_FOUND;
-                }
-
-                id = rs->id;
-
-                ref = &rs_hdr->sparse[id];
-                if (ref->rs == NULL) {
-                    rs_hdr->dense[rs_hdr->count++] = ref;
-                }
-
-                ref->rs = rs;
-                ref->new_refcnt -= 1;
-
-                pool_entry->rs_entry[j].ptr = ref;
-            }
-        default:
-            LOG_ERROR("Pool select algo not support.");
-            return ERRCODE_POOL_NOT_SUPPORT;
-        }
-    }
-
-    return 0;
-}
-
-static int _api_pool_rs_part_clone(struct rserver **pp_rs, struct api_pool_rs *pool_rs, int hw_numa_id)
-{
-    struct rserver_v4 *v4 = NULL;
-    struct rserver_v6 *v6 = NULL;
-    struct rserver_base *base = NULL;
-    const struct rserver *rs = NULL;
-
-    rs = pool_rs->rs;
-    if (rs->af == AF_INET) {
-        v4 = rs_conf_v4_part_clone((const struct rserver_v4 *)rs, hw_numa_id);
-        if (v4 == NULL) {
-            return ERRCODE_OOM;
-        }
-        base = &v4->base;
-    } else {
-        v6 = rs_conf_v6_part_clone((const struct rserver_v6 *)rs, hw_numa_id);
-        if (v6 == NULL) {
-            return ERRCODE_OOM;
-        }
-        base = &v6->base;
-    }
-
-    base->mtb->pool_refcnt += pool_rs->new_refcnt;
-    return 0;
-}
-
-static int _api_pool_rs_table_make(const struct dataplane *dp, void **rs_table, struct rserver **pp_rs, const struct api_pool_hdr *hdr)
-{
-    int code = 0;
-    const struct api_pool_rs_hdr *rs_hdr = NULL;
-
-    rs_hdr = &hdr->rs_hdr;
-    for (int i = 0; i < rs_hdr->count; i++) {
-        code = _api_pool_rs_part_clone(&pp_rs[i], rs_hdr->dense[i], dp->hw_numa_id);
-        if (code != 0) {
-            goto _quit;
-        }
-    }
-
-    code = rs_conf_table_update(rs_table, dp->tc->rs_table, pp_rs, rs_hdr->count, dp->hw_numa_id);
-    if (code != 0) {
-        goto _quit;
-    }
-
-    return 0;
-
-_quit:
-    _api_pool_rs_batch_free(pp_rs, rs_hdr->count);
-    return code;
-}
-
-static int _api_pool_add_table_make(const struct dataplane *dp, void **pool_table, struct pool **pp_pool, const struct api_pool_hdr *hdr)
-{
-    int code = 0;
-    struct pool *one = NULL;
-    struct rserver_rr *rr = NULL;
-    struct api_pool_entry *entry = NULL;
-
-    for (int i = 0; i < hdr->count; i++) {
-        entry = &hdr->pool_entry[i];
-        one = pp_pool[i] = pool_conf_create(entry->name, entry->type, entry->rs_count, dp->hw_numa_id);
-        if (one == NULL) {
-            goto _quit;
-        }
-
-        switch (entry->type) {
-        case RS_ALGO_RR:
-            rr = one->ptr;
-            for (int j = 0; j < entry->rs_count; j++) {
-                const struct rserver *rs = entry->rs_entry[j].ptr->rs;
-                rr->ids[rr->rs_count++] = rs->id;
-            }
-            break;
-        default:
-            LOG_ERROR("Pool type not support.");
-            code = ERRCODE_POOL_ALGO_NOT_SUPPORT;
-            goto _quit;
-        }
-    }
-
-    code = pool_conf_table_add(pool_table, dp->tc->pool_table, pp_pool, hdr->count, dp->hw_numa_id);
-    if (code != 0) {
-        goto _quit;
-    }
-
-    return 0;
-
-_quit:
-    _api_pool_batch_free(pp_pool, hdr->count);
-    return code;
-}
-
-static int _api_pool_del_table_make(struct dataplane *dp, void **pool_table, struct pool **pp_pool, const struct api_pool_hdr *hdr)
-{
-    int code = 0;
-    struct pool *one = NULL;
-    struct api_pool_entry *pool_entry = NULL;
-
-    for (int i = 0; i < hdr->count; i++) {
-        pool_entry = &hdr->pool_entry[i];
-        code = pool_conf_get_by_name(dp->tc->pool_table, &one, pool_entry->pool->name);
+        rs_one = &param->rs_list[i];
+        code = rs_conf_get_by_key(&rs, dp->tc->rs_table, rs_one->af, &rs_one->addr, rs_one->port);
         if (code != 0) {
             return code;
         }
 
-        pp_pool[i] = one;
+        pool->rr->ids[i] = rs->id;
+
+        info = pool_hdr->rs_info[dp->cpu_id];
+        for (j = 0; j < pool_hdr->rs_cap; j++) {
+            if (info[j].rs == NULL) {
+                count += 1;
+                break;
+            }
+
+            if (rs->id == info[j].rs->id) {
+                has = true;
+                info[j].refcnt += 1;
+                break;
+            }
+        }
+
+        if (!has) {
+            info[j].rs = rs;
+            info[j].refcnt = 1;
+        }
     }
 
-    code = pool_conf_table_del(pool_table, dp->tc->pool_table, pp_pool, hdr->count, dp->hw_numa_id);
-    if (code != 0) {
-        return code;
+    pool->rr->rs_count = param->rs_count;
+    if (pool_hdr->ele_count == 0) {
+        pool_hdr->ele_count = count;
     }
 
     return 0;
 }
 
-static int _api_pool_fill_query_hdr(const struct dataplane *dp, struct api_pool_query_hdr *hdr)
-{
-    int code = 0;
-
-    code = pool_conf_get_all(dp->tc->pool_table, hdr->pools, hdr->count);
-    if (code != 0) {
-        return code;
-    }
-
-    code = rs_conf_get_all(dp->tc->rs_table, hdr->rs, (int)ARR_NUMS(hdr->rs));
-    if (code != 0) {
-        return code;
-    }
-
-    return 0;
-}
-
-static int _api_pool_add(struct root *root, void *pool_table[], void *rs_table[], struct api_pool_hdr *hdr)
-{
-    int code = 0;
-    struct dataplane *dp = NULL;
-    int cpu_count = root->hw_info.cpu_count;
-    struct pool **pp_pool[CPU_MAX] = {NULL};
-    struct rserver **pp_rs[CPU_MAX] = {NULL};
-
-    for (int i = 0; i < cpu_count; i++) {
-        dp = root->dpdk_thread[i];
-        code = _api_pool_add_prepare(dp, hdr);
-        if (code != 0) {
-            goto _quit;
-        }
-
-        pp_pool[i] = api_malloc(hdr->count * sizeof(*pp_pool[i]));
-        if (pp_pool[i] == NULL) {
-            code = ERRCODE_OOM;
-            goto _quit;
-        }
-
-        pp_rs[i] = api_malloc(hdr->rs_hdr.count * sizeof(*pp_rs[i]));
-        if (pp_rs[i] == NULL) {
-            code = ERRCODE_OOM;
-            goto _quit;
-        }
-
-        code = _api_pool_rs_table_make(dp, &rs_table[i], pp_rs[i], hdr);
-        if (code != 0) {
-            goto _quit;
-        }
-
-        code = _api_pool_add_table_make(dp, &pool_table[i], pp_pool[i], hdr);
-        if (code != 0) {
-            goto _quit;
-        }
-    }
-
-    _api_pool_rs_array_free(pp_rs, cpu_count);
-    _api_pool_array_free(pp_pool, cpu_count);
-
-    return 0;
-
-_quit:
-    _api_pool_rs_table_batch_free(rs_table, cpu_count);
-    _api_pool_table_batch_free(pool_table, cpu_count);
-    _api_pool_rs_multi_batch_free(pp_rs, cpu_count, hdr->rs_hdr.count);
-    _api_pool_multi_batch_free(pp_pool, cpu_count, hdr->count);
-    return code;
-}
-
-static int _api_pool_delete(struct root *root, void *pool_table[], void *rs_table[], struct api_pool_hdr *hdr)
-{
-    int code = 0;
-    struct dataplane *dp = NULL;
-    int cpu_count = root->hw_info.cpu_count;
-    struct pool **pp_pool[CPU_MAX] = {NULL};
-    struct rserver **pp_rs[CPU_MAX] = {NULL};
-    struct api_pool_rs_hdr *rs_hdr = &hdr->rs_hdr;
-
-    for (int i = 0; i < cpu_count; i++) {
-        dp = root->dpdk_thread[i];
-        code = _api_pool_delete_prepare(dp, hdr);
-        if (code != 0) {
-            goto _quit;
-        }
-
-        pp_pool[i] = api_malloc(hdr->count * sizeof(*pp_pool[i]));
-        if (pp_pool[i] == NULL) {
-            code = ERRCODE_OOM;
-            goto _quit;
-        }
-
-        pp_rs[i] = api_malloc(rs_hdr->count * sizeof(*pp_rs[i]));
-        if (pp_rs[i] == NULL) {
-            code = ERRCODE_OOM;
-            goto _quit;
-        }
-
-        code = _api_pool_rs_table_make(dp, rs_table, pp_rs[i], hdr);
-        if (code != 0) {
-            goto _quit;
-        }
-
-        code = _api_pool_del_table_make(dp, pool_table, pp_pool[i], hdr);
-        if (code != 0) {
-            goto _quit;
-        }
-    }
-
-    _api_pool_rs_array_free(pp_rs, cpu_count);
-    // pool table and pool free
-    _api_pool_multi_batch_free(pp_pool, cpu_count, hdr->count);
-    return 0;
-
-_quit:
-    _api_pool_rs_multi_batch_free(pp_rs, cpu_count, hdr->rs_hdr.count);
-    _api_pool_rs_table_batch_free(rs_table, cpu_count);
-    _api_pool_array_free(pp_pool, cpu_count);
-    _api_pool_table_batch_free(pool_table, cpu_count);
-    return code;
-}
-
-static int _api_pool_query(void *array, const struct api_pool_query_hdr *hdr)
+static int _api_pool_rs_to_json(void *array, struct dataplane *dp, struct rserver_rr *rr)
 {
     int code = 0;
     void *obj = NULL;
-    void *subarr = NULL;
-    void *subobj = NULL;
-    char ip_str[CACHE_LINE] = "";
-    const struct pool *pool = NULL;
-    const struct rserver *rs = NULL;
-    const struct rserver_rr *rr = NULL;
-    const struct rserver_v4 *v4 = NULL;
-    const struct rserver_v6 *v6 = NULL;
-    const struct rserver_base *base = NULL;
+    uint32_t rs_id = 0;
+    char str[CACHE_LINE] = "";
+    struct rserver *rs = NULL;
+    struct rserver_v4 *v4 = NULL;
+    struct rserver_v6 *v6 = NULL;
 
-    for (int i = 0; i < hdr->count; i++) {
-        pool = hdr->pools[i];
+    if (rr != NULL || rr->rs_count == 0) {
+        return 0;
+    }
+
+    for (int i = 0; i < rr->rs_count; i++) {
+        rs_id = rr->ids[i];
+        code = rs_conf_get_by_id(&rs, dp->tc->rs_table, rs_id);
+        if (code != 0) {
+            return code;
+        }
+
         code = api_json_object(&obj);
         if (code != 0) {
-            goto _quit;
+            return code;
         }
 
-        code = api_json_add_string(obj, "name", pool->name);
-        if (code != 0) {
-            goto _quit;
-        }
+        if (rs->af == AF_INET) {
+            v4 = (struct rserver_v4 *) rs;
+            inet_ntop(AF_INET, &v4->addr, str, sizeof(str));
 
-        code = api_json_add_string(obj, "algo", s_pool_rs_select_algo[pool->type]);
-        if (code != 0) {
-            goto _quit;
-        }
-
-        switch (pool->type) {
-        case RS_ALGO_RR:
-            code = api_json_array(&subarr);
+            code = api_json_add_string(obj, "addr", str);
             if (code != 0) {
-                goto _quit;
+                api_json_free(obj);
+                return code;
             }
 
-            rr = pool->rr;
-
-            for (int j = 0; j < rr->rs_count; j++) {
-                code = api_json_object(&subobj);
-                if (code != 0) {
-                    goto _quit;
-                }
-
-                rs = hdr->rs[rr->ids[j]];
-                if (rs->af == AF_INET) {
-                    v4 = (struct rserver_v4 *) rs;
-                    base = &v4->base;
-
-                    inet_ntop(AF_INET, &v4->addr, ip_str, sizeof(ip_str));
-                    code = api_json_add_string(subobj, "addr", ip_str);
-                    if (code != 0) {
-                        goto _quit;
-                    }
-                } else {
-                    v6 = (struct rserver_v6 *) rs;
-                    base = &v6->base;
-
-                    inet_ntop(AF_INET6, &v6->addr, ip_str, sizeof(ip_str));
-                    code = api_json_add_string(subobj, "addr", ip_str);
-                    if (code != 0) {
-                        goto _quit;
-                    }
-                }
-
-                code = api_json_add_long(subobj, "port", base->port);
-                if (code != 0) {
-                    goto _quit;
-                }
-
-                code = api_json_array_append(subarr, subobj);
-                if (code != 0) {
-                    goto _quit;
-                }
-
-                subobj = NULL;
+            code = api_json_add_long(obj, "port", v4->base.port);
+            if (code != 0) {
+                api_json_free(obj);
+                return code;
             }
-            break;
-        default:
-            LOG_ERROR("Pool select real server not support.");
-            goto _quit;
-        }
+        } else {
+            v6 = (struct rserver_v6 *) rs;
+            inet_ntop(AF_INET6, &v6->addr, str, sizeof(str));
 
-        code = api_json_add_object(obj, "rserver", subarr);
-        if (code != 0) {
-            goto _quit;
-        }
+            code = api_json_add_string(obj, "addr", str);
+            if (code != 0) {
+                api_json_free(obj);
+                return code;
+            }
 
-        subarr = NULL;
+            code = api_json_add_long(obj, "port", v6->base.port);
+            if (code != 0) {
+                api_json_free(obj);
+                return code;
+            }
+        }
 
         code = api_json_array_append(array, obj);
         if (code != 0) {
-            goto _quit;
+            api_json_free(obj);
+            return code;
         }
     }
 
     return 0;
+}
+
+static int _api_pool_to_json(void *obj, struct dataplane *dp, const struct pool *pool)
+{
+    int code = 0;
+    void *array = NULL;
+
+    code = api_json_add_string(obj, "name", pool->name);
+    if (code != 0) {
+        return code;
+    }
+
+    code = api_json_add_string(obj, "algo", s_rs_select_algo[pool->type]);
+    if (code != 0) {
+        return code;
+    }
+
+    code = api_json_array(&array);
+    if (code != 0) {
+        return code;
+    }
+
+    code = _api_pool_rs_to_json(array, dp, pool->rr);
+    if (code != 0) {
+        api_json_free(array);
+        return code;
+    }
+
+    code = api_json_add_object(obj, "rserver", array);
+    if (code != 0) {
+        api_json_free(array);
+        return code;
+    }
+
+    return 0;
+}
+
+static int _api_pool_get(void *array, struct root *root, const struct pool *pp_pool[], int count)
+{
+    int code = 0;
+    void *obj = NULL;
+    struct dataplane *dp = root->dpdk_thread[0];
+
+    for (int i = 0; i < count; i++) {
+        code = api_json_object(&obj);
+        if (code != 0) {
+            return code;
+        }
+
+        code = _api_pool_to_json(obj, dp, pp_pool[i]);
+        if (code != 0) {
+            api_json_free(obj);
+            return code;
+        }
+
+        code = api_json_array_append(array, obj);
+        if (code != 0) {
+            api_json_free(obj);
+            return code;
+        }
+    }
+
+    return 0;
+}
+
+static int _api_pool_del(struct api_pool_hdr **pp_pool_hdr, struct root *root, const struct api_param_hdr *param_hdr)
+{
+    int code = 0;
+    struct api_pool_hdr *pool_hdr = NULL;
+    int cpu_count = root->hw_info.cpu_count;
+
+    pool_hdr = _api_pool_hdr_alloc(cpu_count, param_hdr->count, 0, false);
+    if (pool_hdr == NULL) {
+        code = ERRCODE_OOM;
+        goto _quit;
+    }
+
+    code = _api_pool_del_get(pool_hdr, root, param_hdr);
+    if (code != 0) {
+        goto _quit;
+    }
+
+    code = _api_pool_del_rs_get(pool_hdr, root, param_hdr);
+    if (code != 0) {
+        goto _quit;
+    }
+
+    pool_hdr->need_delete = true; // to delete
+    *pp_pool_hdr = pool_hdr;
+    return 0;
 
 _quit:
-    api_json_free(subobj);
-    api_json_free(subarr);
-    api_json_free(obj);
+    _api_pool_hdr_free(pool_hdr);
     return code;
 }
 
-static void _api_pool_replace(struct root *root, void **position[], void *rs_table[], void *pool_table)
+static int _api_pool_add(struct api_pool_hdr **pp_pool_hdr, struct root *root, const struct api_param_hdr *param_hdr)
 {
+    int code = 0;
+    int rs_count = 0;
+    void *table = NULL;
+    void *pool_table = NULL;
+    struct pool *pool = NULL;
     struct dataplane *dp = NULL;
+    int count = param_hdr->count;
+    const struct api_param *param = NULL;
+    struct api_pool_hdr *pool_hdr = NULL;
     int cpu_count = root->hw_info.cpu_count;
+
+    for (int i = 0; i < count; i++) {
+        rs_count += param_hdr->param[i].rs_count;
+    }
+
+    pool_hdr = _api_pool_hdr_alloc(cpu_count, count, rs_count, true);
+    if (pool_hdr == NULL) {
+        code = ERRCODE_OOM;
+        goto _quit;
+    }
 
     for (int i = 0; i < cpu_count; i++) {
         dp = root->dpdk_thread[i];
-        position[i] = &dp->tc->rs_table;
+
+        for (int j = 0; j < count; j++) {
+            param = &param_hdr->param[j];
+
+            pool = pool_conf_create(param->name, param->algo, param->rs_count, dp->hw_numa_id);
+            if (pool == NULL) {
+                code = ERRCODE_OOM;
+                goto _quit;
+            }
+
+            pool_hdr->array[i][j] = pool;
+
+            code = _api_pool_rs_process(pool, dp, pool_hdr, param);
+            if (code != 0) {
+                goto _quit;
+            }
+        }
+
+        pool_table = dp->tc->pool_table;
+        code = pool_conf_table_add(&table, pool_table, pool_hdr->array[i], pool_hdr->ele_count, dp->hw_numa_id);
+        if (code != 0) {
+            goto _quit;
+        }
+
+        pool_hdr->pool_table[i] = table;
     }
 
-    api_thread_config_update(root, position, rs_table, rs_conf_table_destroy);
+    *pp_pool_hdr = pool_hdr;
+    return 0;
+
+_quit:
+    _api_pool_hdr_free(pool_hdr);
+    return code;
+}
+
+static void _api_pool_update(struct api_pool_hdr *pool_hdr, struct root *root)
+{
+    struct dataplane *dp = NULL;
+    void **position[CPU_MAX] = {NULL};
+    int cpu_count = root->hw_info.cpu_count;
 
     for (int i = 0; i < cpu_count; i++) {
         dp = root->dpdk_thread[i];
         position[i] = &dp->tc->pool_table;
     }
 
-    api_thread_config_update(root, position, pool_table, pool_conf_table_destroy);
+    api_thread_config_update(root, position, pool_hdr->pool_table, pool_conf_table_destroy);
+
+    for (int i = 0; i < cpu_count; i++) {
+        struct rserver_v4 *v4 = NULL;
+        struct rserver_v4 *v6 = NULL;
+        struct rserver_info *one = NULL;
+
+        one = pool_hdr->rs_info[i];
+        if (one != NULL) {
+            for (int j = 0; j < pool_hdr->rs_count; j++) {
+                if (one[j].rs == NULL) {
+                    break;
+                }
+
+                if (one[j].rs->af == AF_INET) {
+                    v4 = (struct rserver_v4 *)one[j].rs;
+                    v4->base.mtb->pool_refcnt += one->refcnt;
+                } else {
+                    v6 = (struct rserver_v4 *)one[j].rs;
+                    v6->base.mtb->pool_refcnt += one->refcnt;
+                }
+            }
+        }
+    }
 }
 
 API_POST(/v1/app/pool, pool)
 {
     int code = 0;
     struct root *root = cfg;
-    struct api_pool_hdr *hdr = NULL;
-    void *rs_table[CPU_MAX] = {NULL};
-    void **position[CPU_MAX] = {NULL};
-    void *pool_table[CPU_MAX] = {NULL};
+    struct api_pool_hdr *pool_hdr = NULL;
+    struct api_param_hdr *param_hdr = NULL;
 
-    code = _api_pool_post_parse(root, &hdr, json);
+    code = _api_pool_post_parse(&param_hdr, root, json);
     if (code != 0) {
         goto _quit;
     }
 
-    code = _api_pool_add(root, pool_table, rs_table, hdr);
+    code = _api_pool_add(&pool_hdr, root, param_hdr);
     if (code != 0) {
         goto _quit;
     }
 
-    _api_pool_replace(root, position, rs_table, pool_table);
+    _api_pool_update(pool_hdr, root);
 
 _quit:
-    _api_pool_hdr_free(hdr);
-    if (code == 0) {
-        return api_succ(NULL);
-    } else {
+    _api_pool_hdr_free(pool_hdr);
+    _api_pool_param_hdr_free(param_hdr);
+
+    if (code != 0) {
         return api_fail(code);
     }
+    return api_succ(NULL);
 }
 
 API_PUT(/v1/app/pool, pool)
@@ -847,29 +884,28 @@ API_DEL(/v1/app/pool, pool)
 {
     int code = 0;
     struct root *root = cfg;
-    struct api_pool_hdr *hdr = NULL;
-    void *rs_table[CPU_MAX] = {NULL};
-    void **position[CPU_MAX] = {NULL};
-    void *pool_table[CPU_MAX] = {NULL};
+    struct api_pool_hdr *pool_hdr = NULL;
+    struct api_param_hdr *param_hdr = NULL;
 
-    code = _api_pool_delete_parse(root, &hdr, json);
+    code = _api_pool_del_parse(&param_hdr, root, json);
     if (code != 0) {
         goto _quit;
     }
 
-    code = _api_pool_delete(root, pool_table, rs_table, hdr);
+    code = _api_pool_del(&pool_hdr, root, param_hdr);
     if (code != 0) {
         goto _quit;
     }
 
-    _api_pool_replace(root, position, rs_table, pool_table);
+    _api_pool_update(pool_hdr, root);
 
 _quit:
-    _api_pool_hdr_free(hdr);
+    _api_pool_hdr_free(pool_hdr);
+    _api_pool_param_hdr_free(param_hdr);
+
     if (code != 0) {
         return api_fail(code);
     }
-
     return api_succ(NULL);
 }
 
@@ -879,7 +915,7 @@ API_GET(/v1/app/pool, pool)
     int count = 0;
     void *array = NULL;
     struct root *root = cfg;
-    struct api_pool_query_hdr *hdr = NULL;
+    struct pool **pp_pool = NULL;
     struct dataplane *dp = root->dpdk_thread[0];
 
     code = api_json_array(&array);
@@ -887,33 +923,32 @@ API_GET(/v1/app/pool, pool)
         goto _quit;
     }
 
-    code = pool_conf_get_count(dp->tc->pool_table, &count);
+    code = pool_conf_table_get_count(dp->tc->pool_table, &count);
     if (code != 0) {
         goto _quit;
     }
 
-    hdr = api_malloc(sizeof(*hdr) + count * sizeof(hdr->pools[0]));
-    if (hdr == NULL) {
+    pp_pool = api_malloc(count * sizeof(*pp_pool));
+    if (pp_pool == NULL) {
         goto _quit;
     }
 
-    hdr->count = count;
-
-    code = _api_pool_fill_query_hdr(dp, hdr);
+    code = pool_conf_table_get_element((const struct pool **)pp_pool, dp->tc->pool_table, count);
     if (code != 0) {
         goto _quit;
     }
 
-    code = _api_pool_query(array, hdr);
+    code = _api_pool_get(array, root, (const struct pool **)pp_pool, count);
     if (code != 0) {
         goto _quit;
     }
-
-    api_free(hdr);
-    return api_succ(array);
 
 _quit:
-    api_free(hdr);
-    api_json_free(array);
-    return api_fail(code);
+    api_free(pp_pool);
+
+    if (code != 0) {
+        api_json_free(array);
+        return api_fail(code);
+    }
+    return api_succ(array);
 }
