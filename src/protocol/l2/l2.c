@@ -485,7 +485,7 @@ void l2_arp_update_or_create(void *arg)
     _arp_update_or_create(at, mbuf->port, arp_data->arp_sip, &arp_data->arp_sha, tlv_dp->off_time);
 }
 
-void *l2_thread_arp_table_create(int nic_count, int cpu_id, int numa_id)
+void *l2_thread_arp_table_create(void ***pp_arp_table, int nic_count, int cpu_id, int numa_id)
 {
     size_t len = 0;
     struct arp_table *table = NULL;
@@ -523,6 +523,8 @@ void *l2_thread_arp_table_create(int nic_count, int cpu_id, int numa_id)
     }
 
     s_arp_table = table;
+    *pp_arp_table = (void **)&s_arp_table;
+
     return table;
 
 _quit:

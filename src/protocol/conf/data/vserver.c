@@ -404,16 +404,19 @@ _quit:
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
 // Data plane interface
 
-int vserver_thread_create(int hw_numa_id)
+void *vserver_thread_create(void ***pp_vs_table, int hw_numa_id)
 {
     struct vserver_table *table = NULL;
 
     table = _vs_conf_table_create(0, hw_numa_id);
     if (UNLIKELY(table == NULL)) {
-        return ERRCODE_OOM;
+        return NULL;
     }
 
-    return 0;
+    s_vs_table = table;
+    *pp_vs_table = (void **)&s_vs_table;
+
+    return table;
 }
 
 void vserver_thread_destroy(void *ptr)

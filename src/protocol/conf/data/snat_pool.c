@@ -201,14 +201,16 @@ _quit:
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
 // Data plane interface
 
-int snat_thread_create(int hw_numa_id)
+void *snat_thread_create(void ***pp_snat_table, int hw_numa_id)
 {
     s_snat_table = _snat_conf_table_create(0, hw_numa_id);
     if (UNLIKELY(s_snat_table == NULL)) {
-        return ERRCODE_OOM;
+        return NULL;
     }
 
-    return 0;
+    *pp_snat_table = (void **)&s_snat_table;
+
+    return s_snat_table;
 }
 
 void snat_thread_destroy(void *ptr)

@@ -12,7 +12,7 @@
 
 extern void ip4_process(void *[], int);
 extern void ip4_table_destroy(void *);
-extern void *ip4_table_startup(int, int);
+extern void *ip4_table_startup(void ***, int, int);
 
 extern void ip4_arp_refresh(void);
 

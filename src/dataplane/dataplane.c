@@ -8,12 +8,12 @@
 #include <stdlib.h>
 #include <unistd.h>
 
+#include "l2.h"
 #include "log.h"
 #include "timer.h"
 #include "notify.h"
 #include "dpdk_ip4.h"
 #include "dpdk_ip6.h"
-#include "protocol.h"
 #include "dpdk_rcu.h"
 #include "dpdk_port.h"
 #include "dpdk_core.h"
@@ -73,12 +73,18 @@ __thread struct thread_config *tlv_th_cfg;
 __thread uint64_t tlv_rx_offload[DPDK_ETHPORT_MAX];
 __thread uint64_t tlv_tx_offload[DPDK_ETHPORT_MAX];
 
-static void _dp_tc_destroy(struct thread_config *nc)
+static void *_dp_ctx_init(int hw_numa_id)
 {
-    if (nc != NULL) {
-        dpdk_free(nc->iface);
-        dpdk_free(nc);
+    struct thread_ctx *ctx = NULL;
+
+    ctx = dpdk_malloc_numa(sizeof(*ctx), hw_numa_id);
+    if (UNLIKELY(ctx == NULL)) {
+        LOG_ERROR("OOM.");
+        return NULL;
     }
+
+    memset(ctx, 0, sizeof(*ctx));
+    return ctx;
 }
 
 static void _dp_pkt_classifier_destroy(void *ptr)
@@ -173,7 +179,12 @@ static INLINE void _dp_init(void *arg)
         goto _quit;
     }
 
-    tlv_dp->tc = tc_init(root->hw_info.nic_count, tlv_dp->hw_numa_id);
+    tlv_dp->ctx = _dp_ctx_init(tlv_dp->hw_numa_id);
+    if (tlv_dp->ctx == NULL) {
+        goto _quit;
+    }
+
+    tlv_dp->tc = tc_init(tlv_dp->ctx, root->hw_info.nic_count, tlv_dp->hw_numa_id, tlv_dp->cpu_id);
     if (tlv_dp->tc == NULL) {
         goto _quit;
     }
@@ -198,11 +209,6 @@ static INLINE void _dp_init(void *arg)
 
     tlv_dp->pc = _dp_pkt_classifier_create(root->hw_info.nic_count);
     if (tlv_dp->pc == NULL) {
-        goto _quit;
-    }
-
-    tlv_dp->protocol = protocol_create(root->hw_info.nic_count, tlv_dp);
-    if (tlv_dp->protocol == NULL) {
         goto _quit;
     }
 
@@ -251,13 +257,14 @@ static INLINE void _dp_init(void *arg)
 _quit:
     // TODO 2025-07-14
     if (tlv_dp != NULL) {
+        tc_fini(tlv_dp->tc);
         dpdk_free(tlv_dp->stats);
         dpdk_ring_destroy(tlv_dp->notice_ring);
         dpdk_ip_frag_table_destroy(tlv_dp->frag_handle);
-        protocol_destroy(tlv_dp->protocol);
         _dp_pkt_classifier_destroy(tlv_dp->pc);
-        _dp_tc_destroy(tlv_dp->tc);
+        dpdk_free(tlv_dp->ctx);
         dpdk_free(tlv_dp);
+        tlv_dp = NULL;
     }
 
     exit(EXIT_FAILURE);
@@ -304,14 +311,22 @@ static INLINE void _dp_mbuf_drop(void)
 // Dispatch new configuration before the data plane runs again.
 static INLINE void _dp_thread_config_refresh(void)
 {
-    struct thread_config *tc = tlv_dp->tc;
-    struct proto_header *protocol = tlv_dp->protocol;
+    struct thread_ctx *ctx = tlv_dp->ctx;
+    if (ctx->version != tlv_th_cfg->version) {
 
-    l2_thread_config_refresh(protocol->at);
-    ip4_thread_config_refresh(tc->ip4_table);
-    route4_thread_config_refresh(protocol->route4);
-    ip6_thread_config_refresh(tc->ip6_table, protocol->nt);
-    route6_thread_config_refresh(protocol->route6);
+        *ctx->pp_ip4_table = tlv_th_cfg->ip4_table;
+        *ctx->pp_ip6_table = tlv_th_cfg->ip6_table;
+        *ctx->pp_rs_table = tlv_th_cfg->rs_table;
+        *ctx->pp_pool_table = tlv_th_cfg->pool_table;
+        *ctx->pp_snat_pool = tlv_th_cfg->snat_table;
+        *ctx->pp_vs_table = tlv_th_cfg->vs_table;
+        *ctx->pp_arp_table = tlv_th_cfg->arp_table;
+        *ctx->pp_route4_table = tlv_th_cfg->route4_table;
+        *ctx->pp_ndp_table = tlv_th_cfg->ndp_table;
+        *ctx->pp_route6_table = tlv_th_cfg->route6_table;
+
+        ctx->version = tlv_th_cfg->version;
+    }
 }
 
 int dp_startup(void *arg)
@@ -360,7 +375,7 @@ int dp_startup(void *arg)
                     l2_process(data, count);
                     l3_process(data, count);
 
-                    // l4_process();
+                    l4_process();
 
                     total += count;
                     if (total >= DP_FLUSH_EVERY) {

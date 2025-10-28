@@ -14,7 +14,6 @@
 #include "log.h"
 #include "type.h"
 #include "errcode.h"
-#include "protocol.h"
 #include "ip6_conf.h"
 #include "dpdk_ip6.h"
 #include "api_inner.h"
@@ -308,9 +307,9 @@ static int _api_ip6_route_table_del_create(struct api_ip6_hdr *ip6_hdr, struct r
     int code = 0;
     int count = 0;
     int hw_numa_id = 0;
+    void *route6_table = NULL;
     struct dataplane *dp = NULL;
     int cpu_count = ip6_hdr->cpu_count;
-    struct proto_header *protocol = NULL;
 
     count = param_hdr->count;
     for (int i = 0; i < cpu_count; i++) {
@@ -320,10 +319,10 @@ static int _api_ip6_route_table_del_create(struct api_ip6_hdr *ip6_hdr, struct r
         }
 
         dp = root->dpdk_thread[i];
-        protocol = dp->protocol;
         hw_numa_id = dp->hw_numa_id;
+        route6_table = dp->tc->route6_table;
 
-        code = route6_conf_create_and_delete(&ip6_hdr->route6_table[i], protocol->route6, ip6_hdr->item[i], count, hw_numa_id, false);
+        code = route6_conf_create_and_delete(&ip6_hdr->route6_table[i], route6_table, ip6_hdr->item[i], count, hw_numa_id, false);
         if (code != 0) {
             return code;
         }
@@ -338,8 +337,8 @@ static int _api_ip6_route_table_create(struct api_ip6_hdr *ip6_hdr, struct root 
     int count = 0;
     int hw_numa_id = 0;
     void *ip6_table = NULL;
+    void *route6_table = NULL;
     struct dataplane *dp = NULL;
-    struct proto_header *protocol = NULL;
     int cpu_count = ip6_hdr->cpu_count;
 
     count = param_hdr->count;
@@ -350,11 +349,11 @@ static int _api_ip6_route_table_create(struct api_ip6_hdr *ip6_hdr, struct root 
         }
 
         dp = root->dpdk_thread[i];
-        protocol = dp->protocol;
         hw_numa_id = dp->hw_numa_id;
         ip6_table = ip6_hdr->ip6_table[i];
+        route6_table = dp->tc->route6_table;
 
-        code = route6_conf_create_and_append(&ip6_hdr->route6_table[i], protocol->route6, ip6_hdr->item[i], count, hw_numa_id, ip6_table);
+        code = route6_conf_create_and_append(&ip6_hdr->route6_table[i], route6_table, ip6_hdr->item[i], count, hw_numa_id, ip6_table);
         if (code != 0) {
             return code;
         }
@@ -622,7 +621,6 @@ _quit:
 static void _api_ip6_update(struct api_ip6_hdr *ip6_hdr, struct root *root)
 {
     struct dataplane *dp = NULL;
-    struct proto_header *protocol = NULL;
     void **position[CPU_MAX] = {NULL};
     int cpu_count = root->hw_info.cpu_count;
 
@@ -635,8 +633,7 @@ static void _api_ip6_update(struct api_ip6_hdr *ip6_hdr, struct root *root)
 
     for (int i = 0; i < cpu_count; i++) {
         dp = root->dpdk_thread[i];
-        protocol = dp->protocol;
-        position[i] = (void **)&protocol->route6;
+        position[i] = (void **)&dp->tc->route6_table;
     }
 
     api_thread_config_update(root, position, (void **)ip6_hdr->route6_table, route6_conf_destroy);

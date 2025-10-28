@@ -14,7 +14,6 @@
 #include "type.h"
 #include "macro.h"
 #include "errcode.h"
-#include "protocol.h"
 #include "dpdk_rcu.h"
 #include "dpdk_hash.h"
 #include "dpdk_core.h"
@@ -1081,7 +1080,7 @@ void ip6_thread_ndp_table_destroy(void *nt)
     dpdk_free(nt);
 }
 
-void *ip6_thread_ndp_table_create(int nic_count, int cpu_id, int hw_numa_id)
+void *ip6_thread_ndp_table_create(void ***pp_ndp_table, int nic_count, int cpu_id, int hw_numa_id)
 {
     char name[CACHE_LINE] = "";
     struct ndp_table *nt = NULL;
@@ -1113,6 +1112,9 @@ void *ip6_thread_ndp_table_create(int nic_count, int cpu_id, int hw_numa_id)
         }
     }
 
+    s_ndp_table = nt;
+    *pp_ndp_table = (void **)&s_ndp_table;
+
     return nt;
 
 _quit:
@@ -1120,7 +1122,7 @@ _quit:
     return NULL;
 }
 
-void *ip6_table_startup(int nic_count, int hw_numa_id)
+void *ip6_table_startup(void ***pp_ip6_table, int nic_count, int hw_numa_id)
 {
     int ret = 0;
     void *dst = NULL;
@@ -1129,6 +1131,9 @@ void *ip6_table_startup(int nic_count, int hw_numa_id)
     if (UNLIKELY(ret != 0)) {
         return NULL;
     }
+
+    s_ip6_table = dst;
+    *pp_ip6_table = (void **)&s_ip6_table;
 
     return dst;
 }

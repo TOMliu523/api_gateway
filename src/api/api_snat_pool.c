@@ -11,7 +11,6 @@
 #include "snat_pool.h"
 #include "ip4_conf.h"
 #include "ip6_conf.h"
-#include "protocol.h"
 #include "api_inner.h"
 #include "dpdk_port.h"
 #include "dpdk_core.h"
@@ -888,9 +887,9 @@ static int _api_snat_to_ip4_table(struct api_snat_hdr *snat_hdr, const struct ro
     uint8_t mask = 0;
     int ip4_count = 0;
     void *ip4_table = NULL;
+    void *route4_table = NULL;
     struct ip4_info *ip4_info = NULL;
     const struct dataplane *dp = NULL;
-    struct proto_header *protocol = NULL;
     const struct addr_info *addr_info = NULL;
     int cpu_count = root->hw_info.cpu_count;
 
@@ -909,7 +908,7 @@ static int _api_snat_to_ip4_table(struct api_snat_hdr *snat_hdr, const struct ro
             goto _quit;
         }
 
-        protocol = dp->protocol;
+        route4_table = dp->tc->route4_table;
         for (int j = 0; j < param_hdr->entry.count; j++) {
             addr_info = &param_hdr->entry.info[j];
             if (addr_info->af != AF_INET) {
@@ -917,7 +916,7 @@ static int _api_snat_to_ip4_table(struct api_snat_hdr *snat_hdr, const struct ro
             }
 
             if (j == 0) {
-                code = route4_conf_mask_find(&mask, protocol->route4, addr_info->addr.ip, addr_info->port);
+                code = route4_conf_mask_find(&mask, route4_table, addr_info->addr.ip, addr_info->port);
                 if (code != 0) {
                     goto _quit;
                 }
@@ -951,9 +950,9 @@ static int _api_snat_to_ip6_table(struct api_snat_hdr *snat_hdr, const struct ro
     uint8_t mask = 0;
     int ip6_count = 0;
     void *ip6_table = NULL;
+    void *route6_table = NULL;
     struct ip6_info *ip6_info = NULL;
     const struct dataplane *dp = NULL;
-    struct proto_header *protocol = NULL;
     const struct addr_info *addr_info = NULL;
     int cpu_count = root->hw_info.cpu_count;
 
@@ -972,7 +971,7 @@ static int _api_snat_to_ip6_table(struct api_snat_hdr *snat_hdr, const struct ro
             goto _quit;
         }
 
-        protocol = dp->protocol;
+        route6_table = dp->tc->route6_table;
         for (int j = 0; j < param_hdr->entry.count; j++) {
             addr_info = &param_hdr->entry.info[j];
             if (addr_info->af != AF_INET6) {
@@ -980,7 +979,7 @@ static int _api_snat_to_ip6_table(struct api_snat_hdr *snat_hdr, const struct ro
             }
 
             if (j == 0) {
-                code = route6_conf_mask_find(&mask, protocol->route6, &addr_info->addr.addr, addr_info->port);
+                code = route6_conf_mask_find(&mask, route6_table, &addr_info->addr.addr, addr_info->port);
                 if (code != 0) {
                     goto _quit;
                 }

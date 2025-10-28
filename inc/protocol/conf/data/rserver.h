@@ -57,7 +57,7 @@ struct rserver_v6 {
     struct rserver_base base;
 };
 
-extern void *rserver_thread_create(int);
+extern void *rserver_thread_create(void ***, int);
 extern void rserver_thread_destroy(void *);
 
 static INLINE void rserver_v4_refcnt_inc(struct rserver_v4 *v4)

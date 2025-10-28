@@ -480,7 +480,7 @@ void route4_conf_table_get(void *src, struct route4_item **item, int *count)
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
 // Data plane interface
 
-void *route4_thread_create(int hw_numa_id)
+void *route4_thread_create(void ***pp_route4_table, int hw_numa_id)
 {
     struct route4_table *table = NULL;
 
@@ -493,6 +493,9 @@ void *route4_thread_create(int hw_numa_id)
     table->fib = NULL;
     table->default_id = DPDK_FIB_DEFAULT;
     table->store_count = 0;
+
+    s_route4_table = table;
+    *pp_route4_table = (void **)&s_route4_table;
 
     return table;
 }
@@ -507,6 +510,10 @@ void route4_thread_destroy(void *ptr)
 
     dpdk_fib_destroy(table->fib);
     dpdk_free(table);
+
+    if (table == s_route4_table) {
+        s_route4_table = NULL;
+    }
 }
 
 void route4_thread_config_refresh(void *arg)

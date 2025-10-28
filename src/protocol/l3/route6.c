@@ -408,7 +408,7 @@ void route6_conf_destroy(void *ptr)
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
 // Data plane interface
 
-void *route6_thread_create(int hw_numa_id)
+void *route6_thread_create(void ***pp_route6_table, int hw_numa_id)
 {
     struct route6_table *table = NULL;
 
@@ -421,6 +421,9 @@ void *route6_thread_create(int hw_numa_id)
     table->fib = NULL;
     table->default_id = DPDK_FIB6_DEFAULT;
     table->store_count = 0;
+
+    s_route6_table = table;
+    *pp_route6_table = (void **)&s_route6_table;
 
     return table;
 }

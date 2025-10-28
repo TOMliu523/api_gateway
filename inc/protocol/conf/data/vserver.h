@@ -63,7 +63,7 @@ struct vserver_v6 {
     char name[CONF_NAME_LEN_MAX];
 };
 
-extern int vserver_thread_create(int);
+extern void *vserver_thread_create(void ***, int);
 extern void vserver_thread_destroy(void *);
 extern void vserver_thread_config_refresh(void *);
 

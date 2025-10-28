@@ -10,7 +10,6 @@
 #include "list.h"
 #include "type.h"
 #include "errcode.h"
-#include "protocol.h"
 #include "ip6_conf.h"
 #include "ip4_conf.h"
 #include "dpdk_port.h"
@@ -426,11 +425,13 @@ static int _api_vs_ip4_table_create(struct api_ip4 *ip4, struct root *root, cons
 {
     int code = 0;
     void *ip4_table = NULL;
+    void *route4_table = NULL;
     struct ip4_info *info = NULL;
     int cpu_count = root->hw_info.cpu_count;
     const struct addr_v4_info *v4_info = NULL;
     struct dataplane *dp = root->dpdk_thread[0];
-    struct proto_header *proto = dp->protocol;
+
+    route4_table = dp->tc->route4_table;
 
     // to struct ip4_info
     for (int i = 0; i < param_info->ip4_count; i++) {
@@ -443,7 +444,7 @@ static int _api_vs_ip4_table_create(struct api_ip4 *ip4, struct root *root, cons
         info->port = v4_info->port;
         info->type = 0;
 
-        code = route4_conf_mask_find(&info->mask, proto->route4, v4_info->addr, v4_info->port);
+        code = route4_conf_mask_find(&info->mask, route4_table, v4_info->addr, v4_info->port);
         if (code != 0) {
             return code;
         }
@@ -474,12 +475,13 @@ static int _api_vs_ip6_table_create(struct api_ip6 *ip6, struct root *root, cons
 {
     int code = 0;
     void *ip6_table = NULL;
+    void *route6_table = NULL;
     struct ip6_info *info = NULL;
     int cpu_count = root->hw_info.cpu_count;
     const struct addr_v6_info *v6_info = NULL;
     struct dataplane *dp = root->dpdk_thread[0];
-    struct proto_header *proto = dp->protocol;
 
+    route6_table = dp->tc->route6_table;
     // to struct ip6_info
     for (int i = 0; i < param_info->ip6_count; i++) {
         info = &ip6->array[i];
@@ -490,7 +492,7 @@ static int _api_vs_ip6_table_create(struct api_ip6 *ip6, struct root *root, cons
         info->refcnt = v6_info->refcnt;
         info->type = IP_MASTER;
 
-        code = route6_conf_mask_find(&info->mask, proto->route6, &info->addr, info->port);
+        code = route6_conf_mask_find(&info->mask, route6_table, &info->addr, info->port);
         if (code != 0) {
             return code;
         }

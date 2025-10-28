@@ -28,6 +28,8 @@
  * it should make it easy for the data plane to quickly attach or apply the data.
  */
 struct thread_config {
+    uint64_t version;
+
     void *iface;
     void *ip4_table;
     void *ip6_table;
@@ -35,7 +37,31 @@ struct thread_config {
     void *pool_table;
     void *snat_table;
     void *vs_table;
-    // ... other per-NUMA modules
+
+    struct dpdk_mac *mac;
+
+    void *arp_table;
+    void *route4_table;
+    void *ndp_table;
+    void *route6_table;
+    // ... other per-CPU modules
+} ALIGNED(CACHE_LINE);
+
+struct thread_ctx {
+    uint64_t version;
+
+    void **pp_iface;
+    void **pp_ip4_table;
+    void **pp_ip6_table;
+    void **pp_rs_table;
+    void **pp_pool_table;
+    void **pp_snat_pool;
+    void **pp_vs_table;
+
+    void **pp_arp_table;
+    void **pp_route4_table;
+    void **pp_ndp_table;
+    void **pp_route6_table;
 } ALIGNED(CACHE_LINE);
 
 struct stats {
@@ -76,25 +102,9 @@ struct pkt_classifier {
     struct pkt_tx *tx;
 };
 
-struct thread_ctx {
-    void **pp_iface;
-    void **pp_ip4_table;
-    void **pp_ip6_table;
-    void **pp_rs_table;
-    void **pp_pool_table;
-    void **pp_snat_pool;
-    void **pp_vs_table;
-
-    void **pp_arp_table;
-    void **pp_route4_table;
-    void **pp_ndp_table;
-    void **pp_route6_table;
-};
-
 struct dataplane {
     void *rcu;
     struct thread_config *tc; // Pointer to the configuration for this NUMA node
-    void *protocol;
     struct pkt_classifier *pc;
     void *pktmbuf_pool;
     struct {

@@ -10,7 +10,6 @@
 #include "log.h"
 #include "type.h"
 #include "errcode.h"
-#include "protocol.h"
 #include "ip4_conf.h"
 #include "api_inner.h"
 #include "dpdk_port.h"
@@ -176,14 +175,15 @@ static int _api_route4_table_add(struct root *root, void *route[], struct route4
     int code = 0;
     int cpu_count = 0;
     int hw_numa_id = 0;
+    void *route4_table = NULL;
     struct dataplane *dp = NULL;
-    struct proto_header *protocol = NULL;
 
     for (int i = 0; i < cpu_count; i++) {
         dp = root->dpdk_thread[i];
         hw_numa_id = dp->hw_numa_id;
-        protocol = dp->protocol;
-        code = route4_conf_create_and_append(&route[i], protocol->route4, item, count, hw_numa_id, dp->tc->iface);
+        route4_table = dp->tc->route4_table;
+
+        code = route4_conf_create_and_append(&route[i], route4_table, item, count, hw_numa_id, dp->tc->iface);
         if (code != 0) {
             goto _quit;
         }
@@ -200,16 +200,16 @@ static int _api_route4_table_del(struct root *root, void *route[], struct route4
 {
     int code = 0;
     int hw_numa_id = 0;
+    void *route4_table = NULL;
     struct dataplane *dp = NULL;
-    struct proto_header *protocol = NULL;
     int cpu_count = root->hw_info.cpu_count;
 
     for (int i = 0; i < cpu_count; i++) {
         dp = root->dpdk_thread[i];
         hw_numa_id = dp->hw_numa_id;
-        protocol = dp->protocol;
+        route4_table = dp->tc->route4_table;
 
-        code = route4_conf_create_and_delete(&route[i], protocol->route4, item, count, hw_numa_id, true);
+        code = route4_conf_create_and_delete(&route[i], route4_table, item, count, hw_numa_id, true);
         if (code != 0) {
             goto _quit;
         }
@@ -225,14 +225,12 @@ _quit:
 static void _api_route4_update(void *route[], struct root *root)
 {
     struct dataplane *dp = NULL;
-    struct proto_header *protocol = NULL;
     void **position[CPU_MAX] = {NULL};
     int cpu_count = root->hw_info.cpu_count;
 
     for (int i = 0; i < cpu_count; i++) {
         dp = root->dpdk_thread[i];
-        protocol = dp->protocol;
-        position[i] = (void **)&protocol->route4;
+        position[i] = (void **)&dp->tc->route4_table;
     }
 
     api_thread_config_update(root, position, route, route4_conf_destroy);
@@ -307,8 +305,8 @@ API_GET(/v1/network/route4, route4)
     void *route = NULL;
     void *array = NULL;
     struct root *root = cfg;
+    struct dataplane *dp = NULL;
     struct route4_item *items = NULL;
-    struct proto_header *proto = NULL;
     const char *route_type[] = {
         "DIRECT",
         "STATIC",
@@ -318,8 +316,8 @@ API_GET(/v1/network/route4, route4)
         "RIP",
     };
 
-    proto = root->dpdk_thread[0]->protocol;
-    route = proto->route4;
+    dp = root->dpdk_thread[0];
+    route = dp->tc->route4_table;
     route4_conf_table_get(route, &items, &count);
 
     array = json_array();

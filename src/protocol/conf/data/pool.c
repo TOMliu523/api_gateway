@@ -348,13 +348,15 @@ int pool_conf_table_add(void **dst, const void *arg, struct pool *pools[], int c
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
 // Data plane interface
 
-void *pool_init(int hw_numa_id)
+void *pool_thread_create(void ***pp_pool_table, int hw_numa_id)
 {
-    s_pool_table = _pool_conf_table_create(0,  hw_numa_id);
+    s_pool_table = _pool_conf_table_create(0, hw_numa_id);
+
+    *pp_pool_table = (void **)&s_pool_table;
     return s_pool_table;
 }
 
-void pool_fini(void *ptr)
+void pool_thread_destroy(void *ptr)
 {
     if (ptr != s_pool_table) {
         _pool_conf_table_destroy(ptr);

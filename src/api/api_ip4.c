@@ -10,12 +10,12 @@
 #include <jansson.h>
 #include <sysrepo.h>
 
+#include "l2.h"
 #include "log.h"
 #include "ip4.h"
 #include "type.h"
 #include "errcode.h"
 #include "dpdk_ip.h"
-#include "protocol.h"
 #include "ip4_conf.h"
 #include "api_inner.h"
 #include "dpdk_port.h"
@@ -466,8 +466,8 @@ static int _api_ip4_route_table_create(struct api_ip4_hdr *ip4_hdr, struct root 
     int count = 0;
     int hw_numa_id = 0;
     void *ip4_table = NULL;
+    void *route4_table = NULL;
     struct dataplane *dp = NULL;
-    struct proto_header *proto = NULL;
     int cpu_count = ip4_hdr->cpu_count;
 
     count = param_hdr->count;
@@ -478,11 +478,11 @@ static int _api_ip4_route_table_create(struct api_ip4_hdr *ip4_hdr, struct root 
         }
 
         dp = root->dpdk_thread[i];
-        proto = dp->protocol;
         hw_numa_id = dp->hw_numa_id;
         ip4_table = ip4_hdr->ip4_table[i];
+        route4_table = dp->tc->route4_table;
 
-        code = route4_conf_create_and_append(&ip4_hdr->route4_table[i], proto->route4, ip4_hdr->item[i], count, hw_numa_id, ip4_table);
+        code = route4_conf_create_and_append(&ip4_hdr->route4_table[i], route4_table, ip4_hdr->item[i], count, hw_numa_id, ip4_table);
         if (code != 0) {
             return code;
         }
@@ -496,8 +496,8 @@ static int _api_ip4_route_table_delete(struct api_ip4_hdr *ip4_hdr, struct root 
     int code = 0;
     int count = 0;
     int hw_numa_id = 0;
+    void *route4_table = NULL;
     struct dataplane *dp = NULL;
-    struct proto_header *proto = NULL;
     int cpu_count = ip4_hdr->cpu_count;
 
     count = param_hdr->count;
@@ -508,10 +508,10 @@ static int _api_ip4_route_table_delete(struct api_ip4_hdr *ip4_hdr, struct root 
         }
 
         dp = root->dpdk_thread[i];
-        proto = dp->protocol;
         hw_numa_id = dp->hw_numa_id;
+        route4_table = dp->tc->route4_table;
 
-        code = route4_conf_create_and_delete(&ip4_hdr->route4_table[i], proto->route4, ip4_hdr->item[i], count, hw_numa_id, false);
+        code = route4_conf_create_and_delete(&ip4_hdr->route4_table[i], route4_table, ip4_hdr->item[i], count, hw_numa_id, false);
         if (code != 0) {
             return code;
         }
@@ -629,7 +629,6 @@ static void _api_ip4_update(struct api_ip4_hdr *ip4_hdr, struct root *root)
 {
     struct dataplane *dp = NULL;
     void **position[CPU_MAX] = {NULL};
-    struct proto_header *protocol = NULL;
     int cpu_count = root->hw_info.cpu_count;
 
     for (int i = 0; i < cpu_count; i++) {
@@ -641,8 +640,7 @@ static void _api_ip4_update(struct api_ip4_hdr *ip4_hdr, struct root *root)
 
     for (int i = 0; i < cpu_count; i++) {
         dp = root->dpdk_thread[i];
-        protocol = dp->protocol;
-        position[i] = (void **)&protocol->route4;
+        position[i] = (void **)&dp->tc->route4_table;
     }
 
     api_thread_config_update(root, position, ip4_hdr->route4_table, route4_conf_destroy);

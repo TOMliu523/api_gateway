@@ -9,7 +9,6 @@
 #include "log.h"
 #include "type.h"
 #include "errcode.h"
-#include "protocol.h"
 #include "api_inner.h"
 #include "dpdk_port.h"
 #include "dpdk_common.h"
@@ -172,16 +171,16 @@ static int _api_route6_table_add(struct root *root, void *route6[], struct route
 {
     int code = 0;
     int hw_numa_id = 0;
+    void *route6_table = NULL;
     struct dataplane *dp = NULL;
-    struct proto_header *protocol = NULL;
     int cpu_count = root->hw_info.cpu_count;
 
     for (int i = 0; i < cpu_count; i++) {
         dp = root->dpdk_thread[i];
         hw_numa_id = dp->hw_numa_id;
-        protocol = dp->protocol;
+        route6_table = dp->tc->route6_table;
 
-        code = route6_conf_create_and_append(&route6[i], protocol->route6, item, count, hw_numa_id, dp->tc->ip6_table);
+        code = route6_conf_create_and_append(&route6[i], route6_table, item, count, hw_numa_id, dp->tc->ip6_table);
         if (code != 0) {
             goto _quit;
         }
@@ -198,16 +197,16 @@ static int _api_route6_table_del(struct root *root, void *route6[], struct route
 {
     int code = 0;
     int hw_numa_id = 0;
+    void *route6_table = NULL;
     struct dataplane *dp = NULL;
-    struct proto_header *protocol = NULL;
     int cpu_count = root->hw_info.cpu_count;
 
     for (int i = 0; i < cpu_count; i++) {
         dp = root->dpdk_thread[i];
         hw_numa_id = dp->hw_numa_id;
-        protocol = dp->protocol;
+        route6_table = dp->tc->route6_table;
 
-        code = route6_conf_create_and_delete(&route6[i], protocol->route6, item, count, hw_numa_id, true);
+        code = route6_conf_create_and_delete(&route6[i], route6_table, item, count, hw_numa_id, true);
         if (code != 0) {
             goto _quit;
         }
@@ -224,13 +223,11 @@ static void _api_route6_update(void *route[], struct root *root)
 {
     struct dataplane *dp = NULL;
     void **position[CPU_MAX] = {NULL};
-    struct proto_header *protocol = NULL;
     int cpu_count = root->hw_info.cpu_count;
 
     for (int i = 0; i < cpu_count; i++) {
         dp = root->dpdk_thread[i];
-        protocol = dp->protocol;
-        position[i] = (void **)&protocol->route6;
+        position[i] = (void **)&dp->tc->route6_table;
     }
 
     api_thread_config_update(root, position, route, route6_conf_destroy);
@@ -302,11 +299,11 @@ API_GET(/v1/network/route6, route6)
 {
     int code = 0;
     int count = 0;
-    void *route = NULL;
     void *array = NULL;
     struct root *root = cfg;
+    void *route_table = NULL;
+    struct dataplane *dp = NULL;
     struct route6_item *items = NULL;
-    struct proto_header *proto = NULL;
     const char *route_type[] = {
         "DIRECT",
         "STATIC",
@@ -316,9 +313,9 @@ API_GET(/v1/network/route6, route6)
         "RIP",
     };
 
-    proto = root->dpdk_thread[0]->protocol;
-    route = proto->route6;
-    route6_conf_table_get(route, &items, &count);
+    dp = root->dpdk_thread[0];
+    route_table = dp->tc->route6_table;
+    route6_conf_table_get(route_table, &items, &count);
 
     array = json_array();
     if (array == NULL) {

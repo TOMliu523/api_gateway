@@ -58,6 +58,9 @@ struct pool {
     };
 };
 
+extern void *pool_thread_create(void ***, int);
+extern void pool_thread_destroy(void *);
+
 static INLINE void pool_refcnt_inc(struct pool *pool)
 {
     pool->refcnt += 1;

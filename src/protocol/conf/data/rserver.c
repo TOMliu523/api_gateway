@@ -455,7 +455,7 @@ _quit:
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
 // Data plane interface
 
-void *rserver_thread_create(int hw_numa_id)
+void *rserver_thread_create(void ***pp_rs_table, int hw_numa_id)
 {
     struct rserver_table *table = NULL;
 
@@ -468,6 +468,8 @@ void *rserver_thread_create(int hw_numa_id)
     memset(table, 0, sizeof(*table));
 
     s_rs_table = table;
+    *pp_rs_table = (void **)&s_rs_table;
+
     return s_rs_table;
 }
 
