@@ -23,8 +23,10 @@ enum IP_LOCAL_CLASS {
 };
 
 enum IP_TYPE {
+    IP_TYPE_INVALID = -1,
     IP_MASTER,
     IP_SECONDARY,
+    IP_TYPE_MAX,
 };
 
 struct ip4_info {

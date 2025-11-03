@@ -6,12 +6,12 @@ project(${NAME})
 
 set(L2 l2)
 set(L3 l3)
-#set(L4 l4)
+set(TCP tcp)
 set(CONF conf)
 
 add_subdirectory(${L2})
 add_subdirectory(${L3})
-#add_subdirectory(${L4})
+add_subdirectory(${TCP})
 add_subdirectory(${CONF})
 
 aux_source_directory(. NO_SRC_LIST)
@@ -28,5 +28,6 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
                       -L.
                       ${L2}
                       ${L3}
+                      ${TCP}
                       ${CONF}
                       -Wl,--no-whole-archive)

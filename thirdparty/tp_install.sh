@@ -103,6 +103,15 @@ install_lib \
     "install libmongoose.a ${INSTALL}/lib"
 
 install_lib \
+    rbtree.zip \
+    ${INSTALL}/lib/librbtree.a \
+    "make" \
+    "mkdir -p ${INSTALL}/include" \
+    "mkdir -p ${INSTALL}/lib" \
+    "install rbtree.h ${INSTALL}/include" \
+    "install librbtree.a ${INSTALL}/lib"
+
+install_lib \
     timeout-master.zip \
     ${INSTALL}/lib/libtimeout.a \
     "make" \

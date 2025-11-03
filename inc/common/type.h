@@ -12,7 +12,7 @@
 #include "dpdk_type.h"
 
 #ifndef MBUF_STORE_MAX
-#define MBUF_STORE_MAX 2048
+#define MBUF_STORE_MAX 4096
 #endif // MBUF_STORE_PER_MAX
 
 #ifndef MBUF_NOTIFY_MAX
@@ -55,7 +55,7 @@ struct thread_ctx {
     void **pp_ip6_table;
     void **pp_rs_table;
     void **pp_pool_table;
-    void **pp_snat_pool;
+    void **pp_snat_table;
     void **pp_vs_table;
 
     void **pp_arp_table;
@@ -152,7 +152,8 @@ extern __thread struct pkt_store *tlv_ip4;
 extern __thread struct pkt_store *tlv_ip6;
 extern __thread struct pkt_store *tlv_icmp;
 extern __thread struct pkt_store *tlv_icmp6;
-extern __thread struct pkt_store *tlv_tcp;
+extern __thread struct pkt_store *tlv_tcp4;
+extern __thread struct pkt_store *tlv_tcp6;
 extern __thread struct pkt_store *tlv_notify;
 extern __thread struct pkt_store *tlv_drop;
 // Temporary bug: it must be freed immediately after use to avoid affecting the next module.

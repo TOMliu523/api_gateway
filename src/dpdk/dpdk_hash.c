@@ -15,6 +15,8 @@
 #include "dpdk_crc.h"
 #include "dpdk_hash.h"
 
+#define DPDK_HASH_ITEM_MAX 8
+
 #define dpdk_hash_param rte_hash_parameters
 
 struct dpdk_hash *dpdk_hash_create(uint32_t max_entries, uint32_t key_len, int hw_numa_id, dpdk_hash_cmp_t cmp)
@@ -43,6 +45,11 @@ struct dpdk_hash *dpdk_hash_create(uint32_t max_entries, uint32_t key_len, int h
     seq = atomic_fetch_add(&s_seq, 1);
     clock_gettime(CLOCK_MONOTONIC, &spec);
     snprintf(name, sizeof(name), "HASH_%lu_%u_%u", spec.tv_sec, hw_numa_id, seq);
+
+    if (max_entries < DPDK_HASH_ITEM_MAX) {
+        max_entries = DPDK_HASH_ITEM_MAX;
+        param.entries = max_entries;
+    }
 
     hash = rte_hash_create(&param);
     if (hash == NULL) {

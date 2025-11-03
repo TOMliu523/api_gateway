@@ -210,6 +210,25 @@ extern void api_free(void *);
 extern int api_v1_modify_list(void **, size_t *, void *, const char *, const char *);
 extern int api_v1_delete_list(void **, size_t *, void *, const char *, const char *);
 
+/**
+ * api_thread_config_update - Perform RCU-style configuration replacement
+ *                            from control plane to data plane.
+ *
+ * @param root        Pointer to the data-plane root management structure.
+ * @param old_cfg_pp  An array of pointer addresses for the per-thread
+ *                    configuration objects that need to be replaced.
+ *                    (size = number of data-plane threads)
+ * @param new_cfg_p   An array of new configuration pointers, one per thread.
+ *                    (size = number of data-plane threads)
+ * @param free_func   Callback used to safely free the old configuration
+ *                    object after the grace period.
+ *
+ * This function is invoked by the control plane to update per-thread
+ * configuration objects in the data plane using an RCU (read-copy-update)
+ * mechanism. Each data-plane thread will switch to the new configuration
+ * pointer, and the old one will be reclaimed by invoking @free_func after
+ * all readers have quiesced.
+ */
 extern void api_thread_config_update(void *, void **[], void *[], void (*)(void *));
 
 static INLINE void *api_json_array_get(void *array, int id)

@@ -6,9 +6,10 @@
 
 #pragma once
 
+#include "data.h"
 #include "dpdk_ip6.h"
 
-#define CONF_NAME_LEN_MAX 128
+#define CONF_NAME_LEN_MAX DATA_NAME_LEN_MAX
 
 union inet_addr {
     unsigned int ip;

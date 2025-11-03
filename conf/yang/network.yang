@@ -8,7 +8,7 @@ submodule network {
     }
 
     import types {
-        prefix "tps"
+        prefix "tys";
     }
 
     container ip4 {
@@ -16,7 +16,7 @@ submodule network {
             key "interface-name addr mask";
             leaf interface-name {
                 mandatory true;
-                typedef tps:interface-name;
+                type tys:interface-name;
             }
 
             leaf addr {
@@ -51,7 +51,7 @@ submodule network {
             key "interface-name addr mask";
             leaf interface-name {
                 mandatory true;
-                typedef tys:interface-name;
+                type tys:interface-name;
             }
 
             leaf addr {
@@ -130,7 +130,7 @@ submodule network {
             }
 
             leaf interface {
-                type tys:interface-name
+                type tys:interface-name;
             }
         }
     }

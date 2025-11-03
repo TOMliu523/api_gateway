@@ -199,7 +199,7 @@ static int _ip4_conf_table_del_check(struct ip4_table *table, const struct ip4_i
 }
 
 // Initialize a fresh ipv4_table object with default/empty values.
-static int _ip4_conf_table_create(void **dst, int nic_count, int hw_numa_id)
+static int _ip4_conf_table_create(void **dst, int nic_count, int ip_count, int hw_numa_id)
 {
     struct ip4_table *table = NULL;
 
@@ -215,7 +215,7 @@ static int _ip4_conf_table_create(void **dst, int nic_count, int hw_numa_id)
     table->nic_count = nic_count;
 
     for (int i = 0; i < nic_count; i++) {
-        table->fib[i] = dpdk_fib_create(hw_numa_id, IP4_INFO_MAX);
+        table->fib[i] = dpdk_fib_create(hw_numa_id, ip_count);
         if (UNLIKELY(table->fib[i] == NULL)) {
             goto _quit;
         }
@@ -330,7 +330,7 @@ int ip4_conf_table_create_and_append(void **dst, void *src, const struct ip4_inf
     }
 
     // Only create the ipv4_table structure.
-    ret = _ip4_conf_table_create(dst, one->nic_count, hw_numa_id);
+    ret = _ip4_conf_table_create(dst, one->nic_count, one->ip_count + count, hw_numa_id);
     if (UNLIKELY(ret != 0)) {
         return ret;
     }
@@ -362,7 +362,7 @@ int ip4_conf_table_create_and_delete(void **dst, void *src, const struct ip4_inf
     }
 
     // Only create the ipv4_table structure.
-    ret = _ip4_conf_table_create(dst, one->nic_count, hw_numa_id);
+    ret = _ip4_conf_table_create(dst, one->nic_count, one->ip_count - count, hw_numa_id);
     if (UNLIKELY(ret != 0)) {
         return ret;
     }
@@ -488,7 +488,7 @@ static INLINE void _ip4_icmp_fragment(struct dpdk_mbuf *mbuf, uint16_t mtu)
 
         ip4hdr = dpdk_pktmbuf_ip4_hdr(pkt);
         ip4hdr->hdr_checksum = 0;
-        pkt->ol_flags |= DPDK_TX_IP_TX_IP_CKSUM;
+        pkt->ol_flags |= DPDK_IP_TX_IP_CKSUM;
     }
 
     tx->count = len;
@@ -577,6 +577,9 @@ void ip4_process(void *data[], int count)
             tlv_icmp->data[tlv_icmp->count++] = mbuf;
             break;
         case IPPROTO_TCP:
+            DPDK_HEADROOM(mbuf)->l4 = ip4hdr + mbuf->l3_len;
+            tlv_tcp4->data[tlv_tcp4->count++] = mbuf;
+            break;
         case IPPROTO_UDP:
         default:
             tlv_drop->data[tlv_drop->count++] = mbuf;
@@ -638,7 +641,7 @@ void *ip4_table_startup(void ***pp_ip4_table, int nic_count, int hw_numa_id)
     int ret = 0;
     void *dst = NULL;
 
-    ret = _ip4_conf_table_create(&dst, nic_count, hw_numa_id);
+    ret = _ip4_conf_table_create(&dst, nic_count, 0, hw_numa_id);
     if (UNLIKELY(ret != 0)) {
         return NULL;
     }

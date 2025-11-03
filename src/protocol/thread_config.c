@@ -40,6 +40,7 @@ static struct iface *_tc_iface_init(int nic_count, int hw_numa_id)
         iface->port[i] = port_info->info[i].port;
     }
 
+    iface->nums = nic_count;
     return iface;
 }
 
@@ -114,7 +115,7 @@ struct thread_config *tc_init(void *arg, int nic_count, int hw_numa_id, int cpu_
         goto _quit;
     }
 
-    tc->snat_table = snat_thread_create(&ctx->pp_snat_pool, hw_numa_id);
+    tc->snat_table = snat_thread_create(&ctx->pp_snat_table, hw_numa_id);
     if (UNLIKELY(tc->snat_table == NULL)) {
         goto _quit;
     }
@@ -139,7 +140,7 @@ struct thread_config *tc_init(void *arg, int nic_count, int hw_numa_id, int cpu_
         goto _quit;
     }
 
-    tc->ndp_table = ip6_thread_ndp_table_create(&ctx->pp_ip6_table, nic_count, cpu_id, hw_numa_id);
+    tc->ndp_table = ip6_thread_ndp_table_create(&ctx->pp_ndp_table, nic_count, cpu_id, hw_numa_id);
     if (UNLIKELY(tc->ndp_table == NULL)) {
         goto _quit;
     }

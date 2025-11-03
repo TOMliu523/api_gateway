@@ -46,6 +46,10 @@
 #define DP_MBUF_MAX 64
 #endif // DP_MBUF_MAX
 
+#ifndef DP_BATCH_MAX
+#define DP_BATCH_MAX DP_MBUF_MAX
+#endif // DP_BATCH_MAX
+
 #ifndef DP_RSERVER_MAX
 #define DP_RSERVER_MAX 50000
 #endif // DP_RSERVER_MAX
@@ -61,5 +65,9 @@
 #ifndef DP_VSERVER_MAX
 #define DP_VSERVER_MAX 10000
 #endif // DP_VSERVER_MAX
+
+#ifndef DP_TCP_CONN_MAX_PER_THREAD
+#define DP_TCP_CONN_MAX_PER_THREAD 5000000
+#endif // DP_TCP_CONN_MAX_PER_THREAD
 
 #endif // __DPDK_LIMITIS_H__

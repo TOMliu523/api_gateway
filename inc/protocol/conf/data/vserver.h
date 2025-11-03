@@ -7,17 +7,13 @@
 #ifndef __VSERVER_H__
 #define __VSERVER_H__
 
-#include "conf.h"
+#include <stdint.h>
 
-enum VSERVER_TYPE {
-    VSERVER_TCP,
-    VSERVER_UDP,
-    VSERVER_HTTP,
-    VSERVER_HTTPS,
-    VSERVER_HTTP2,
-    VSERVER_HTTP3,
-    VSERVER_MAX,
-};
+#include "data.h"
+#include "protocol.h"
+#include "dpdk_ip6.h"
+
+#define VSERVER_ID_INVALID (UINT32_MAX)
 
 enum VSERVER_STATUS {
     VSERVER_ONLINE,
@@ -41,30 +37,62 @@ struct vserver_base {
 
 struct vserver {
     int af;
+    uint32_t id;
 };
 
 struct vserver_v4 {
     struct vserver vs;
-    enum VSERVER_TYPE type;
+    enum PROTO_TYPE type;
     uint16_t port;
     uint32_t vip;
     struct vserver_base base;
 
-    char name[CONF_NAME_LEN_MAX];
+    char name[DATA_NAME_LEN_MAX];
 };
 
 struct vserver_v6 {
     struct vserver vs;
-    enum VSERVER_TYPE type;
+    enum PROTO_TYPE type;
     uint16_t port;
     struct dpdk_ip6_addr vip;
     struct vserver_base base;
 
-    char name[CONF_NAME_LEN_MAX];
+    char name[DATA_NAME_LEN_MAX];
+};
+
+struct vserver4_key {
+    uint32_t addr;
+    uint16_t port;
+    uint8_t protocol;
+};
+
+struct vserver6_key {
+    struct dpdk_ip6_addr addr;
+    uint16_t port;
+    uint8_t protocol;
+};
+
+struct vserver4_kv_blk {
+    int count;
+    uint64_t result;
+    struct vserver4_key v4_keys[DP_BATCH_MAX];
+    struct vserver4_key *keys[DP_BATCH_MAX];
+    struct vserver_v4 *data[DP_BATCH_MAX];
+    void **mbufs;
+};
+
+struct vserver6_kv_blk {
+    int count;
+    uint64_t result;
+    struct vserver6_key v6_keys[DP_MBUF_MAX];
+    struct vserver6_key *keys[DP_BATCH_MAX];
+    struct vserver_v6 *data[DP_BATCH_MAX];
+    void **mbufs;
 };
 
 extern void *vserver_thread_create(void ***, int);
 extern void vserver_thread_destroy(void *);
 extern void vserver_thread_config_refresh(void *);
+extern void vserver4_lookup(struct vserver4_kv_blk *);
 
 #endif // __VSERVER_H__

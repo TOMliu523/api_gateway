@@ -11,19 +11,22 @@
 #include "dpdk_fib.h"
 #include "rte_errno.h"
 
+#define DPDK_FIB_ITEM_MIN 8
+
 struct dpdk_fib *dpdk_fib_create(int hw_numa_id, int max_item)
 {
     uint32_t seq = 0;
     struct timespec spec = {0};
     char name[CACHE_LINE] = "";
+    int n_item = (max_item < DPDK_FIB_ITEM_MIN) ? DPDK_FIB_ITEM_MIN : max_item;
     struct rte_fib_conf conf = {
         .type = RTE_FIB_DIR24_8,
         .default_nh = DPDK_FIB_DEFAULT,
-        .max_routes = max_item,
+        .max_routes = n_item,
         .rib_ext_sz = 0,
         .dir24_8 = {
             .nh_sz = RTE_FIB_DIR24_8_4B,
-            .num_tbl8 = max_item / 3,
+            .num_tbl8 = n_item / 3,
         },
         /**
          * If this flag is set, rte_fib_lookup() expects IPv4 addresses in

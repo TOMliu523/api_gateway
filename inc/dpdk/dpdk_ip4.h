@@ -6,7 +6,7 @@
 #pragma once
 
 #ifndef __DPDK_IP4_H__
-#define __DPDK_IP4_H_
+#define __DPDK_IP4_H__
 
 #include <stdbool.h>
 
@@ -21,10 +21,13 @@
 
 #define DPDK_ETHER_IP4 RTE_ETHER_TYPE_IPV4
 
-#define DPDK_RX_IP_CKSUM_GOOD RTE_MBUF_F_RX_IP_CKSUM_GOOD
-#define DPDK_RX_IP_CKSUM_BAD RTE_MBUF_F_RX_IP_CKSUM_BAD
+#define DPDK_IP_RX_CKSUM_MASK RTE_MBUF_F_RX_IP_CKSUM_MASK
+#define DPDK_IP_RX_CKSUM_UNKNOWN RTE_MBUF_F_RX_L4_CKSUM_UNKNOWN
+#define DPDK_IP_RX_CKSUM_GOOD RTE_MBUF_F_RX_IP_CKSUM_GOOD
+#define DPDK_IP_RX_CKSUM_BAD RTE_MBUF_F_RX_IP_CKSUM_BAD
+#define DPDK_IP_RX_CKSUM_NONE RTE_MBUF_F_RX_L4_CKSUM_NONE
 
-#define DPDK_TX_IP_TX_IP_CKSUM (RTE_MBUF_F_TX_IP_CKSUM | RTE_MBUF_F_TX_IPV4)
+#define DPDK_IP_TX_IP_CKSUM (RTE_MBUF_F_TX_IP_CKSUM | RTE_MBUF_F_TX_IPV4)
 
 #define DPDK_ETHER_TYPE_IPV4 RTE_ETHER_TYPE_IPV4
 
@@ -43,9 +46,11 @@ static INLINE uint8_t dpdk_ip4_header_len(const struct dpdk_ip4_hdr *ip4hdr)
 
 static INLINE bool dpdk_ip4_header_cksum_verify(const struct dpdk_mbuf *mbuf, const struct dpdk_ip4_hdr *ip4hdr)
 {
-    if ((mbuf->ol_flags & DPDK_RX_IP_CKSUM_GOOD) != 0) return true;
-    if ((mbuf->ol_flags & DPDK_RX_IP_CKSUM_BAD) != 0) return false;
-    return (rte_raw_cksum(ip4hdr, dpdk_ip4_header_len(ip4hdr)) == 0xFFFF);
+    switch (mbuf->ol_flags & DPDK_IP_RX_CKSUM_MASK) {
+    case DPDK_IP_RX_CKSUM_GOOD: return true;
+    case DPDK_IP_RX_CKSUM_BAD: return false;
+    default: return (rte_raw_cksum(ip4hdr, dpdk_ip4_header_len(ip4hdr)) == 0xFFFF);
+    }
 }
 
 static INLINE void dpdk_ip4_cksum(struct dpdk_ip4_hdr *ip4hdr)

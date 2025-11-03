@@ -66,7 +66,7 @@ struct api_param {
         int af;
         uint16_t port;
         void *addr_info;
-        enum VSERVER_TYPE type;
+        enum PROTO_TYPE type;
     };
     const char *name;
     const struct vserver *vs;
@@ -251,7 +251,7 @@ static void *_api_vs_hdr_alloc(void)
     return vs_hdr;
 }
 
-static int _api_vs_param_type_parse(enum VSERVER_TYPE *type, const char *type_str)
+static int _api_vs_param_type_parse(enum PROTO_TYPE *type, const char *type_str)
 {
     for (int i = 0; i < ARR_NUMS(s_type_str); i++) {
         if (strcasecmp(s_type_str[i], type_str) == 0) {
@@ -270,7 +270,7 @@ static int _api_vs_param_addr_parse(struct api_param *param, struct param_info *
     uint64_t port = 0;
     uint8_t port_id = 0;
     uint32_t ip4_addr = 0;
-    enum VSERVER_TYPE type = 0;
+    enum PROTO_TYPE type = 0;
     const char *addr_str = NULL;
     const char *type_str = NULL;
     const char *interface = NULL;
@@ -618,6 +618,7 @@ static struct vserver *_api_vs_param_to_vserver(const struct api_param *param, i
         v4_info = param->addr_info;
 
         v4->vs.af = AF_INET;
+        v4->vs.af = VSERVER_ID_INVALID;
         v4->type = param->type;
         v4->port = param->port;
         v4->vip = v4_info->addr;
@@ -637,6 +638,7 @@ static struct vserver *_api_vs_param_to_vserver(const struct api_param *param, i
         v6_info = param->addr_info;
 
         v6->vs.af = AF_INET6;
+        v6->vs.af = VSERVER_ID_INVALID;
         v6->type = param->type;
         v6->port = param->port;
         dpdk_memcpy(&v6->vip, &v6_info->addr, sizeof(v6->vip));

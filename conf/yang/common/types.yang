@@ -11,7 +11,11 @@ module types {
             length "1..127";
             pattern "[-_.0-9a-zA-Z]{1,127}";
         }
-        description "Common name format: alphanumeric, dash, underscore, and dot allowed (1–127 chars).";
+        description "Common name format: 
+            alphanumeric, 
+            dash, 
+            underscore, 
+            and dot allowed (1–127 chars).";
     }
 
     typedef interface-name {

@@ -10,6 +10,7 @@
 
 #include "l2.h"
 #include "log.h"
+#include "tcp.h"
 #include "timer.h"
 #include "notify.h"
 #include "dpdk_ip4.h"
@@ -30,24 +31,6 @@
 
 #define DP_FLUSH_EVERY 512
 #define DP_PORT_LOOP_PER_MAX 16
-
-#define l3_process(data, count) \
-    do { \
-        int ip4_count = 0; \
-        int ip6_count = 0; \
-                           \
-        ip4_count = tlv_ip4->count; \
-        if (ip4_count != 0) { \
-            ip4_process(tlv_ip4->data, ip4_count); \
-            tlv_ip4->count = 0; \
-        } \
-          \
-        ip6_count = tlv_ip6->count; \
-        if (ip6_count != 0) { \
-            ip6_process(tlv_ip6->data, ip6_count); \
-            tlv_ip6->count = 0; \
-        } \
-    } while (0)
 
 // Thread-Local Storage
 __thread uint8_t tlv_numa_id;
@@ -308,25 +291,67 @@ static INLINE void _dp_mbuf_drop(void)
     }
 }
 
+static INLINE void _dp_l2_process(void *data[], int count)
+{
+    l2_process(data, count);
+}
+
+static INLINE void _dp_l3_process(UNUSED void *data[], UNUSED int count)
+{
+    int ip4_count = 0;
+    int ip6_count = 0;
+
+    ip4_count = tlv_ip4->count;
+    if (ip4_count != 0) {
+        ip4_process(tlv_ip4->data, ip4_count);
+        tlv_ip4->count = 0;
+    }
+
+    ip6_count = tlv_ip6->count;
+    if (ip6_count != 0) {
+        ip6_process(tlv_ip6->data, ip6_count);
+        tlv_ip6->count = 0;
+    }
+}
+
+static INLINE void _dp_l4_process(UNUSED void *data[], UNUSED int count)
+{
+    int tcp4_count = 0;
+    int tcp6_count = 0;
+
+    tcp4_count = tlv_tcp4->count;
+    if (tcp4_count != 0) {
+        tcp4_process(tlv_tcp4->data, tcp4_count);
+        tlv_tcp4->count = 0;
+    }
+
+    tcp6_count = tlv_tcp6->count;
+    if (tcp6_count != 0) {
+        tcp6_process(tlv_tcp6->data, tcp6_count);
+        tlv_tcp6->count = 0;
+    }
+}
+
 // Dispatch new configuration before the data plane runs again.
 static INLINE void _dp_thread_config_refresh(void)
 {
     struct thread_ctx *ctx = tlv_dp->ctx;
-    if (ctx->version != tlv_th_cfg->version) {
+    // if (ctx->version != tlv_th_cfg->version) {
 
+        // *ctx->pp_iface = tlv_th_cfg->iface;
         *ctx->pp_ip4_table = tlv_th_cfg->ip4_table;
         *ctx->pp_ip6_table = tlv_th_cfg->ip6_table;
         *ctx->pp_rs_table = tlv_th_cfg->rs_table;
         *ctx->pp_pool_table = tlv_th_cfg->pool_table;
-        *ctx->pp_snat_pool = tlv_th_cfg->snat_table;
+        *ctx->pp_snat_table = tlv_th_cfg->snat_table;
         *ctx->pp_vs_table = tlv_th_cfg->vs_table;
         *ctx->pp_arp_table = tlv_th_cfg->arp_table;
         *ctx->pp_route4_table = tlv_th_cfg->route4_table;
         *ctx->pp_ndp_table = tlv_th_cfg->ndp_table;
         *ctx->pp_route6_table = tlv_th_cfg->route6_table;
 
-        ctx->version = tlv_th_cfg->version;
-    }
+        // ctx->version = tlv_th_cfg->version;
+    // }
 }
 
 int dp_startup(void *arg)
@@ -350,7 +375,9 @@ int dp_startup(void *arg)
     inv_hz_ms = 1000.0 / (double) hz_per_second;
 
     for (;;) {
-        iface = rcu_dereference(tlv_th_cfg->iface);
+        _dp_thread_config_refresh();
+
+        iface = tlv_th_cfg->iface;
         ports = iface->port;
         port_nums = iface->nums;
 
@@ -360,7 +387,6 @@ int dp_startup(void *arg)
         }
 
         _dp_time_update(inv_hz, inv_hz_ms);
-        _dp_thread_config_refresh();
 
         for (int i = 0; i < DP_LOOP_MAX; i++) {
             for (int j = 0; j < port_nums; j++) {
@@ -372,10 +398,9 @@ int dp_startup(void *arg)
                     count = dpdk_pktmbuf_rx(ports[j], tlv_thread_id, data, DP_MBUF_MAX);
                     if (count == 0) break;
 
-                    l2_process(data, count);
-                    l3_process(data, count);
-
-                    l4_process();
+                    _dp_l2_process(data, count);
+                    _dp_l3_process(data, count);
+                    _dp_l4_process(data, count);
 
                     total += count;
                     if (total >= DP_FLUSH_EVERY) {

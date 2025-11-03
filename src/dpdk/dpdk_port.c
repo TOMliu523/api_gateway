@@ -389,39 +389,23 @@ int dpdk_port_startup(int port)
 
 uint8_t dpdk_port_by_name_get(const char *name)
 {
-    const char *tmp = NULL;
-    const char *anchor = NULL;
+    struct port_info *port_info = &s_dpdk_port.port_info;
 
-    if (UNLIKELY(name == NULL)) {
-        LOG_ERROR("Parameter exception.");
-        return (uint8_t)-1;
+    if (name == NULL) {
+        LOG_ERROR("Invalid parameter.");
+        return UINT8_MAX;
     }
 
-    LOG_INFO("port name: %s", name);
-    anchor = strrchr(name, '.');
-    if (UNLIKELY(anchor == NULL)) {
-        LOG_ERROR("Interface name format error: %s", name);
-        return (uint8_t)-1;
-    }
+    for (int i = 0; i < port_info->count; i++) {
+        struct port_info_entry *entry = &port_info->info[i];
 
-    anchor += 1;
-    tmp = anchor;
-
-    if (UNLIKELY(*tmp == 0)) {
-        LOG_ERROR("Interface name format error: %s", name);
-        return -1;
-    }
-
-    while (*tmp != 0) {
-        if (UNLIKELY(!isdigit(*tmp))) {
-            LOG_ERROR("Interface name format error: %s", name);
-            return -1;
+        if (strcmp(entry->name, name) == 0) {
+            return entry->port;
         }
-
-        tmp += 1;
     }
 
-    return atoi(anchor);
+    LOG_ERROR("Port name('%s') not exist", name);
+    return UINT8_MAX;
 }
 
 const char *dpdk_port_id_to_name(int port)

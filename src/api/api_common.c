@@ -22,11 +22,18 @@
 
 #define API_NODE_LEN_MAX 64
 
+struct thread_config_shadow {
+    uint64_t version;
+    struct thread_config *idle[CPU_MAX];
+};
+
 static const char *s_errcode_msg[] = {
 #define ERRMSG(code, value, msg) [ERRCODE_##code] = msg,
 ERRCODE_EXTEND(ERRMSG)
 #undef ERRMSG
 };
+
+static UNUSED struct thread_config_shadow s_tc_shadow;
 
 static void *_api_errmsg_to_json(const char *msg)
 {
@@ -519,7 +526,7 @@ int api_v1_modify_list(void **array, size_t *count, void *json, const char *modu
     }
 
     ret = json_object_get(obj, list_name);
-    if (ret != 0) {
+    if (ret == NULL) {
         LOG_ERROR("Invalid parameter.");
         return ERRCODE_PARAMETER_INVALID;
     }

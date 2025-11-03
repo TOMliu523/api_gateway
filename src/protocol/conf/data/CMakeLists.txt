@@ -7,6 +7,7 @@ add_library(data_obj OBJECT ${SRC_DATA})
 
 target_include_directories(${NAME} PRIVATE ${DPDK_INC} 
                                            ${COMMON_INC} 
+                                           ${PROTOCOL_INC}
                                            ${CONF_DATA_INC} 
                                            ${CONF_CONTROL_INC} 
                                            ${DPDK_INCLUDE_DIRS})

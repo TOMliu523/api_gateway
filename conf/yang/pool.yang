@@ -87,7 +87,7 @@ submodule pool {
                 description "References to global rserver entries by (addr, port). No local attributes duplicated.";
                 leaf addr {
                     type leafref {
-                        path "/v1:rserver/v1:entrys/v1:addr";
+                        path "/v1:rserver/v1:entries/v1:addr";
                     }
                     mandatory true;
                     description "Reference to global rserver IP address.";
@@ -95,7 +95,7 @@ submodule pool {
 
                 leaf port {
                     type leafref {
-                        path "/v1:rserver/v1:entrys[v1:addr = current()/../v1:addr]/v1:port";
+                        path "/v1:rserver/v1:entries[v1:addr = current()/../v1:addr]/v1:port";
                     }
                     mandatory true;
                     description "Reference to global rserver port number for the given IP.";

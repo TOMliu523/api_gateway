@@ -86,6 +86,7 @@ struct dpdk_headroom {
             void *l2;
             void *l3;
             void *l4;
+            int payload_len;
         };
 
         // fragment

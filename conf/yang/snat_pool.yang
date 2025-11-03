@@ -24,7 +24,7 @@ submodule snat_pool {
      * Address range must satisfy: start_addr <= end_addr.
      ***********************************************************************/
     container snat_pool {
-        list entrys {
+        list entries {
             key "name";
             description "Source Network Address Translation";
 
@@ -59,7 +59,7 @@ submodule snat_pool {
             }
 
             // Only one group is supported
-            list ip4_entrys {
+            list ip4_entries {
                 key "start_addr end_addr";
                 leaf start_addr {
                     type inet:ipv4-address;
@@ -75,7 +75,7 @@ submodule snat_pool {
             }
 
             // Only one group is supported
-            list ip6_entrys {
+            list ip6_entries {
                 key "start_addr end_addr";
                 leaf start_addr {
                     type inet:ipv6-address;
@@ -91,8 +91,8 @@ submodule snat_pool {
                 }
             }
 
-            must "count(ip4_entrys) >= 1 or count(ip6_entrys) >= 1" {
-                error-message "At least one of ip4_entrys or ip6_entrys must be present.";
+            must "count(ip4_entries) >= 1 or count(ip6_entries) >= 1" {
+                error-message "At least one of ip4_entries or ip6_entries must be present.";
             }
 
             leaf min_port {

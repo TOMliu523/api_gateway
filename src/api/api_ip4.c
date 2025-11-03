@@ -55,28 +55,18 @@ struct api_ip4_hdr {
     void **arp;
 };
 
+static const char *sp_ip4_type_str[] = {
+    "IP_MASTER",
+    "IP_SECONDARY",
+};
+
 static void _api_ip4_arp_free(void **arp, int count)
 {
-    bool has = false;
-
     if (arp == NULL) {
         return;
     }
 
-    for (int i = 0; i < count; i++) {
-        if (arp[i] != NULL) {
-            has = true;
-            break;
-        }
-    }
-
-    if (has) {
-        dpdk_pktmbuf_push(arp, count);
-        for (int i = 0; i < count; i++) {
-            arp[i] = NULL;
-        }
-    }
-
+    dpdk_pktmbuf_push(arp, count);
     api_free(arp);
 }
 
@@ -275,6 +265,24 @@ _quit:
     return code;
 }
 
+static int _api_ip4_get_type(void *obj)
+{
+    const char *string = NULL;
+
+    string = api_json_get_string(obj, "type");
+    if (string == NULL) {
+        return IP_TYPE_INVALID;
+    }
+
+    for (int i = 0; i < ARR_NUMS(sp_ip4_type_str); i++) {
+        if (strcmp(string, sp_ip4_type_str[i]) == 0) {
+            return i;
+        }
+    }
+
+    return IP_TYPE_MAX;
+}
+
 static int _api_ip4_post_parse(struct api_param_hdr **pp_param_hdr, struct root *root, void *json)
 {
     int code = 0;
@@ -291,8 +299,14 @@ static int _api_ip4_post_parse(struct api_param_hdr **pp_param_hdr, struct root 
         goto _quit;
     }
 
+    if (count == 0) {
+        LOG_ERROR("Invalid parameter.");
+        return ERRCODE_PARAMETER_INVALID;
+    }
+
     param_hdr = _api_ip4_param_hdr_alloc(count);
     if (param_hdr == NULL) {
+        code = ERRCODE_OOM;
         goto _quit;
     }
 
@@ -340,7 +354,10 @@ static int _api_ip4_post_parse(struct api_param_hdr **pp_param_hdr, struct root 
         }
 
         param->mask = (uint16_t) lvalue;
-        param->ip_type = 0;
+        param->ip_type = _api_ip4_get_type(obj);
+        if (param->ip_type <= IP_TYPE_INVALID || param->ip_type >= IP_TYPE_MAX) {
+            goto _quit;
+        }
     }
 
     *pp_param_hdr = param_hdr;
@@ -432,6 +449,7 @@ static int _api_ip4_to_route_item(struct route4_item **pp_item, const struct api
         one->direct_id = 0;
     }
 
+    *pp_item = items;
     return 0;
 }
 
@@ -455,6 +473,9 @@ static int _api_ip4_table_create(struct api_ip4_hdr *ip4_hdr, struct root *root,
         if (code != 0) {
             return code;
         }
+
+        ip4_hdr->ip4_table[i] = table;
+        table = NULL;
     }
 
     return 0;
@@ -465,9 +486,9 @@ static int _api_ip4_route_table_create(struct api_ip4_hdr *ip4_hdr, struct root 
     int code = 0;
     int count = 0;
     int hw_numa_id = 0;
-    void *ip4_table = NULL;
     void *route4_table = NULL;
     struct dataplane *dp = NULL;
+    const void *ip4_table = NULL;
     int cpu_count = ip4_hdr->cpu_count;
 
     count = param_hdr->count;
@@ -479,8 +500,9 @@ static int _api_ip4_route_table_create(struct api_ip4_hdr *ip4_hdr, struct root 
 
         dp = root->dpdk_thread[i];
         hw_numa_id = dp->hw_numa_id;
-        ip4_table = ip4_hdr->ip4_table[i];
         route4_table = dp->tc->route4_table;
+
+        ip4_table = ip4_hdr->ip4_table[i];
 
         code = route4_conf_create_and_append(&ip4_hdr->route4_table[i], route4_table, ip4_hdr->item[i], count, hw_numa_id, ip4_table);
         if (code != 0) {
@@ -647,9 +669,7 @@ static void _api_ip4_update(struct api_ip4_hdr *ip4_hdr, struct root *root)
 
     dp = root->dpdk_thread[0];
     dpdk_ring_mp_push(dp->notice_ring, ip4_hdr->arp, ip4_hdr->ele_count);
-    for (int i = 0; i < ip4_hdr->ele_count; i++) {
-        ip4_hdr->arp[i] = NULL;
-    }
+    memset(ip4_hdr->arp, 0, ip4_hdr->ele_count * sizeof(*ip4_hdr->arp));
 }
 
 API_POST(/v1/network/ip4, ip4)
@@ -736,7 +756,10 @@ API_GET(/v1/network/ip4, ip4)
 
         snprintf(path, sizeof(path), API_INTERFACE_FORMAT, one->name);
         code = sr_get_items(sess, path, 0, 0, &val, &val_cnt);
-        if (code != 0 && code != SR_ERR_NOT_FOUND) {
+        switch (code) {
+        case 0: break;
+        case SR_ERR_NOT_FOUND: continue;
+        default:
             LOG_ERROR("Failure path '%s' sr_get_item: %s", path, strerror(code));
             goto _quit;
         }
@@ -749,7 +772,7 @@ API_GET(/v1/network/ip4, ip4)
         sr_free_values(val, val_cnt);
     }
 
-    return api_succ(NULL);
+    return api_succ(array);
 
 _quit:
     api_json_free(array);

@@ -96,24 +96,7 @@ static INLINE int dpdk_hash_lookup(const struct dpdk_hash *hash, const void *key
  */
 static INLINE int dpdk_hash_lookup_bulk(const struct dpdk_hash *hash, const void **keys, uint32_t num_keys, uint64_t result[], void **data)
 {
-    int n = 0;
-    int off = 0;
-    int round = 0;
-    int count = 0;
-    int total_count = 0;
-
-    while (num_keys > 0) {
-        result[round] = 0;
-        n = MIN(num_keys, DPDK_HASH_LOOKUP_MAX);
-        count = rte_hash_lookup_bulk_data(hash, keys + off, n, &result[round++], data + off);
-        assert(count >= 0);
-        total_count += count;
-
-        off += n;
-        num_keys -= n;
-    }
-
-    return total_count;
+    return rte_hash_lookup_bulk_data(hash, keys, num_keys, result, data);
 }
 
 static INLINE int dpdk_hash_lookup_with_hash_data(const struct dpdk_hash *hash, const void *key, hash_sig_t sig, void **data)
