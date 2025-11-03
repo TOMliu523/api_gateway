@@ -25,7 +25,7 @@
 #define API_IP6_MODULE_NAME "ip6"
 #define API_IP6_LIST_NAME "entries"
 
-#define API_INTERFACE_FORMAT "/v1:" API_IP6_MODULE_NAME "/" API_IP6_LIST_NAME "[name='%s']/*"
+#define API_INTERFACE_FORMAT "/v1:" API_IP6_MODULE_NAME "/" API_IP6_LIST_NAME "[interface-name='%s']/*"
 
 struct api_param {
     const char *name;
@@ -54,6 +54,11 @@ struct api_ip6_hdr {
     void **ndp;
 };
 
+static const char *sp_ip6_type_str[] = {
+    "IP_MASTER",
+    "IP_SECONDARY"
+};
+
 static void _api_ip6_param_hdr_free(struct api_param_hdr *param_hdr)
 {
     if (param_hdr == NULL) {
@@ -65,24 +70,11 @@ static void _api_ip6_param_hdr_free(struct api_param_hdr *param_hdr)
 
 static void _api_ip6_ndp_free(void *mbufs[], int count)
 {
-    bool has = false;
-
     if (mbufs == NULL) {
         return;
     }
 
-    for (int i = 0; i < count; i++) {
-        if (mbufs[i] != NULL) {
-            has = true;
-            break;
-        }
-    }
-
-    if (has) {
-        dpdk_pktmbuf_push(mbufs, count);
-        memset(mbufs, 0, count *sizeof(*mbufs));
-    }
-
+    dpdk_pktmbuf_push(mbufs, count);
     api_free(mbufs);
 }
 
@@ -143,6 +135,24 @@ static void *_api_ip6_hdr_alloc(void)
     }
 
     return ip6_hdr;
+}
+
+static int _api_ip6_get_type(void *obj)
+{
+    const char *string = NULL;
+
+    string = api_json_get_string(obj, "type");
+    if (string == NULL) {
+        return IP_TYPE_INVALID;
+    }
+
+    for (size_t i = 0; i < ARR_NUMS(sp_ip6_type_str); i++) {
+        if (strcmp(string, sp_ip6_type_str[i]) == 0) {
+            return i;
+        }
+    }
+
+    return IP_TYPE_MAX;
 }
 
 int ip6_info_init(struct ip6_info *info, const struct dpdk_ip6_addr *addr, uint8_t mask, uint16_t port, enum IP_TYPE type, uint32_t refcnt)
@@ -245,14 +255,14 @@ static int _api_ip6_obj_gen(void *array, sr_val_t *val, int cnt)
             const char *xpath = val[j].xpath;
 
             len = strlen(xpath);
-            if (len >= 3 && strcmp(xpath + len - 3, "/ip") == 0) {
-                ret = api_json_add_string(obj, "ip", val[j].data.string_val);
+            if (len >= 5 && strcmp(xpath + len - 5, "/addr") == 0) {
+                ret = api_json_add_string(obj, "addr", val[j].data.string_val);
             } else if (len >= 5 && strcmp(xpath + len - 5, "/mask") == 0) {
                 ret = api_json_add_long(obj, "mask", val[j].data.uint8_val);
             } else if (len >= 5 && strcmp(xpath + len - 5, "/type") == 0) {
                 ret = api_json_add_string(obj, "type", val[j].data.string_val);
-            } else if (len >= 5 && strcmp(xpath + len - 5, "/name") == 0) {
-                ret = api_json_add_string(obj, "name", val[j].data.string_val);
+            } else if (len >= 15 && strcmp(xpath + len - 15, "/interface-name") == 0) {
+                ret = api_json_add_string(obj, "interface-name", val[j].data.string_val);
             } else {
                 LOG_ERROR("Not exists element(%s)", xpath);
                 goto _quit;
@@ -297,6 +307,8 @@ static int _api_ip6_table_create(struct api_ip6_hdr *ip6_hdr, struct root *root,
         if (code != 0) {
             return code;
         }
+
+        ip6_hdr->ip6_table[i] = table;
     }
 
     return 0;
@@ -350,9 +362,9 @@ static int _api_ip6_route_table_create(struct api_ip6_hdr *ip6_hdr, struct root 
 
         dp = root->dpdk_thread[i];
         hw_numa_id = dp->hw_numa_id;
-        ip6_table = ip6_hdr->ip6_table[i];
         route6_table = dp->tc->route6_table;
 
+        ip6_table = ip6_hdr->ip6_table[i];
         code = route6_conf_create_and_append(&ip6_hdr->route6_table[i], route6_table, ip6_hdr->item[i], count, hw_numa_id, ip6_table);
         if (code != 0) {
             return code;
@@ -420,6 +432,11 @@ static int _api_ip6_del_parse(struct api_param_hdr **pp_param_hdr, struct root *
         goto _quit;
     }
 
+    if (count == 0) {
+        LOG_ERROR("Invalid parameter.");
+        return ERRCODE_PARAMETER_INVALID;
+    }
+
     param_hdr = _api_ip6_param_hdr_alloc(count);
     if (param_hdr == NULL) {
         goto _quit;
@@ -461,7 +478,7 @@ static int _api_ip6_del_parse(struct api_param_hdr **pp_param_hdr, struct root *
             goto _quit;
         }
 
-        param->mask = (int) lvalue;
+        param->mask = (uint8_t) lvalue;
         param->type = 0;
     }
 
@@ -489,16 +506,24 @@ static int _api_ip6_post_parse(struct api_param_hdr **pp_param_hdr, struct root 
         goto _quit;
     }
 
+    if (count == 0) {
+        LOG_ERROR("Invalid parameter.");
+        return ERRCODE_PARAMETER_INVALID;
+    }
+
     param_hdr = _api_ip6_param_hdr_alloc(count);
     if (param_hdr == NULL) {
+        code = ERRCODE_OOM;
         goto _quit;
     }
 
+    code = ERRCODE_PARAMETER_INVALID;
     for (int i = 0; i < count; i++) {
         param = &param_hdr->param[i];
 
         obj = api_json_array_get(array, i);
         if (obj == NULL) {
+            LOG_ERROR("Invalid parameter.");
             goto _quit;
         }
 
@@ -535,8 +560,12 @@ static int _api_ip6_post_parse(struct api_param_hdr **pp_param_hdr, struct root 
             goto _quit;
         }
 
-        param->mask = (uint16_t) lvalue;
-        param->type = 0;
+        param->mask = (uint8_t) lvalue;
+        param->type = _api_ip6_get_type(obj);
+        if (param->type == IP_TYPE_INVALID || param->type == IP_TYPE_MAX) {
+            LOG_ERROR("Invalid parameter.");
+            goto _quit;
+        }
     }
 
     *pp_param_hdr = param_hdr;
@@ -592,7 +621,7 @@ static int _api_ip6_add(struct api_ip6_hdr **pp_ip6_hdr, struct root *root, stru
         return ERRCODE_OOM;
     }
 
-    ip6_hdr->cpu_count = count;
+    ip6_hdr->ele_count = count;
     ip6_hdr->cpu_count = cpu_count;
 
     code = _api_ip6_table_create(ip6_hdr, root, param_hdr, ip6_conf_table_create_and_append);
@@ -729,7 +758,10 @@ API_GET(/v1/network/ip6, ip6)
 
         snprintf(path, sizeof(path), API_INTERFACE_FORMAT, one->name);
         code = sr_get_items(sess, path, 0, 0, &val, &val_cnt);
-        if (code != 0 && code != SR_ERR_NOT_FOUND) {
+        switch (code) {
+        case 0: break;
+        case SR_ERR_NOT_FOUND: continue;
+        default:
             LOG_ERROR("Failure path(%s) sr_get_item: %s", path, strerror(code));
             goto _quit;
         }
@@ -742,7 +774,7 @@ API_GET(/v1/network/ip6, ip6)
         sr_free_values(val, val_cnt);
     }
 
-    return api_succ(NULL);
+    return api_succ(array);
 
 _quit:
     api_json_free(array);

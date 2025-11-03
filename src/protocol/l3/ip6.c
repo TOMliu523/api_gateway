@@ -163,7 +163,7 @@ static int _ip6_conf_table_add(struct ip6_table *table, const struct ip6_info *o
 
     ret = dpdk_hash_add_kv(table->hash[one->port], &one->addr, store);
     if (UNLIKELY(ret != 0)) {
-        LOG_ERROR("Failure dpdk_hash_add_kv: %s", strerror(-rte_errno));
+        LOG_ERROR("Failure dpdk_hash_add_kv: %s", strerror(-ret));
         return ERRCODE_INNER;
     }
 
@@ -178,6 +178,11 @@ static int _ip6_conf_table_add_check(struct ip6_table *table, const struct ip6_i
     uint64_t next_hop = 0;
     char ip_str[CACHE_LINE] = "";
     const struct ip6_info *one = NULL;
+
+    if (UNLIKELY(count > IP6_BUCKET_MAX)) {
+        LOG_ERROR("Maximum supported IP address count exceeded");
+        return ERRCODE_IP_LIMIT_EXCEEDED;
+    }
 
     if (UNLIKELY(table == NULL || table->ip_count == 0)) {
         return 0;
@@ -208,13 +213,13 @@ static int _ip6_conf_table_add_check(struct ip6_table *table, const struct ip6_i
     return 0;
 }
 
-static int _ip6_conf_table_create(void **dst, int nic_count, int hw_numa_id)
+static int _ip6_conf_table_create(void **dst, int nic_count, int count, int hw_numa_id)
 {
     struct ip6_table *table = NULL;
 
     table = dpdk_malloc_numa(sizeof(*table), hw_numa_id);
     if (UNLIKELY(table == NULL)) {
-        LOG_ERROR("HA NUMA(%d) OOM.", hw_numa_id);
+        LOG_ERROR("HW NUMA(%d) OOM.", hw_numa_id);
         return ERRCODE_OOM;
     }
 
@@ -224,14 +229,14 @@ static int _ip6_conf_table_create(void **dst, int nic_count, int hw_numa_id)
     table->nic_count = nic_count;
 
     for (int i = 0; i < nic_count; i++) {
-        table->hash[i] = dpdk_hash_create(IP6_BUCKET_MAX, sizeof(struct dpdk_ip6_addr), hw_numa_id, _ip6_conf_info_cmp);
+        table->hash[i] = dpdk_hash_create(count, sizeof(struct dpdk_ip6_addr), hw_numa_id, _ip6_conf_info_cmp);
         if (UNLIKELY(table->hash[i] == NULL)) {
             goto _quit;
         }
     }
 
     for (int i = 0; i < nic_count; i++) {
-        table->fib[i] = dpdk_fib6_create(hw_numa_id, IP6_BUCKET_MAX);
+        table->fib[i] = dpdk_fib6_create(hw_numa_id, count);
         if (UNLIKELY(table->fib[i] == NULL)) {
             goto _quit;
         }
@@ -384,7 +389,7 @@ int ip6_conf_table_create_and_append(void **dst, void *src, const struct ip6_inf
         return ret;
     }
 
-    ret = _ip6_conf_table_create(dst, one->nic_count, hw_numa_id);
+    ret = _ip6_conf_table_create(dst, one->nic_count, one->ip_count + count, hw_numa_id);
     if (UNLIKELY(ret != 0)) {
         return ret;
     }
@@ -413,7 +418,7 @@ int ip6_conf_table_create_and_delete(void **dst, void *src, const struct ip6_inf
         return ret;
     }
 
-    ret = _ip6_conf_table_create(dst, one->nic_count, hw_numa_id);
+    ret = _ip6_conf_table_create(dst, one->nic_count, one->ip_count - count, hw_numa_id);
     if (UNLIKELY(ret != 0)) {
         _ip6_conf_table_destroy(*dst);
         return ret;
@@ -1127,7 +1132,7 @@ void *ip6_table_startup(void ***pp_ip6_table, int nic_count, int hw_numa_id)
     int ret = 0;
     void *dst = NULL;
 
-    ret = _ip6_conf_table_create(&dst, nic_count, hw_numa_id);
+    ret = _ip6_conf_table_create(&dst, nic_count, 0, hw_numa_id);
     if (UNLIKELY(ret != 0)) {
         return NULL;
     }
@@ -1188,8 +1193,8 @@ void ip6_process(void *data[], int count)
         switch (ip6hdr->proto) {
         case IPPROTO_TCP:
             DPDK_HEADROOM(mbuf)->l3 = ip6hdr;
-            DPDK_HEADROOM(mbuf)->l4 = (ip6hdr + 1);
-            tlv_drop->data[tlv_drop->count++] = mbuf;
+            DPDK_HEADROOM(mbuf)->l4 = (uint8_t *)ip6hdr + sizeof(*ip6hdr);
+            tlv_tcp6->data[tlv_tcp6->count++] = mbuf;
             break;
         case IPPROTO_ICMPV6:
             DPDK_HEADROOM(mbuf)->l3 = ip6hdr;

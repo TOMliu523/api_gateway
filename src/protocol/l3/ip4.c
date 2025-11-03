@@ -125,7 +125,7 @@ static int _ip4_conf_table_add_check(struct ip4_table *table, const struct ip4_i
     char ip_str[CACHE_LINE] = "";
     const struct ip4_info *one = NULL;
 
-    if (UNLIKELY(table == NULL || table->ip_count == 0) && count <= IP4_INFO_MAX) {
+    if (UNLIKELY(table == NULL || table->ip_count == 0)) {
         return 0;
     }
 
@@ -352,7 +352,7 @@ int ip4_conf_table_create_and_delete(void **dst, void *src, const struct ip4_inf
     struct ip4_table *one = src;
 
     if (UNLIKELY(dst == NULL || src == NULL || info == NULL || one->ip_count - count < 0)) {
-        LOG_ERROR("Parameter exception(dst: %p, src: %p, info: %p, count: %d).", dst, src, info, one->ip_count);
+        LOG_ERROR("Parameter exception(dst: %p, src: %p, info: %p, count: %d).", dst, src, info, count);
         return ERRCODE_INNER;
     }
 
@@ -577,7 +577,7 @@ void ip4_process(void *data[], int count)
             tlv_icmp->data[tlv_icmp->count++] = mbuf;
             break;
         case IPPROTO_TCP:
-            DPDK_HEADROOM(mbuf)->l4 = ip4hdr + mbuf->l3_len;
+            DPDK_HEADROOM(mbuf)->l4 = (void *)ip4hdr + mbuf->l3_len;
             tlv_tcp4->data[tlv_tcp4->count++] = mbuf;
             break;
         case IPPROTO_UDP:

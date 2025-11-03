@@ -274,6 +274,7 @@ static INLINE void _dp_mbuf_send(const uint16_t ports[], int count)
         if (cnt != 0) {
             int nums = dpdk_pktmbuf_tx(port, tlv_thread_id, tx->data, cnt);
             if (UNLIKELY(nums != cnt)) {
+                LOG_WARN("DROP pktmbuf count = %d", cnt - nums);
                 dpdk_pktmbuf_push(tx->data + nums, cnt - nums);
             }
 

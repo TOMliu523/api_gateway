@@ -27,7 +27,7 @@
 #define API_IP4_MODULE_NAME "ip4"
 #define API_IP4_LIST_NAME "entries"
 
-#define API_INTERFACE_FORMAT "/v1:" API_IP4_MODULE_NAME "/" API_IP4_LIST_NAME "[name='%s']/*"
+#define API_INTERFACE_FORMAT "/v1:" API_IP4_MODULE_NAME "/" API_IP4_LIST_NAME "[interface-name='%s']/*"
 
 struct api_param {
     const char *name;
@@ -172,8 +172,8 @@ static int _api_ip4_obj_gen(void *array, sr_val_t *val, size_t val_cnt)
                 ret = api_json_add_long(obj, "mask", val[j].data.uint8_val);
             } else if (len >= 5 && strcmp(xpath + len - 5, "/type") == 0) {
                 ret = api_json_add_string(obj, "type", val[j].data.string_val);
-            } else if (len >= 5 && strcmp(xpath + len - 5, "/name") == 0) {
-                ret = api_json_add_string(obj, "name", val[j].data.string_val);
+            } else if (len >= 15 && strcmp(xpath + len - 15, "/interface-name") == 0) {
+                ret = api_json_add_string(obj, "interface-name", val[j].data.string_val);
             } else {
                 LOG_ERROR("Not exist element '%s'.", xpath);
                 goto _quit;
@@ -213,17 +213,24 @@ static int _api_ip4_del_parse(struct api_param_hdr **pp_param_hdr, struct root *
         return code;
     }
 
+    if (count <= 0) {
+        LOG_ERROR("Invalid parameter.");
+        return ERRCODE_PARAMETER_INVALID;
+    }
+
     param_hdr = _api_ip4_param_hdr_alloc(count);
     if (param_hdr == NULL) {
         code = ERRCODE_OOM;
         goto _quit;
     }
 
+    code = ERRCODE_PARAMETER_INVALID;
     for (int i = 0; i < count; i++) {
         param = &param_hdr->param[i];
 
         obj = api_json_array_get(array, i);
         if (obj == NULL) {
+            LOG_ERROR("Invalid parameter.");
             goto _quit;
         }
 
@@ -274,7 +281,7 @@ static int _api_ip4_get_type(void *obj)
         return IP_TYPE_INVALID;
     }
 
-    for (int i = 0; i < ARR_NUMS(sp_ip4_type_str); i++) {
+    for (size_t i = 0; i < ARR_NUMS(sp_ip4_type_str); i++) {
         if (strcmp(string, sp_ip4_type_str[i]) == 0) {
             return i;
         }
@@ -353,9 +360,10 @@ static int _api_ip4_post_parse(struct api_param_hdr **pp_param_hdr, struct root 
             goto _quit;
         }
 
-        param->mask = (uint16_t) lvalue;
+        param->mask = (uint8_t) lvalue;
         param->ip_type = _api_ip4_get_type(obj);
-        if (param->ip_type <= IP_TYPE_INVALID || param->ip_type >= IP_TYPE_MAX) {
+        if (param->ip_type == IP_TYPE_INVALID || param->ip_type == IP_TYPE_MAX) {
+            LOG_ERROR("Invalid parameter.");
             goto _quit;
         }
     }
@@ -668,8 +676,10 @@ static void _api_ip4_update(struct api_ip4_hdr *ip4_hdr, struct root *root)
     api_thread_config_update(root, position, ip4_hdr->route4_table, route4_conf_destroy);
 
     dp = root->dpdk_thread[0];
-    dpdk_ring_mp_push(dp->notice_ring, ip4_hdr->arp, ip4_hdr->ele_count);
-    memset(ip4_hdr->arp, 0, ip4_hdr->ele_count * sizeof(*ip4_hdr->arp));
+    if (ip4_hdr->arp != NULL) {
+        dpdk_ring_mp_push(dp->notice_ring, ip4_hdr->arp, ip4_hdr->ele_count);
+        memset(ip4_hdr->arp, 0, ip4_hdr->ele_count * sizeof(*ip4_hdr->arp));
+    }
 }
 
 API_POST(/v1/network/ip4, ip4)

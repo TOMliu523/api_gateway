@@ -13,6 +13,8 @@
 #include "atomic.h"
 #include "dpdk_fib6.h"
 
+#define DPDK_FIB6_ITEM_MIN 32
+
 struct dpdk_fib6 *dpdk_fib6_create(int hw_numa_id, int max_item)
 {
     int ret = 0;
@@ -20,14 +22,15 @@ struct dpdk_fib6 *dpdk_fib6_create(int hw_numa_id, int max_item)
     char name[32] = "";
     struct timespec spec = {0};
     struct dpdk_fib6 *fib = NULL;
+    int n_item = (max_item < DPDK_FIB6_ITEM_MIN) ? DPDK_FIB6_ITEM_MIN : max_item;
     struct rte_fib6_conf conf = {
         .type = RTE_FIB6_TRIE,
         .default_nh = DPDK_FIB6_DEFAULT,
-        .max_routes = max_item,
+        .max_routes = n_item,
         .rib_ext_sz = 0,
         .trie = {
             .nh_sz = RTE_FIB6_TRIE_4B,
-            .num_tbl8 = max_item / 3,
+            .num_tbl8 = 2 * n_item,
         },
     };
 
