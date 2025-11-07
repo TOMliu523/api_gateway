@@ -223,9 +223,3 @@ void snat_thread_destroy(void *ptr)
         s_snat_table = NULL;
     }
 }
-
-// Refresh or publish thread runtime configuration data
-void snat_thread_config_refresh(void *arg)
-{
-    s_snat_table = arg;
-}

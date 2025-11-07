@@ -439,8 +439,3 @@ void route6_thread_destroy(void *ptr)
     dpdk_fib6_destroy(table->fib);
     dpdk_free(table);
 }
-
-void route6_thread_config_refresh(void *arg)
-{
-    s_route6_table = arg;
-}

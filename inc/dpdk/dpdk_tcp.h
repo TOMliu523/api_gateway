@@ -9,6 +9,7 @@
 
 #include <rte_ip4.h>
 #include <rte_tcp.h>
+#include <rte_gro.h>
 #include <rte_mbuf_core.h>
 
 #include "dpdk_ip4.h"
@@ -32,6 +33,19 @@
 #define DPDK_TCP_RX_CKSUM_BAD RTE_MBUF_F_RX_L4_CKSUM_BAD
 #define DPDK_TCP_RX_CKSUM_GOOD RTE_MBUF_F_RX_L4_CKSUM_GOOD
 #define DPDK_TCP_RX_CKSUM_NONE RTE_MBUF_F_RX_L4_CKSUM_NONE
+
+#define DPDK_TCP_TX_CKSUM RTE_MBUF_F_TX_TCP_CKSUM
+
+static INLINE uint16_t dpdk_tcp4_mbuf_cksum(struct dpdk_mbuf *m, const struct dpdk_ip4_hdr *ip4hdr)
+{
+    if (m->nb_segs == 1) {
+        const void *tcphdr = (const void *)(ip4hdr + 1);
+        return rte_ipv4_udptcp_cksum(ip4hdr, tcphdr);
+    } else {
+        uint16_t l4_off = (intptr_t)ip4hdr - (intptr_t)DPDK_HEADROOM(m)->l2;
+        return rte_ipv4_udptcp_cksum_mbuf(m, ip4hdr, l4_off);
+    }
+}
 
 static INLINE bool dpdk_tcp4_mbuf_cksum_verify(const struct dpdk_mbuf *m, const struct dpdk_tcp_hdr *tcp_hdr)
 {

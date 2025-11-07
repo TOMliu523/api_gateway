@@ -382,6 +382,11 @@ int ip4_conf_table_create_and_delete(void **dst, void *src, const struct ip4_inf
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
 // Data plane interface
 
+#define IP4_VERSION 4
+#define IP4_IHL_NO_OPTION 5
+#define IP4_HEADER_HOP_LIMITS 64
+#define IP4_HEADER_VERSION_IHL ((IP4_VERSION << 4) | IP4_IHL_NO_OPTION)
+
 static int _ip4_get_by_port(uint32_t *addr, uint32_t target_addr, int port)
 {
     int ret = 0;
@@ -598,6 +603,27 @@ void ip4_arp_refresh(void)
     l2_arp_refresh(_ip4_get_by_port);
 }
 
+void ip4_header_init(struct dpdk_ip4_hdr *ip4hdr, uint32_t saddr, uint32_t daddr, uint8_t proto, uint16_t total_len)
+{
+    ip4hdr->version_ihl = IP4_HEADER_VERSION_IHL;
+    ip4hdr->type_of_service = 0;
+    ip4hdr->total_length = dpdk_cpu_to_be_16(total_len);
+    ip4hdr->packet_id = 0;
+    ip4hdr->fragment_offset = 0;
+    ip4hdr->time_to_live = IP4_HEADER_HOP_LIMITS;
+    ip4hdr->next_proto_id = proto;
+    ip4hdr->hdr_checksum = 0;
+    ip4hdr->src_addr = saddr;
+    ip4hdr->dst_addr = daddr;
+}
+
+void ip4_pktmbuf_replay(struct dpdk_mbuf *m, uint8_t proto, uint16_t total_len)
+{
+    struct dpdk_ip4_hdr *ip4hdr = DPDK_HEADROOM(m)->l3;
+
+    ip4_header_init(ip4hdr, ip4hdr->dst_addr, ip4hdr->src_addr, proto, total_len);
+}
+
 enum IP_LOCAL_CLASS ip4_local_class(uint16_t port, uint32_t addr)
 {
     int ret = 0;
@@ -655,9 +681,4 @@ void *ip4_table_startup(void ***pp_ip4_table, int nic_count, int hw_numa_id)
 void ip4_table_destroy(void *ptr)
 {
     _ip4_conf_table_destroy(ptr);
-}
-
-void ip4_thread_config_refresh(void *arg)
-{
-    s_ip4_table = arg;
 }

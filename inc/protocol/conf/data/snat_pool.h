@@ -58,7 +58,6 @@ struct snat_pool {
     };
 };
 
-extern void snat_thread_config_refresh(void *);
 extern void *snat_thread_create(void ***, int);
 extern void snat_thread_destroy(void *);
 

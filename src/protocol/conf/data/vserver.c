@@ -427,8 +427,3 @@ void vserver_thread_destroy(void *ptr)
         sp_vs_table = NULL;
     }
 }
-
-void vserver_thread_config_refresh(void *arg)
-{
-    sp_vs_table = arg;
-}

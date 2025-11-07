@@ -168,4 +168,26 @@ extern __thread struct thread_config *tlv_th_cfg;
 extern __thread uint64_t tlv_rx_offload[DPDK_ETHPORT_MAX];
 extern __thread uint64_t tlv_tx_offload[DPDK_ETHPORT_MAX];
 
+static INLINE bool tx_offload_f_test(uint16_t port, uint64_t f)
+{
+    return ((tlv_tx_offload[port] & f) != 0);
+}
+
+static INLINE bool rx_offload_f_test(uint16_t port, uint64_t f)
+{
+    return ((tlv_rx_offload[port] & f) != 0);
+}
+
+static INLINE void pktmbuf_drop(struct dpdk_mbuf *m)
+{
+    struct pkt_store *drop = tlv_drop;
+    drop->data[drop->count++] = m;
+}
+
+static INLINE void pktmbuf_send(struct dpdk_mbuf *m)
+{
+    struct pkt_tx *tx = &tlv_tx[m->port];
+    tx->data[tx->count++] = m;
+}
+
 #endif // __TYPE_H__

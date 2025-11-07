@@ -9,6 +9,7 @@
 #include <stdint.h>
 
 #include "l3.h"
+#include "dpdk_ip4.h"
 
 extern void ip4_process(void *[], int);
 extern void ip4_table_destroy(void *);
@@ -32,4 +33,6 @@ extern void ip4_arp_refresh(void);
  */
 extern enum IP_LOCAL_CLASS ip4_local_class(uint16_t port, uint32_t ip);
 
-extern void ip4_thread_config_refresh(void *arg);
+extern void ip4_header_init(struct dpdk_ip4_hdr *ip4hdr, uint32_t saddr,
+                            uint32_t daddr, uint8_t proto, uint16_t payload_len);
+extern void ip4_pktmbuf_replay(struct dpdk_mbuf *m, uint8_t proto, uint16_t total_len);

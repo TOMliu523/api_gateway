@@ -597,6 +597,19 @@ int l2_gratuitous_arp_gen(struct dpdk_mbuf *mbuf, uint16_t port, uint32_t addr, 
     return 0;
 }
 
+bool l2_pktmbuf_is_ip4(const struct dpdk_mbuf *m)
+{
+    struct dpdk_eth_hdr *ethhdr = DPDK_HEADROOM(m)->l2;
+
+    return (dpdk_be_to_cpu_16(ethhdr->ether_type) == DPDK_ETHER_IP4) ? true : false;
+}
+
+void l2_pktmbuf_repay(struct dpdk_mbuf *m)
+{
+    struct dpdk_eth_hdr *ethhdr = DPDK_HEADROOM(m)->l2;
+    SWAP(ethhdr->dst_addr, ethhdr->src_addr);
+}
+
 void l2_process(void *data[], int count)
 {
     int arp_count = 0;
@@ -686,9 +699,4 @@ void l2_thread_mac_destroy(void *ptr)
 void l2_thread_port_mac(uint16_t port, struct dpdk_mac *mac)
 {
     *mac = s_mac[port];
-}
-
-void l2_thread_config_refresh(void *arg)
-{
-    s_arp_table = arg;
 }

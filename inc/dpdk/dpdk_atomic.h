@@ -4,6 +4,9 @@
  * description:
  *****************************************************************************/
 
+#ifndef __DPDK_ATOMIC_H__
+#define __DPDK_ATOMIC_H__
+
 #include <rte_atomic.h>
 
 #include "macro.h"
@@ -12,6 +15,11 @@
 #define dpdk_atomic32_t rte_atomic32_t
 #define dpdk_atomic64_t rte_atomic64_t
 #define dpdk_int128_t rte_int128_t
+
+static INLINE void dpdk_atomic16_init(dpdk_atomic16_t *v)
+{
+    rte_atomic16_init(v);
+}
 
 static INLINE int dpdk_atomic16_cmpset(volatile uint16_t *dst, uint16_t exp, uint16_t src)
 {
@@ -46,6 +54,11 @@ static INLINE void dpdk_atomic16_inc(dpdk_atomic16_t *v)
 static INLINE void dpdk_atomic16_dec(dpdk_atomic16_t *v)
 {
     rte_atomic16_dec(v);
+}
+
+static INLINE void dpdk_atomic32_init(dpdk_atomic32_t *v)
+{
+    rte_atomic32_inc(v);
 }
 
 static INLINE int dpdk_atomic32_cmpset(volatile uint32_t *dst, uint32_t exp, uint32_t src)
@@ -163,3 +176,5 @@ static INLINE int dpdk_atomic128_cmp_exchange(dpdk_int128_t *dst, dpdk_int128_t 
 {
     return rte_atomic128_cmp_exchange(dst, exp, src, weak, success, failure);
 }
+
+#endif // __DPDK_ATOMIC_H__

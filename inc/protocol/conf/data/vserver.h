@@ -92,7 +92,6 @@ struct vserver6_kv_blk {
 
 extern void *vserver_thread_create(void ***, int);
 extern void vserver_thread_destroy(void *);
-extern void vserver_thread_config_refresh(void *);
 extern void vserver4_lookup(struct vserver4_kv_blk *);
 
 #endif // __VSERVER_H__

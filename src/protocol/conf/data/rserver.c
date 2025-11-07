@@ -485,8 +485,3 @@ void rserver_thread_destroy(void *ptr)
         }
     }
 }
-
-void rserver_thread_config_refresh(void *arg)
-{
-    s_rs_table = arg;
-}

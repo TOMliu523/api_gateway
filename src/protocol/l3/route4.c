@@ -515,8 +515,3 @@ void route4_thread_destroy(void *ptr)
         s_route4_table = NULL;
     }
 }
-
-void route4_thread_config_refresh(void *arg)
-{
-    s_route4_table = arg;
-}

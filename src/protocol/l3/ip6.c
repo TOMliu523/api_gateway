@@ -439,6 +439,8 @@ int ip6_conf_table_create_and_delete(void **dst, void *src, const struct ip6_inf
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
 // Data plane interface
 
+#define IP6_HEADER_HOP_LIMIT 64
+
 static INLINE bool _ip6_is_local(int port, const void *key)
 {
     int ret = 0;
@@ -1064,6 +1066,28 @@ static void _ip6_ndp_gen_bulk(void *data[], int count)
     }
 }
 
+void ip6_header_init(struct dpdk_mbuf *m, struct dpdk_ip6_addr *saddr,
+                     struct dpdk_ip6_addr *daddr, uint8_t proto, uint16_t len)
+{
+    struct dpdk_ip6_hdr *ip6hdr = DPDK_HEADROOM(m)->l3;
+
+    ip6hdr->vtc_flow = dpdk_cpu_to_be_32(IP6_ONLY_VERSION);
+    ip6hdr->payload_len = dpdk_cpu_to_be_16(len);
+    ip6hdr->proto = proto;
+    ip6hdr->hop_limits = IP6_HEADER_HOP_LIMIT;
+    ip6hdr->src_addr = *saddr;
+    ip6hdr->dst_addr = *daddr;
+}
+
+void ip6_pktmbuf_reply(struct dpdk_mbuf *m, uint8_t proto, uint16_t payload_len)
+{
+    struct dpdk_ip6_hdr *ip6hdr = DPDK_HEADROOM(m)->l3;
+    struct dpdk_ip6_addr saddr = ip6hdr->dst_addr;
+    struct dpdk_ip6_addr daddr = ip6hdr->src_addr;
+
+    ip6_header_init(m, &saddr, &daddr, proto, payload_len);
+}
+
 void ip6_thread_ndp_table_destroy(void *nt)
 {
     struct ndp_table *table = nt;
@@ -1282,10 +1306,4 @@ void ip6_ndp_update_or_create(void *data)
     }
 
     _ip6_ndp_table_update(mbuf->port, addr, (struct dpdk_mac *)ndpopt->data, override);
-}
-
-void ip6_thread_config_refresh(void *ip6_table, void *ndp_table)
-{
-    s_ip6_table = ip6_table;
-    s_ndp_table = ndp_table;
 }

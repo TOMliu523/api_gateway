@@ -18,7 +18,7 @@
 #define dpdk_shift_u64(v, n) RTE_SHIFT_VAL64(v, n)
 
 #define dpdk_gencomnmask_u32(high, low) RTE_GENMASK32(high, low)
-#define dpdk_gencomnmask_u64(high, low) RTE_GENMASK32(high, low)
+#define dpdk_gencomnmask_u64(high, low) RTE_GENMASK64(high, low)
 
 // reg = 0x12345678 mask = 0x00FF0000 result = 0x34
 #define dpdk_filed_get_u32(mask, reg) RTE_FIELD_GET32(mask, reg)

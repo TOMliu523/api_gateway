@@ -28,6 +28,9 @@ struct iface {
     uint16_t port[];
 };
 
+extern bool l2_pktmbuf_is_ip4(const struct dpdk_mbuf *m);
+extern void l2_pktmbuf_repay(struct dpdk_mbuf *m);
+
 extern int l2_conf_port_mac(uint16_t port, struct dpdk_mac *mac);
 
 extern void *l2_thread_mac_create(int);
@@ -44,7 +47,6 @@ extern int l2_arp_mac_get(struct dpdk_mac *mac, int port, uint32_t be_ip);
 extern int l2_gratuitous_arp_gen(struct dpdk_mbuf *, uint16_t, uint32_t, const struct dpdk_mac *);
 
 extern void l2_process(void **data, int count);
-extern void l2_thread_config_refresh(void *arg);
 
 static INLINE struct dpdk_eth_hdr *dpdk_pktmbuf_eth(struct dpdk_mbuf *m)
 {
