@@ -314,7 +314,7 @@ static int _api_vs_param_addr_parse(struct api_param *param, struct param_info *
     param->type = type;
     param->port = (uint16_t) port;
 
-    if (strchr(addr_str, ':') == 0) {
+    if (strchr(addr_str, ':') == NULL) {
         struct addr_v4_info *v4_info = NULL;
 
         param->af = AF_INET;

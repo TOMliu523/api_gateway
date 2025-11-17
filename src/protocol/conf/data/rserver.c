@@ -75,7 +75,7 @@ static int _rs_conf_table_append_check(const struct rserver_table *table, int co
 
 static int _rs_conf_table_delete_check(const struct rserver_table *table, int count)
 {
-    if (UNLIKELY(table->count >= count)) {
+    if (UNLIKELY(table->count < count)) {
         LOG_ERROR("Real server count error.");
         return ERRCODE_INNER;
     }
@@ -103,11 +103,10 @@ static void *__rs_conf_table_create(int count, int hw_numa_id)
 
 static int _rs_conf_table_delete(struct rserver_table *dst, struct rserver_table *src, struct rserver *rs[], int count)
 {
-    int n = 0;
     bool has = false;
     struct rserver *one = NULL;
 
-    for (int i = 0; i <= dst->max_id; i++) {
+    for (int i = 0; i <= src->max_id; i++) {
         if (src->store[i] == NULL) {
             continue;
         }
@@ -123,11 +122,11 @@ static int _rs_conf_table_delete(struct rserver_table *dst, struct rserver_table
         }
 
         if (!has) {
-            dst->store[n++] = one;
+            dst->store[i] = one;
         }
     }
 
-    dst->count = n;
+    dst->count = src->count - count;
     return 0;
 }
 
@@ -138,18 +137,26 @@ static int _rs_conf_table_append(struct rserver_table *dst, struct rserver_table
     for (int i = 0; i <= src->max_id; i++) {
         if (src->store[i] != NULL) {
             dst->store[i] = src->store[i];
-        }
-    }
-
-    for (int i = 0; i <= dst->max_id; i++) {
-        if (dst->store[i] == NULL) {
+        } else if (n < count) {
+            rs[n]->id = i;
             dst->store[i] = rs[n++];
-            if (n == count) {
-                break;
-            }
         }
     }
 
+    if (n >= count) {
+        goto _quit;
+    }
+
+    for (int i = src->max_id + 1; i <= dst->max_id; i++) {
+        if (n < count) {
+            rs[n]->id = i;
+            dst->store[i] = rs[n++];
+        } else {
+            break;
+        }
+    }
+
+_quit:
     dst->count = src->count + count;
     return 0;
 }
@@ -276,7 +283,7 @@ int rs_conf_get_by_id(struct rserver **pp_rs, void *arg, uint32_t id)
 {
     struct rserver_table *table = (struct rserver_table *)arg;
 
-    if (UNLIKELY(arg == NULL)) {
+    if (UNLIKELY(pp_rs == NULL || arg == NULL || id > table->max_id)) {
         LOG_ERROR("Invalid parameter.");
         return ERRCODE_PARAMETER_INVALID;
     }
@@ -293,10 +300,10 @@ int _rs_conf_table_create(struct rserver_table **pp_dst, const struct rserver_ta
     if (src == NULL) {
         total_count = count;
     } else {
-        if (src->count + count >= src->max_id) {
+        if (src->count + count > src->max_id + 1) {
             total_count = src->count + count;
         } else {
-            total_count = src->max_id;
+            total_count = src->max_id + 1;
         }
     }
 
@@ -309,7 +316,7 @@ int _rs_conf_table_create(struct rserver_table **pp_dst, const struct rserver_ta
     return 0;
 }
 
-int rs_conf_get_by_key(struct rserver **pp_rs, void *rs_table, int af, union inet_addr *addr, uint16_t port)
+int rs_conf_get_by_key(struct rserver **pp_rs, void *rs_table, int af, const union inet_addr *addr, uint16_t port)
 {
     struct rserver *rs = NULL;
     struct rserver_v4 *v4 = NULL;
@@ -323,7 +330,7 @@ int rs_conf_get_by_key(struct rserver **pp_rs, void *rs_table, int af, union ine
 
     for (int i = 0; i <= table->max_id; i++) {
         rs = table->store[i];
-        if (rs->af != af) {
+        if (rs == NULL || rs->af != af) {
             continue;
         }
 
@@ -365,8 +372,8 @@ int rs_conf_table_get_element(const void *arg, struct rserver *array[], int *p_c
     const struct rserver_table *table = (const struct rserver_table *) arg;
 
     if (UNLIKELY(arg == NULL || array == NULL || p_count == NULL)) {
-        LOG_ERROR("OOM.");
-        return ERRCODE_OOM;
+        LOG_ERROR("Invalid parameter.");
+        return ERRCODE_PARAMETER_INVALID;
     }
 
     count = *p_count;
@@ -409,6 +416,7 @@ int rs_conf_table_create_and_delete(void **pp_dst, void *src, struct rserver *rs
         goto _quit;
     }
 
+    *pp_dst = dst;
     return 0;
 
 _quit:
@@ -420,7 +428,7 @@ int rs_conf_table_create_and_append(void **pp_dst, void *src, struct rserver *rs
 {
     int code = 0;
     struct rserver_table *dst = NULL;
-    const struct rserver_table *table = NULL;
+    const struct rserver_table *table = src;
 
     if (UNLIKELY(pp_dst == NULL || src == NULL || rs == NULL)) {
         LOG_ERROR("Invalid parameter.");
@@ -442,6 +450,7 @@ int rs_conf_table_create_and_append(void **pp_dst, void *src, struct rserver *rs
         goto _quit;
     }
 
+    *pp_dst = dst;
     return 0;
 
 _quit:
@@ -459,13 +468,10 @@ void *rserver_thread_create(void ***pp_rs_table, int hw_numa_id)
 {
     struct rserver_table *table = NULL;
 
-    table = dpdk_malloc_numa(sizeof(*table), hw_numa_id);
+    table = __rs_conf_table_create(0, hw_numa_id);
     if (UNLIKELY(table == NULL)) {
-        LOG_ERROR("OOM.");
         return NULL;
     }
-
-    memset(table, 0, sizeof(*table));
 
     s_rs_table = table;
     *pp_rs_table = (void **)&s_rs_table;

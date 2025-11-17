@@ -19,5 +19,5 @@ extern int rs_conf_table_create_and_append(void **, void *, struct rserver *[], 
 extern int rs_conf_table_create_and_delete(void **, void *, struct rserver *[], int, int);
 extern void rs_conf_table_destroy(void *);
 
-extern int rs_conf_get_by_key(struct rserver **, void *, int, union inet_addr *, uint16_t);
+extern int rs_conf_get_by_key(struct rserver **, void *, int, const union inet_addr *, uint16_t);
 extern int rs_conf_get_by_id(struct rserver **, void *, uint32_t);

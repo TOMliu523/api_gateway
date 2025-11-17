@@ -8,9 +8,9 @@
 #include "ip4.h"
 #include "log.h"
 #include "tcp.h"
-#include "hash.h"
 #include "type.h"
 #include "vserver.h"
+#include "dpdk_crc.h"
 #include "tcp_inner.h"
 #include "dpdk_type.h"
 #include "dpdk_core.h"
@@ -189,14 +189,16 @@ static INLINE uint32_t _tcp4_irs_get(const struct dpdk_tcp_hdr *tcphdr, const st
         uint32_t dip;
         uint16_t sport;
         uint16_t dport;
+        uint32_t secretkey;
     } f = {
         .sip = ip4hdr->src_addr,
         .dip = ip4hdr->dst_addr,
         .sport = tcphdr->src_port,
         .dport = tcphdr->dst_port,
+        .secretkey = TCP_IP4_IRS_SECRETKEY,
     };
 
-    hash_32(&f, sizeof(f), TCP_IP4_IRS_SECRETKEY, &irs);
+    irs = dpdk_hash_crc(&f, sizeof(f));
     return (irs + ((uint32_t)(s_inv_hz_us * dpdk_timer_cycles()) >> 2));
 }
 
@@ -230,9 +232,14 @@ static INLINE int _tcp4_pktmbuf_syn_parse(struct dpdk_tcp_hdr *tcphdr, struct tc
     tcb->send_ts_ok = opt_info.send_ts_ok;
     tcb->mss = MIN(((opt_info.mss != 0) ? opt_info.mss : TCP_IP4_MSS_DEFAULT), TCP_IP4_MSS);
 
+    if (opt_info.tsval != 0) {
+        tcb->send_ts_ok = TCP_OPTION_TS_OK;
+    }
+
     tcb->rcv.irs = dpdk_be_to_cpu_32(tcphdr->sent_seq);
     tcb->rcv.nxt = tcb->rcv.irs;
     tcb->rcv.wnd = dpdk_be_to_cpu_32(tcphdr->rx_win);
+    tcb->rcv.end = tcb->rcv.nxt + tcb->rcv.wnd;
 
     return 0;
 }

@@ -52,6 +52,9 @@
 #define TCP_WIN_SCALE (6)
 #define TCP_WIN_SIZE_DEFAULT (TCP_HDR_WIN * (1 << TCP_WIN_SCALE))
 
+#define TCP_OPTION_TS_NO 0
+#define TCP_OPTION_TS_OK 1
+
 enum TCP_OPTION {
     TCP_OPTION_EOL,
     TCP_OPTION_NOP,
@@ -117,6 +120,7 @@ struct send_win {
 struct recv_win {
     uint32_t nxt;
     uint32_t wnd;
+    uint32_t end;
     uint32_t irs;
 };
 

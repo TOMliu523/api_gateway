@@ -433,7 +433,7 @@ int api_string_to_addr(int *af, union inet_addr *addr, const char *str)
         return ERRCODE_PARAMETER_INVALID;
     }
 
-    if (strchr(str, ':') == 0) {
+    if (strchr(str, ':') == NULL) {
         *af = AF_INET;
     } else {
         *af = AF_INET6;

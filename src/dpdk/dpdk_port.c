@@ -81,7 +81,7 @@ static struct dpdk_port_st s_dpdk_port = {
         },
     },
     .speed = {
-        .nums = 16,
+        .nums = 18,
         .ex[0] = { .prefix = "UNKNOWN", },
         .ex[1] = { .prefix = "FIXED", },
         .ex[2] = { .prefix = "10MH", },
@@ -276,6 +276,46 @@ static int dpdk_port_info_init(void)
     return 0;
 }
 
+static int _dpdk_port_meta_init(int port, int cpu_count, uint16_t reta_size)
+{
+    int ret = 0;
+    int bucket = 0;
+    uint16_t group = (reta_size + 63) / 64;
+    struct rte_eth_rss_reta_entry64 *one = NULL;
+    struct rte_eth_rss_reta_entry64 *reta_entry64 = NULL;
+
+    reta_entry64 = dpdk_malloc(sizeof(*reta_entry64) * group);
+    if (reta_entry64 == NULL) {
+        LOG_ERROR("OOM.");
+        return -1;
+    }
+
+    memset(reta_entry64, 0, sizeof(*reta_entry64) * group);
+
+    for (uint16_t g = 0; g < group; g++) {
+        one = &reta_entry64[g];
+
+        for (int j = 0; j < 64; j++) {
+            bucket = g * 64 + j;
+            if (bucket >= reta_size) {
+                break;
+            }
+
+            one->mask |= ((uint64_t) 1 << j);
+            one->reta[j] = bucket % cpu_count;
+        }
+    }
+
+    ret = rte_eth_dev_rss_reta_update(port, reta_entry64, reta_size);
+    dpdk_free(reta_entry64);
+    if (ret != 0) {
+        LOG_ERROR("Rss reta update failure: %s", strerror(-ret));
+        return -1;
+    }
+
+    return 0;
+}
+
 const struct port_info *dpdk_port_info_get(void)
 {
     return &s_dpdk_port.port_info;
@@ -381,6 +421,11 @@ int dpdk_port_startup(int port)
     ret = rte_eth_allmulticast_enable(port);
     if (ret != 0) {
         LOG_ERROR("Failure port(%d) rte_eth_allmulticast_enable: %s", port, strerror(-ret));
+        return -1;
+    }
+
+    ret = _dpdk_port_meta_init(port, nc->cpu_count, dev.reta_size);
+    if (ret != 0) {
         return -1;
     }
 

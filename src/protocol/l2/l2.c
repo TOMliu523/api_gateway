@@ -629,8 +629,8 @@ void l2_process(void *data[], int count)
      * Letting the compiler optimize this loop usually yields better performance,
      * unless manually optimized with SIMD for comparison efficiency.
      */
-    // for (int i = 0; i < count; i++) {
-    UNROLL_LOOP_8(i, count, {
+    for (int i = 0; i < count; i++) {
+    // UNROLL_LOOP_8(i, count, {
         mbuf = data[i];
         eth = dpdk_pktmbuf_eth(mbuf);
 
@@ -660,7 +660,8 @@ void l2_process(void *data[], int count)
         } else {
             tlv_drop->data[tlv_drop->count++] = mbuf;
         }
-    });
+    // });
+    }
 
     arp_count = tlv_arp->count;
     if (arp_count != 0) {

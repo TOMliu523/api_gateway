@@ -443,15 +443,8 @@ static int _api_store_yang_path(char buffer[], int max, const char *yang_path, c
 
 static enum API_STATUS _api_store_apply( struct api_db *db, const struct api_method_node *api, const char *url, void *input, void **output)
 {
-    int ret = 0;
-
     _api_store_set(&db->data, api, url, input);
-    ret = sr_apply_changes(db->sess, API_TIMEOUT);
-    if (ret != SR_ERR_OK) {
-        LOG_ERROR("sr_apply_changes failure: %s", sr_strerror(ret));
-        return API_STATUS_SERVER;
-    }
-
+    sr_apply_changes(db->sess, API_TIMEOUT);
     *output = _api_store_get(&db->data);
     return API_STATUS_OK;
 }

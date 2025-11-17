@@ -95,7 +95,7 @@ static void *_api_rs_hdr_alloc(int cpu_count, int ele_count, bool flags)
         }
     }
 
-    vs_hdr->is_delete = false;
+    vs_hdr->is_delete = flags;
     vs_hdr->cpu_count = cpu_count;
     vs_hdr->ele_count = ele_count;
 
@@ -115,7 +115,29 @@ static void *_api_rs_param_hdr_alloc(int count)
     return param_hdr;
 }
 
-static int _api_rs_info_get(json_t **ptr, const struct rserver *rs)
+static int _api_rs_add_check(struct root *root, const struct api_param_hdr *param_hdr)
+{
+    int code = 0;
+    struct rserver *rs = NULL;
+    const struct api_param *param = NULL;
+    struct dataplane *dp = root->dpdk_thread[0];
+
+    for (int i = 0; i < param_hdr->count; i++) {
+        param = &param_hdr->param[i];
+        code = rs_conf_get_by_key(&rs, dp->tc->rs_table, param->af, &param->addr, param->port);
+        switch (code) {
+        case 0:
+            LOG_ERROR("Real server exist");
+            return ERRCODE_RSERVER_DUPLICATE;
+        case ERRCODE_RSERVER_NOT_FOUND: break;
+        default: return ERRCODE_INNER;
+        }
+    }
+
+    return 0;
+}
+
+static int _api_rs_info_get(void **ptr, const struct rserver *rs)
 {
     int ret = 0;
     json_t *obj = NULL;
@@ -147,7 +169,7 @@ static int _api_rs_info_get(json_t **ptr, const struct rserver *rs)
         base = &v6->base;
     }
 
-    ret = api_json_add_long(obj, "port", base->port);
+    ret = api_json_add_long(obj, "port", dpdk_be_to_cpu_16(base->port));
     if (ret != 0) {
         goto _quit;
     }
@@ -186,7 +208,7 @@ static int _api_rs_post_parse(struct api_param_hdr **pp_param_hdr, void *json)
         param = &param_hdr->param[i];
 
         obj = api_json_array_get(array, i);
-        if (obj != NULL) {
+        if (obj == NULL) {
             goto _quit;
         }
 
@@ -195,7 +217,7 @@ static int _api_rs_post_parse(struct api_param_hdr **pp_param_hdr, void *json)
             goto _quit;
         }
 
-        if (strchr(svalue, ':') == 0) {
+        if (strchr(svalue, ':') == NULL) {
             param->af = AF_INET;
             inet_pton(AF_INET, svalue, &param->addr);
         } else {
@@ -208,7 +230,7 @@ static int _api_rs_post_parse(struct api_param_hdr **pp_param_hdr, void *json)
             goto _quit;
         }
 
-        param->port = (uint16_t) port;
+        param->port = dpdk_cpu_to_be_16((uint16_t)port);
     }
 
     *pp_param_hdr = param_hdr;
@@ -221,7 +243,61 @@ _quit:
 
 static int _api_rs_del_parse(struct api_param_hdr **pp_param_hdr, void *json)
 {
-    return _api_rs_post_parse(pp_param_hdr, json);
+    int code = 0;
+    void *obj = NULL;
+    size_t count = 0;
+    void *array = NULL;
+    uint64_t port = 0;
+    const char *svalue = NULL;
+    struct api_param *param = NULL;
+    struct api_param_hdr *param_hdr = NULL;
+
+    code = api_v1_delete_list(&array, &count, json, API_RS_MODULE_NAME, API_RS_LIST_NAME);
+    if (code != 0) {
+        return code;
+    }
+
+    param_hdr = _api_rs_param_hdr_alloc(count);
+    if (param_hdr == NULL) {
+        code = ERRCODE_OOM;
+        goto _quit;
+    }
+
+    for (size_t i = 0; i < count; i++) {
+        param = &param_hdr->param[i];
+
+        obj = api_json_array_get(array, i);
+        if (obj == NULL) {
+            goto _quit;
+        }
+
+        svalue = api_json_get_string(obj, "addr");
+        if (svalue == NULL) {
+            goto _quit;
+        }
+
+        if (strchr(svalue, ':') == NULL) {
+            param->af = AF_INET;
+            inet_pton(AF_INET, svalue, &param->addr);
+        } else {
+            param->af = AF_INET6;
+            inet_pton(AF_INET6, svalue, &param->addr);
+        }
+
+        code = api_json_get_long(&port, obj, "port");
+        if (code != 0) {
+            goto _quit;
+        }
+
+        param->port = dpdk_cpu_to_be_16((uint16_t)port);
+    }
+
+    *pp_param_hdr = param_hdr;
+    return 0;
+
+_quit:
+    _api_rs_param_hdr_free(param_hdr);
+    return code;
 }
 
 static int _api_rs_del(struct api_vs_hdr **pp_vs_hdr, struct root *root, struct api_param_hdr *param_hdr)
@@ -297,6 +373,11 @@ static int _api_rs_add(struct api_vs_hdr **pp_vs_hdr, struct root *root, struct 
     struct api_vs_hdr *vs_hdr = NULL;
     int cpu_count = root->hw_info.cpu_count;
 
+    code = _api_rs_add_check(root, param_hdr);
+    if (code != 0) {
+        goto _quit;
+    }
+
     vs_hdr = _api_rs_hdr_alloc(cpu_count, param_hdr->count, true);
     if (vs_hdr == NULL) {
         code = ERRCODE_OOM;
@@ -307,11 +388,12 @@ static int _api_rs_add(struct api_vs_hdr **pp_vs_hdr, struct root *root, struct 
         dp = root->dpdk_thread[i];
 
         for (int j = 0; j < param_hdr->count; j++) {
-            param = &param_hdr->param[i];
+            param = &param_hdr->param[j];
 
             if (param->af == AF_INET) {
-                v4 = rs_conf_v4_alloc(dp->hw_cpu_id);
+                v4 = rs_conf_v4_alloc(dp->hw_numa_id);
                 if (v4 == NULL) {
+                    code = ERRCODE_OOM;
                     goto _quit;
                 }
 
@@ -326,6 +408,7 @@ static int _api_rs_add(struct api_vs_hdr **pp_vs_hdr, struct root *root, struct 
             } else {
                 v6 = rs_conf_v6_alloc(dp->hw_numa_id);
                 if (v6 == NULL) {
+                    code = ERRCODE_OOM;
                     goto _quit;
                 }
 
@@ -346,10 +429,7 @@ static int _api_rs_add(struct api_vs_hdr **pp_vs_hdr, struct root *root, struct 
         }
     }
 
-    for (int i = 0; i < cpu_count; i++) {
-        memset(vs_hdr->rs[i], 0, vs_hdr->ele_count * sizeof(*vs_hdr->rs[i]));
-    }
-
+    vs_hdr->is_delete = false;
     *pp_vs_hdr = vs_hdr;
     return 0;
 
@@ -443,19 +523,23 @@ API_GET(/v1/app/rserver, rserver)
 {
     int code = 0;
     int count = 0;
-    json_t *obj = NULL;
-    json_t *array = NULL;
+    void *obj = NULL;
+    void *array = NULL;
     struct root *root = cfg;
     struct rserver **rs_array = NULL;
     struct thread_config *tc = root->dpdk_thread[0]->tc;
 
-    array = json_array();
-    if (array == NULL) {
-        return api_fail(ERRCODE_OOM);
+    code = api_json_array(&array);
+    if (code != 0) {
+        return api_fail(code);
     }
 
     code = rs_conf_table_get_count(&count, tc->rs_table);
-    if (code == 0) {
+    if (code != 0) {
+        return api_fail(code);
+    }
+
+    if (count == 0) {
         return api_succ(array);
     }
 
@@ -483,7 +567,7 @@ API_GET(/v1/app/rserver, rserver)
     }
 
     api_free(rs_array);
-    return api_succ(NULL);
+    return api_succ(array);
 
 _quit:
     api_free(rs_array);

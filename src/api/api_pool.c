@@ -303,7 +303,7 @@ static int _api_pool_rs_parse(struct api_param *param, void *obj)
             goto _quit;
         }
 
-        if (strchr(svalue, ':') == 0) {
+        if (strchr(svalue, ':') == NULL) {
             one->af = AF_INET;
         } else {
             one->af = AF_INET6;
