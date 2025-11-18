@@ -395,6 +395,34 @@ int api_json_get_long(uint64_t *value, void *obj, const char *name)
     return 0;
 }
 
+int api_json_get_list_info(void **pp_list, size_t *p_len, void *obj, const char *name, bool need)
+{
+    void *array = NULL;
+
+    if (pp_list == NULL || p_len == NULL || obj == NULL) {
+        LOG_ERROR("Parameter invalid.");
+        return ERRCODE_PARAMETER_INVALID;
+    }
+
+    array = api_json_get_object(obj, name);
+    if (array == NULL) {
+        if (need) {
+            LOG_ERROR("Invalid parameter(%s)", name);
+            return ERRCODE_PARAMETER_INVALID;
+        }
+
+        *pp_list = NULL;
+        *p_len = 0;
+
+        return 0;
+    }
+
+    *pp_list = array;
+    *p_len = json_array_size(array);
+
+    return 0;
+}
+
 // Publish the updated configuration from the control plane to the global root
 void api_thread_config_update(void *cfg, void **position[], void *update[], void (*free_cb)(void *))
 {

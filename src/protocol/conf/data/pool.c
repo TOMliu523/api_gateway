@@ -16,7 +16,7 @@
 
 struct pool_table {
     int max_id;
-    int store_count;
+    int count;
     struct pool *store[];
 };
 
@@ -44,41 +44,19 @@ static struct pool_table *_pool_conf_table_create(int count, int hw_numa_id)
     }
 
     table->max_id = count - 1;
-    table->store_count = 0;
+    table->count = 0;
     memset(table->store, 0, count * sizeof(struct pool *));
 
     return table;
 }
 
-static int _pool_conf_table_clone(struct pool_table **dst, const struct pool_table *src, int hw_numa_id)
-{
-    struct pool_table *one = NULL;
-
-    one = _pool_conf_table_create(src->max_id + 1, hw_numa_id);
-    if (UNLIKELY(one == NULL)) {
-        return ERRCODE_OOM;
-    }
-
-    for (int i = 0; i <= src->max_id; i++) {
-        one->store[one->store_count++] = src->store[i];
-    }
-
-    *dst = one;
-    return 0;
-}
-
-static int _pool_conf_table_clone_extend(struct pool_table **dst, const struct pool_table *src, int count, int hw_numa_id)
+static int _pool_conf_table_add_create(struct pool_table **pp_dst, const struct pool_table *src, int count, int hw_numa_id)
 {
     int total = 0;
     struct pool_table *one = NULL;
 
-    total = src->store_count + count;
-    if (UNLIKELY(total > DP_POOL_MAX)) {
-        LOG_ERROR("The number of pool objects exceeds the threshold.");
-        return ERRCODE_POOL_TOO_MANY;
-    }
-
-    if (total > src->max_id) {
+    total = src->count + count;
+    if (total < src->max_id) {
         total = src->max_id + 1;
     }
 
@@ -87,56 +65,98 @@ static int _pool_conf_table_clone_extend(struct pool_table **dst, const struct p
         return ERRCODE_OOM;
     }
 
-    for (int i = 0; i <= src->max_id; i++) {
-        one->store[one->store_count++] = src->store[i];
-    }
-
-    *dst = one;
+    *pp_dst = one;
     return 0;
 }
 
-static int _pool_conf_table_add(struct pool_table *table, struct pool *pools[], int count)
+static int _pool_conf_table_del_create(struct pool_table **pp_dst, const struct pool_table *src, struct pool *pools[], int count, int hw_numa_id)
 {
-    int n = 0;
+    int max_id = -1;
+    bool has = false;
+    struct pool_table *table = NULL;
 
-    for (int i = 0; i <= table->max_id; i++) {
-        if (table->store[i] != NULL) {
+    for (int i = 0; i <= src->max_id; i++) {
+        has = false;
+
+        for (int j = 0; j < count; j++) {
+            if (i == pools[j]->id) {
+                has = true;
+                break;
+            }
+        }
+
+        if (!has) {
+            max_id = i;
+        }
+    }
+
+    table = _pool_conf_table_create(max_id + 1, hw_numa_id);
+    if (table == NULL) {
+        return ERRCODE_OOM;
+    }
+
+    *pp_dst = table;
+    return 0;
+}
+
+static int _pool_conf_table_append_check(const struct pool_table *table, int count)
+{
+    int total = 0;
+
+    total = table->count + count;
+    if (UNLIKELY(total > DP_POOL_MAX)) {
+        LOG_ERROR("The number of pool objects exceeds the threshold.");
+        return ERRCODE_POOL_TOO_MANY;
+    }
+
+    return 0;
+}
+
+static int _pool_conf_table_del_check(const struct pool_table *table, struct pool *pools[], int count)
+{
+    for (int i = 0; i < count; i++) {
+        if (table->store[pools[i]->id] == NULL) {
+            LOG_ERROR("Invalid pool(%s)", pools[i]->name);
+            return ERRCODE_POOL_NOT_EXIST;
+        }
+    }
+
+    return 0;
+}
+
+static void _pool_conf_table_append(struct pool_table *dst, struct pool_table *src, struct pool *pools[], int count)
+{
+    struct pool *one = NULL;
+
+    for (int i = 0, n = 0; i <= dst->max_id; i++) {
+        if (i <= src->max_id && src->store[i] != NULL) {
+            dst->store[i] = src->store[i];
+        } else if (n < count) {
+            one = pools[n++];
+
+            one->id = i;
+            dst->store[i] = one;
+        }
+    }
+
+    dst->count = src->count + count;
+}
+
+static void _pool_conf_table_del(struct pool_table *dst, struct pool_table *src, struct pool *pools[], int count)
+{
+    for (int i = 0; i <= dst->max_id; i++) {
+        if (src->store[i] != NULL) {
+            dst->store[i] = src->store[i];
+        }
+    }
+
+    for (int i = 0; i < count; i++) {
+        if (pools[i]->id > dst->max_id) {
             continue;
         }
 
-        table->store[i] = pools[n];
-        pools[n]->id = i;
-        n += 1;
-
-        if (n == count) {
-            return 0;
-        }
+        dst->store[pools[i]->id] = NULL;
     }
-
-    LOG_ERROR("Inner unknown error.");
-    return ERRCODE_UNKNOWN;
-}
-
-static int _pool_conf_table_del(struct pool_table *table, struct pool *pools[], int count)
-{
-    int i = 0;
-    struct pool *one = NULL;
-
-    for (i = 0; i < count; i++) {
-        one = pools[i];
-        table->store[one->id] = NULL;
-    }
-
-    table->store_count -= count;
-
-    for (i = table->max_id; i >= 0; i--) {
-        if (table->store[i] != NULL) {
-            break;
-        }
-    }
-
-    table->max_id = i;
-    return 0;
 }
 
 static uint32_t _pool_rs_rr_get_next(void *arg)
@@ -236,7 +256,7 @@ int pool_conf_get_by_name(struct pool **target, void *arg, const char *name)
     struct pool *one = NULL;
     struct pool_table *table = (struct pool_table *)arg;
 
-    if (UNLIKELY(arg == NULL)) {
+    if (UNLIKELY(arg == NULL || name == NULL)) {
         LOG_ERROR("Inner invalid parameter.");
         return ERRCODE_INNER;
     }
@@ -252,7 +272,7 @@ int pool_conf_get_by_name(struct pool **target, void *arg, const char *name)
         }
     }
 
-    return 0;
+    return ERRCODE_POOL_NOT_EXIST;
 }
 
 int pool_conf_table_get_count(const void *arg, int *p_count)
@@ -264,7 +284,7 @@ int pool_conf_table_get_count(const void *arg, int *p_count)
         return ERRCODE_PARAMETER_INVALID;
     }
 
-    *p_count = table->store_count;
+    *p_count = table->count;
     return 0;
 }
 
@@ -290,55 +310,57 @@ int pool_conf_table_get_element(const struct pool *pools[], const void *arg, int
     return 0;
 }
 
-int pool_conf_table_del(void **dst, const void *arg, struct pool *pools[], int count, int hw_numa_id)
+int pool_conf_table_del(void **dst, void *arg, struct pool *pools[], int count, int hw_numa_id)
 {
     int code = 0;
+    struct pool_table *table = arg;
     struct pool_table *new_table = NULL;
-    const struct pool_table *table = arg;
 
     if (UNLIKELY(dst == NULL || arg == NULL || pools == NULL)) {
         LOG_ERROR("Invalid parameter.");
         return ERRCODE_PARAMETER_INVALID;
     }
 
-    code = _pool_conf_table_clone(&new_table, table, hw_numa_id);
+    code = _pool_conf_table_del_check(table, pools, count);
     if (UNLIKELY(code != 0)) {
         return code;
     }
 
-    code = _pool_conf_table_del(new_table, pools, count);
+    code = _pool_conf_table_del_create(&new_table, table, pools, count, hw_numa_id);
     if (UNLIKELY(code != 0)) {
-        _pool_conf_table_destroy(new_table);
         return code;
     }
 
+    _pool_conf_table_del(new_table, table, pools, count);
     *dst = new_table;
+
     return 0;
 }
 
-int pool_conf_table_add(void **dst, const void *arg, struct pool *pools[], int count, int hw_numa_id)
+int pool_conf_table_append(void **dst, void *arg, struct pool *pools[], int count, int hw_numa_id)
 {
     int code = 0;
+    struct pool_table *table = arg;
     struct pool_table *new_table = NULL;
-    const struct pool_table *table = arg;
 
     if (UNLIKELY(dst == NULL || arg == NULL || pools == NULL)) {
         LOG_ERROR("Invalid parameter.");
         return ERRCODE_PARAMETER_INVALID;
     }
 
-    code = _pool_conf_table_clone_extend(&new_table, table, count, hw_numa_id);
-    if (UNLIKELY(code != 0)) {
+    code = _pool_conf_table_append_check(table, count);
+    if (code != 0) {
         return code;
     }
 
-    code = _pool_conf_table_add(new_table, pools, count);
-    if (UNLIKELY(code != 0)) {
-        _pool_conf_table_destroy(new_table);
+    code = _pool_conf_table_add_create(&new_table, table, count, hw_numa_id);
+    if (code != 0) {
         return code;
     }
 
+    _pool_conf_table_append(new_table, table, pools, count);
     *dst = new_table;
+
     return 0;
 }
 

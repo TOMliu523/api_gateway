@@ -256,37 +256,29 @@ static int _api_pool_algo_get(enum RS_SELECT_ALGO *p_algo, const char *value)
 static int _api_pool_rs_parse(struct api_param *param, void *obj)
 {
     int code = 0;
+    size_t count = 0;
     void *array = NULL;
     uint64_t lvalue = 0;
     const char *svalue = NULL;
     struct rserver_list *one = NULL;
     struct rserver_list *rs_list = NULL;
 
-    code = api_json_get_long(&lvalue, obj, "rs_count");
+    code = api_json_get_list_info(&array, &count, obj, "rserver", false);
     if (code != 0) {
-        goto _quit;
-    }
-
-    if (lvalue == 0) {
+        return code;
+    } else if (code == 0 && count == 0) {
         param->rs_count = 0;
         param->rs_list = NULL;
-
         return 0;
     }
 
-    array = api_json_get_object(obj, "rserver");
-    if (array == NULL) {
-        code = ERRCODE_PARAMETER_INVALID;
-        goto _quit;
-    }
-
-    rs_list = api_malloc(lvalue * sizeof(struct rserver_list));
+    rs_list = api_malloc(count * sizeof(struct rserver_list));
     if (rs_list == NULL) {
         code = ERRCODE_OOM;
         goto _quit;
     }
 
-    for (uint64_t i = 0; i < lvalue; i++) {
+    for (uint64_t i = 0; i < count; i++) {
         void *subobj = NULL;
 
         one = &rs_list[i];
@@ -316,11 +308,11 @@ static int _api_pool_rs_parse(struct api_param *param, void *obj)
             goto _quit;
         }
 
-        one->port = (uint16_t) lvalue;
+        one->port = dpdk_cpu_to_be_16((uint16_t) lvalue);
     }
 
     param->rs_list = rs_list;
-    param->rs_count = (int) lvalue;
+    param->rs_count = (int) count;
 
     return 0;
 
@@ -389,8 +381,8 @@ static int _api_pool_del_get(struct api_pool_hdr *pool_hdr, struct root *root, c
         for (int j = 0; j < param_hdr->count; j++) {
             param = &param_hdr->param[j];
 
-            code = pool_conf_get_by_name(&pool, dp->tc->rs_table, param->name);
-            if (code != 0) {
+            code = pool_conf_get_by_name(&pool, dp->tc->pool_table, param->name);
+            if (code != ERRCODE_POOL_EXISTS) {
                 return code;
             }
 
@@ -591,13 +583,14 @@ static int _api_pool_rs_to_json(void *array, struct dataplane *dp, struct rserve
 {
     int code = 0;
     void *obj = NULL;
+    uint16_t port = 0;
     uint32_t rs_id = 0;
     char str[CACHE_LINE] = "";
     struct rserver *rs = NULL;
     struct rserver_v4 *v4 = NULL;
     struct rserver_v6 *v6 = NULL;
 
-    if (rr != NULL || rr->rs_count == 0) {
+    if (rr == NULL || rr->rs_count == 0) {
         return 0;
     }
 
@@ -623,7 +616,8 @@ static int _api_pool_rs_to_json(void *array, struct dataplane *dp, struct rserve
                 return code;
             }
 
-            code = api_json_add_long(obj, "port", v4->base.port);
+            port = dpdk_be_to_cpu_16(v4->base.port);
+            code = api_json_add_long(obj, "port", port);
             if (code != 0) {
                 api_json_free(obj);
                 return code;
@@ -718,6 +712,26 @@ static int _api_pool_get(void *array, struct root *root, const struct pool *pp_p
     return 0;
 }
 
+static int _pool_conf_table_del(struct api_pool_hdr *pool_hdr, struct root *root)
+{
+    int code = 0;
+    void *pool_table = NULL;
+    struct dataplane *dp = NULL;
+    int cpu_count = root->hw_info.cpu_count;
+
+    for (int i = 0; i < cpu_count; i++) {
+        dp = root->dpdk_thread[i];
+        code = pool_conf_table_del(&pool_table, dp->tc->pool_table, pool_hdr->array[i], pool_hdr->ele_count, dp->hw_numa_id);
+        if (code != 0) {
+            return code;
+        }
+
+        pool_hdr->pool_table[i] = pool_table;
+    }
+
+    return 0;
+}
+
 static int _api_pool_del(struct api_pool_hdr **pp_pool_hdr, struct root *root, const struct api_param_hdr *param_hdr)
 {
     int code = 0;
@@ -736,6 +750,11 @@ static int _api_pool_del(struct api_pool_hdr **pp_pool_hdr, struct root *root, c
     }
 
     code = _api_pool_del_rs_get(pool_hdr, root, param_hdr);
+    if (code != 0) {
+        goto _quit;
+    }
+
+    code = _pool_conf_table_del(pool_hdr, root);
     if (code != 0) {
         goto _quit;
     }
@@ -766,7 +785,7 @@ static int _api_pool_add(struct api_pool_hdr **pp_pool_hdr, struct root *root, c
         rs_count += param_hdr->param[i].rs_count;
     }
 
-    pool_hdr = _api_pool_hdr_alloc(cpu_count, count, rs_count, true);
+    pool_hdr = _api_pool_hdr_alloc(cpu_count, count, rs_count <= DP_RSERVER_MAX ? rs_count : DP_RSERVER_MAX , true);
     if (pool_hdr == NULL) {
         code = ERRCODE_OOM;
         goto _quit;
@@ -793,7 +812,7 @@ static int _api_pool_add(struct api_pool_hdr **pp_pool_hdr, struct root *root, c
         }
 
         pool_table = dp->tc->pool_table;
-        code = pool_conf_table_add(&table, pool_table, pool_hdr->array[i], pool_hdr->ele_count, dp->hw_numa_id);
+        code = pool_conf_table_append(&table, pool_table, pool_hdr->array[i], pool_hdr->ele_count, dp->hw_numa_id);
         if (code != 0) {
             goto _quit;
         }
@@ -801,6 +820,7 @@ static int _api_pool_add(struct api_pool_hdr **pp_pool_hdr, struct root *root, c
         pool_hdr->pool_table[i] = table;
     }
 
+    pool_hdr->need_delete = false;
     *pp_pool_hdr = pool_hdr;
     return 0;
 
@@ -822,6 +842,7 @@ static void _api_pool_update(struct api_pool_hdr *pool_hdr, struct root *root)
 
     api_thread_config_update(root, position, pool_hdr->pool_table, pool_conf_table_destroy);
 
+    /* Modify the reference count of the real server */
     for (int i = 0; i < cpu_count; i++) {
         struct rserver_v4 *v4 = NULL;
         struct rserver_v4 *v6 = NULL;
@@ -928,8 +949,13 @@ API_GET(/v1/app/pool, pool)
         goto _quit;
     }
 
+    if (count == 0) {
+        goto _quit;
+    }
+
     pp_pool = api_malloc(count * sizeof(*pp_pool));
     if (pp_pool == NULL) {
+        code = ERRCODE_OOM;
         goto _quit;
     }
 
@@ -950,5 +976,6 @@ _quit:
         api_json_free(array);
         return api_fail(code);
     }
+
     return api_succ(array);
 }

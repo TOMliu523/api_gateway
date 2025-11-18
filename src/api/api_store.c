@@ -302,7 +302,7 @@ static int _api_store_load(sr_session_ctx_t *sess, struct api_db *db, const char
     const struct api_method_node *api = NULL;
     const struct api_startup *startup = &s_api_startup;
 
-    LOG_INFO("Loading config.");
+    LOG_INFO("Loading config ...");
 
     for (int i = 0; i < startup->nums; i++) {
         container = startup->container[i];
@@ -341,7 +341,7 @@ static int _api_store_load(sr_session_ctx_t *sess, struct api_db *db, const char
         json_decref(json); json = NULL;
     }
 
-    LOG_DEBUG("module config load success !!!!!!.");
+    LOG_DEBUG("Module config load success !!!!!!.");
     return 0;
 
 _quit:

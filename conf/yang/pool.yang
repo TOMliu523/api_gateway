@@ -71,17 +71,6 @@ submodule pool {
                 description "Algorithm used for real server selection. Default is Round Robin.";
             }
 
-            leaf rs_count {
-                mandatory true;
-                type uint32 {
-                    range "1 .. 200000";
-                }
-                description "Number of real servers in the pool.";
-                must 'count(./rserver) = ./rs_count' {
-                    error-message "rs_count must equal the actual number of rserver entries in this pool.";
-                }
-            }
-
             list rserver {
                 key "addr port";
                 description "References to global rserver entries by (addr, port). No local attributes duplicated.";

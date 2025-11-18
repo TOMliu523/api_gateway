@@ -192,6 +192,7 @@ extern int api_json_add_object(void *json, const char *name, void *obj);
 extern int api_json_array_append(void *array, void *obj);
 extern int api_json_add_string(void *json, const char *name, const char *value);
 extern int api_json_add_long(void *json, const char *name, long value);
+extern int api_json_get_list_info(void **, size_t *, void *, const char *, bool);
 extern int api_json_object(void **obj);
 extern int api_json_array(void **arr);
 extern void api_json_free(void *ptr);
