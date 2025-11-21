@@ -4,7 +4,6 @@
  * description:
  ****************************************************************************/
 
-#include "l2.h"
 #include "log.h"
 #include "type.h"
 #include "errcode.h"
@@ -13,7 +12,6 @@
 #include "ip6_conf.h"
 #include "api_inner.h"
 #include "dpdk_port.h"
-#include "dpdk_core.h"
 #include "dpdk_limits.h"
 #include "route4_conf.h"
 #include "route6_conf.h"
@@ -21,7 +19,7 @@
 #include "api_object_bridge.h"
 
 #define API_SNAT_MODULE_NAME "snat_pool"
-#define API_SNAT_LIST_NAME "entrys"
+#define API_SNAT_LIST_NAME "entries"
 
 #define API_SNAT_ADDR_MAX 100000
 #define API_SNAT_ADDR_BASE_COUNT 256
@@ -31,11 +29,6 @@ struct addr_info {
     uint32_t port;
     int refcnt;
     union inet_addr addr;
-};
-
-struct pkt_hdr {
-    int count;
-    void *mbuf[API_SNAT_ADDR_MAX];
 };
 
 struct addr_info_entry {
@@ -53,7 +46,7 @@ struct addr_info_hdr {
 struct api_param {
     const char *name;
     const struct snat_pool *snat;
-    uint16_t port; // interface port
+    uint8_t port; // interface port
     enum SNAT_ADDR_POLICY policy;
     struct addr_info_hdr v4_hdr;
     struct addr_info_hdr v6_hdr;
@@ -69,9 +62,8 @@ struct api_param_hdr {
 };
 
 struct api_snat_hdr {
-    struct pkt_hdr pkt;
-
     int cpu_count;
+    bool need_delete;
 
     int ip4_info_count;
     struct ip4_info *ip4_info[CPU_MAX];
@@ -109,29 +101,32 @@ static void _api_snat_param_free(struct api_param *param)
     param->v6_hdr.count = 0;
 }
 
-static void _api_snat_param_hdr_free(struct api_param_hdr *hdr)
+static void _api_snat_param_hdr_free(struct api_param_hdr *param_hdr)
 {
+    struct api_param *param = NULL;
     struct addr_info_hdr *info_hdr = NULL;
 
-    if (hdr == NULL) {
+    if (param_hdr == NULL) {
         return;
     }
 
-    for (int i = 0; i < hdr->count; i++) {
-        info_hdr = &hdr->params[i].v4_hdr;
+    for (int i = 0; i < param_hdr->count; i++) {
+        param = &param_hdr->params[i];
+
+        info_hdr = &param->v4_hdr;
         if (info_hdr->infos != NULL) {
             api_free(info_hdr->infos);
             info_hdr->infos = NULL;
         }
 
-        info_hdr = &hdr->params[i].v6_hdr;
+        info_hdr = &param->v6_hdr;
         if (info_hdr->infos != NULL) {
             api_free(info_hdr->infos);
             info_hdr->infos = NULL;
         }
     }
 
-    api_free(hdr);
+    api_free(param_hdr);
 }
 
 void snat_conf_destroy(void *arg)
@@ -159,44 +154,20 @@ void snat_conf_destroy(void *arg)
     dpdk_free(snat);
 }
 
-static void _api_snat_conf_list_destroy(struct snat_pool *snat[], int count)
+static void _api_snat_conf_list_destroy(struct snat_pool *snat[], int count, bool need_delete)
 {
     if (snat == NULL || count == 0) {
         return;
     }
 
-    for (int i = 0; i < count; i++) {
-        snat_conf_destroy(snat[i]);
-        snat[i] = NULL;
-    }
-
-    dpdk_free(snat);
-}
-
-static void _api_snat_hdr_part_free(struct api_snat_hdr *snat_hdr)
-{
-    if (snat_hdr == NULL) {
-        return;
-    }
-
-    for (int i = 0; i < snat_hdr->cpu_count; i++) {
-        if (snat_hdr->snat[i] != NULL) {
-            api_free(snat_hdr->snat[i]);
-            snat_hdr->snat[i] = NULL;
+    if (need_delete) {
+        for (int i = 0; i < count; i++) {
+            snat_conf_destroy(snat[i]);
+            snat[i] = NULL;
         }
     }
 
-    api_free(snat_hdr);
-}
-
-static void _api_snat_pktmbuf_free(struct pkt_hdr *pkt)
-{
-    if (pkt == NULL || pkt->count == 0) {
-        return;
-    }
-
-    dpdk_pktmbuf_push(pkt->mbuf, pkt->count);
-    memset(pkt->mbuf, 0, pkt->count * sizeof(*pkt->mbuf));
+    dpdk_free(snat);
 }
 
 static void _api_snat_hdr_ip4_free(struct api_snat_hdr *hdr)
@@ -239,7 +210,7 @@ static void _api_snat_hdr_pool_free(struct api_snat_hdr *hdr)
         snat_conf_table_destroy(hdr->snat_table[i]);
         hdr->snat_table[i] = NULL;
 
-        _api_snat_conf_list_destroy(hdr->snat[i], hdr->snat_count);
+        _api_snat_conf_list_destroy(hdr->snat[i], hdr->snat_count, hdr->need_delete);
         hdr->snat[i] = NULL;
     }
 }
@@ -250,7 +221,6 @@ static void _api_snat_hdr_free(struct api_snat_hdr *hdr)
         return;
     }
 
-    _api_snat_pktmbuf_free(&hdr->pkt);
     _api_snat_hdr_ip4_free(hdr);
     _api_snat_hdr_ip6_free(hdr);
     _api_snat_hdr_pool_free(hdr);
@@ -287,32 +257,6 @@ static void _api_snat_pool_free(struct snat_pool *snat)
     dpdk_free(snat);
 }
 
-static void _api_snat_pool_all_free(struct api_snat_hdr *snat_hdr)
-{
-    struct snat_pool *snat = NULL;
-    struct snat_pool **pp_snat = NULL;
-
-    if (snat_hdr == NULL) {
-        return;
-    }
-
-    for (int i = 0; i < snat_hdr->cpu_count; i++) {
-        pp_snat = snat_hdr->snat[i];
-        if (pp_snat == NULL) {
-            continue;
-        }
-
-        for (int j = 0; j < snat_hdr->snat_count; j++) {
-            snat = pp_snat[j];
-            _api_snat_pool_free(snat);
-            pp_snat[i] = NULL;
-        }
-
-        api_free(pp_snat);
-        snat_hdr->snat[i] = NULL;
-    }
-}
-
 static void *_api_snat_pool_alloc(int ip4_count, int ip6_count, int hw_numa_id)
 {
     uint32_t *ip4_addr = NULL;
@@ -326,16 +270,26 @@ static void *_api_snat_pool_alloc(int ip4_count, int ip6_count, int hw_numa_id)
         return NULL;
     }
 
-    ip4_rr = snat->ip4_rr = api_malloc_numa(sizeof(*snat->ip4_rr), hw_numa_id);
-    if (ip4_rr == NULL) {
+    if (ip4_count != 0) {
+        ip4_rr = snat->ip4_rr = api_malloc_numa(sizeof(*snat->ip4_rr), hw_numa_id);
+        if (ip4_rr == NULL) {
+            goto _quit;
+        }
+
+        ip4_rr->count = ip4_count;
         ip4_addr = ip4_rr->addr = api_malloc_numa(ip4_count * sizeof(uint32_t), hw_numa_id);
         if (ip4_addr == NULL) {
             goto _quit;
         }
     }
 
-    ip6_rr = snat->ip6_rr = api_malloc_numa(sizeof(*snat->ip6_rr), hw_numa_id);
-    if (ip6_rr == NULL) {
+    if (ip6_count != 0) {
+        ip6_rr = snat->ip6_rr = api_malloc_numa(sizeof(*snat->ip6_rr), hw_numa_id);
+        if (ip6_rr == NULL) {
+            goto _quit;
+        }
+
+        ip6_rr->count = ip6_count;
         ip6_addr = ip6_rr->addr = api_malloc_numa(ip6_count * sizeof(struct dpdk_ip6_addr), hw_numa_id);
         if (ip6_addr == NULL) {
             goto _quit;
@@ -347,6 +301,23 @@ static void *_api_snat_pool_alloc(int ip4_count, int ip6_count, int hw_numa_id)
 _quit:
     _api_snat_pool_free(snat);
     return NULL;
+}
+
+static struct api_snat_hdr *_api_snat_hdr_malloc(int cpu_count, bool need_delete)
+{
+    struct api_snat_hdr *snat_hdr = NULL;
+
+    snat_hdr = api_malloc(sizeof(*snat_hdr));
+    if (snat_hdr == NULL) {
+        LOG_ERROR("OOM.");
+        return NULL;
+    }
+
+    memset(snat_hdr, 0, sizeof(*snat_hdr));
+    snat_hdr->cpu_count = cpu_count;
+    snat_hdr->need_delete = need_delete;
+
+    return snat_hdr;
 }
 
 static enum SNAT_ADDR_POLICY _api_snat_string_to_enum(const char *policy)
@@ -365,9 +336,9 @@ static enum SNAT_ADDR_POLICY _api_snat_string_to_enum(const char *policy)
     return SNAT_ADDR_INVALID;
 }
 
-static int _api_snat_iface_parse(uint16_t *port, void *obj)
+static int _api_snat_iface_parse(uint8_t *port, void *obj)
 {
-    uint16_t dst = 0;
+    uint8_t dst = 0;
     const char *interface = NULL;
 
     interface = api_json_get_string(obj, "interface");
@@ -376,7 +347,7 @@ static int _api_snat_iface_parse(uint16_t *port, void *obj)
     }
 
     dst = dpdk_port_by_name_get(interface);
-    if (dst == (uint16_t)-1) {
+    if (dst == UINT8_MAX) {
         return ERRCODE_PORT_NOT_EXIST;
     }
 
@@ -453,17 +424,10 @@ static struct addr_info *_api_snat_ip_find(struct addr_info_entry *entry, int af
 static int _api_snat_ip4_expand(struct api_param *param, uint32_t start_addr, uint32_t end_addr)
 {
     int code = 0;
-    uint32_t diff = 0;
     union inet_addr addr = {0};
     struct addr_info *info = NULL;
     struct addr_info_hdr *hdr = &param->v4_hdr;
     struct addr_info_entry *entry = hdr->entry;
-
-    diff = end_addr - start_addr + 1;
-    if (diff >= API_SNAT_ADDR_MAX) {
-        LOG_ERROR("The total number of IPs exceeds the threshold.");
-        return ERRCODE_IP_LIMIT_EXCEEDED;
-    }
 
     for (uint32_t i = start_addr; i <= end_addr; i++) {
         code = _api_snat_addr_info_extend(hdr);
@@ -474,20 +438,19 @@ static int _api_snat_ip4_expand(struct api_param *param, uint32_t start_addr, ui
         addr.ip = dpdk_cpu_to_be_32(i);
         info = _api_snat_ip_find(entry, AF_INET, &addr);
         if (info == NULL) {
-            if (entry->count >= API_SNAT_ADDR_MAX) {
+            if (hdr->count >= API_SNAT_ADDR_MAX) {
                 LOG_ERROR("The total number of IPs exceeds the threshold.");
                 return ERRCODE_IP_LIMIT_EXCEEDED;
             }
 
-            info = hdr->infos[hdr->count++] = &entry->info[entry->count++];
+            info = &entry->info[entry->count++];
             info->af = AF_INET;
             info->addr = addr;
             info->port = param->port;
-            info->refcnt = 1;
-        } else {
-            info->refcnt += 1;
-            hdr->infos[hdr->count++] = info;
         }
+
+        info->refcnt += 1;
+        hdr->infos[hdr->count++] = info;
     }
 
     return 0;
@@ -511,15 +474,15 @@ static int _api_snat_addr_info_add(struct addr_info_hdr *hdr, uint16_t port, con
             return ERRCODE_IP_LIMIT_EXCEEDED;
         }
 
-        info = hdr->infos[hdr->count++] = &entry->info[entry->count++];
+        info = &entry->info[entry->count++];
         info->af = AF_INET6;
         info->addr = *(const union inet_addr *)addr;
         info->port = port;
         info->refcnt = 0;
-    } else {
-        info->refcnt += 1;
-        hdr->infos[hdr->count++] = info;
     }
+
+    info->refcnt += 1;
+    hdr->infos[hdr->count++] = info;
 
     return 0;
 }
@@ -572,9 +535,6 @@ static int _api_snat_addr_info_v4_parse(struct api_param *param, void *array)
     count = json_array_size(array);
     if (count == 0) {
         return 0;
-    } else if (count != 1) {
-        LOG_ERROR("Only one group is supported.");
-        return ERRCODE_SNAT_POOL_NOT_SUPPORT;
     }
 
     for (size_t i = 0; i < count; i++) {
@@ -613,15 +573,12 @@ static int _api_snat_addr_info_v6_parse(struct api_param *param, void *array)
     int code = 0;
     size_t count = 0;
     void *obj = NULL;
-    struct dpdk_ip6_addr start_addr = {0};
     struct dpdk_ip6_addr end_addr = {0};
+    struct dpdk_ip6_addr start_addr = {0};
 
     count = json_array_size(array);
     if (count == 0) {
         return 0;
-    } else if (code != 1) {
-        LOG_ERROR("Only one group is supported.");
-        return ERRCODE_SNAT_POOL_NOT_SUPPORT;
     }
 
     for (size_t i = 0; i < count; i++) {
@@ -630,6 +587,7 @@ static int _api_snat_addr_info_v6_parse(struct api_param *param, void *array)
 
         obj = api_json_array_get(array, i);
         if (obj == NULL) {
+            LOG_ERROR("Invalid parameter.");
             return ERRCODE_PARAMETER_INVALID;
         }
 
@@ -658,22 +616,28 @@ static int _api_snat_addr_info_v6_parse(struct api_param *param, void *array)
 static int _api_snat_addr_info_parse(struct api_param *param, void *obj)
 {
     int code = 0;
-    void *array = NULL;
+    void *ip4_array = NULL;
+    void *ip6_array = NULL;
 
-    array = json_object_get(obj, "ip4_entrys");
-    if (array != NULL) {
-        code = _api_snat_addr_info_v4_parse(param, array);
+    ip4_array = json_object_get(obj, "ip4_entries");
+    if (ip4_array != NULL) {
+        code = _api_snat_addr_info_v4_parse(param, ip4_array);
         if (code != 0) {
             goto _quit;
         }
     }
 
-    array = json_object_get(obj, "ip6_entrys");
-    if (array != 0) {
-        code = _api_snat_addr_info_v6_parse(param, array);
+    ip6_array = json_object_get(obj, "ip6_entries");
+    if (ip6_array != 0) {
+        code = _api_snat_addr_info_v6_parse(param, ip6_array);
         if (code != 0) {
             goto _quit;
         }
+    }
+
+    if (ip4_array == NULL && ip6_array == NULL) {
+        LOG_ERROR("Invalid parameter.");
+        return ERRCODE_PARAMETER_INVALID;
     }
 
     return 0;
@@ -726,10 +690,11 @@ static void *_api_snat_param_hdr_alloc(int count)
         v6_hdr->entry = &hdr->entry;
     }
 
+    hdr->count = count;
     return hdr;
 }
 
-static int _api_snat_post_parse(struct api_param_hdr **phdr, struct root *root, void *json)
+static int _api_snat_post_parse(struct api_param_hdr **pp_hdr, struct root *root, void *json)
 {
     int code = 0;
     size_t count = 0;
@@ -784,69 +749,11 @@ static int _api_snat_post_parse(struct api_param_hdr **phdr, struct root *root, 
         }
     }
 
+    *pp_hdr = hdr;
     return 0;
 
 _quit:
     _api_snat_param_hdr_free(hdr);
-    return code;
-}
-
-static int _api_snat_to_pkt_mbuf(struct pkt_hdr *pkt_hdr, const struct root *root, struct addr_info_entry *entry)
-{
-    int code = 0;
-    struct dpdk_mac mac = {0};
-    struct dataplane *dp = NULL;
-
-    for (int i = 0; i < root->hw_info.cpu_count; i++) {
-        dp = root->dpdk_thread[i];
-        code = dpdk_pktmbuf_pop(dp->pktmbuf_pool, pkt_hdr->mbuf, entry->count);
-        if (code != 0) {
-            continue;
-        } else {
-            break;
-        }
-    }
-
-    if (code != 0) {
-        LOG_ERROR("Object mbuf pool exhausted — unable to allocate new instance.");
-        return ERRCODE_RESOURCE_BUSY;
-    }
-
-    pkt_hdr->count = entry->count;
-
-    for (int i = 0; i < entry->count; i++) {
-        struct addr_info *info = &entry->info[i];
-        struct dpdk_mbuf *mbuf = pkt_hdr->mbuf[i];
-
-        code = l2_conf_port_mac(info->port, &mac);
-        if (code != 0) {
-            goto _quit;
-        }
-
-        if (info->af == AF_INET) {
-            code = l2_gratuitous_arp_gen(mbuf, info->port, info->addr.ip, &mac);
-            if (code != 0) {
-                goto _quit;
-            }
-
-            DPDK_HEADROOM(mbuf)->type = PKT_MBUF_GARP;
-        } else {
-            code = ip6_ndp_na_mcast_gen(mbuf, info->port, &info->addr.addr, &mac);
-            if (code != 0) {
-                goto _quit;
-            }
-
-            DPDK_HEADROOM(mbuf)->type = PKT_MBUF_NDP_AD;
-        }
-    }
-
-    return 0;
-
-_quit:
-    dpdk_pktmbuf_push(pkt_hdr->mbuf, pkt_hdr->count);
-    for (int i = 0; i < pkt_hdr->count; i++) {
-        pkt_hdr->mbuf[i] = NULL;
-    }
     return code;
 }
 
@@ -882,12 +789,10 @@ static int _api_snat_ip6_count(const struct addr_info_entry *entry)
 
 static int _api_snat_to_ip4_table(struct api_snat_hdr *snat_hdr, const struct root *root, const struct api_param_hdr *param_hdr)
 {
-    int n = 0;
     int code = 0;
-    uint8_t mask = 0;
+    uint8_t mask = 32;
     int ip4_count = 0;
     void *ip4_table = NULL;
-    void *route4_table = NULL;
     struct ip4_info *ip4_info = NULL;
     const struct dataplane *dp = NULL;
     const struct addr_info *addr_info = NULL;
@@ -908,21 +813,13 @@ static int _api_snat_to_ip4_table(struct api_snat_hdr *snat_hdr, const struct ro
             goto _quit;
         }
 
-        route4_table = dp->tc->route4_table;
         for (int j = 0; j < param_hdr->entry.count; j++) {
             addr_info = &param_hdr->entry.info[j];
             if (addr_info->af != AF_INET) {
                 continue;
             }
 
-            if (j == 0) {
-                code = route4_conf_mask_find(&mask, route4_table, addr_info->addr.ip, addr_info->port);
-                if (code != 0) {
-                    goto _quit;
-                }
-            }
-
-            code = ip4_info_init(&ip4_info[n++], addr_info->addr.ip, mask, addr_info->port, IP_MASTER, addr_info->refcnt);
+            code = ip4_info_init(&ip4_info[j], addr_info->addr.ip, mask, addr_info->port, IP_MASTER, addr_info->refcnt);
             if (code != 0) {
                 goto _quit;
             }
@@ -947,10 +844,9 @@ static int _api_snat_to_ip6_table(struct api_snat_hdr *snat_hdr, const struct ro
 {
     int n = 0;
     int code = 0;
-    uint8_t mask = 0;
     int ip6_count = 0;
+    uint8_t mask = 128;
     void *ip6_table = NULL;
-    void *route6_table = NULL;
     struct ip6_info *ip6_info = NULL;
     const struct dataplane *dp = NULL;
     const struct addr_info *addr_info = NULL;
@@ -971,18 +867,10 @@ static int _api_snat_to_ip6_table(struct api_snat_hdr *snat_hdr, const struct ro
             goto _quit;
         }
 
-        route6_table = dp->tc->route6_table;
         for (int j = 0; j < param_hdr->entry.count; j++) {
             addr_info = &param_hdr->entry.info[j];
             if (addr_info->af != AF_INET6) {
                 continue;
-            }
-
-            if (j == 0) {
-                code = route6_conf_mask_find(&mask, route6_table, &addr_info->addr.addr, addr_info->port);
-                if (code != 0) {
-                    goto _quit;
-                }
             }
 
             code = ip6_info_init(&ip6_info[n++], &addr_info->addr.addr, mask, addr_info->port, IP_MASTER, addr_info->refcnt);
@@ -995,6 +883,8 @@ static int _api_snat_to_ip6_table(struct api_snat_hdr *snat_hdr, const struct ro
         if (code != 0) {
             goto _quit;
         }
+
+        snat_hdr->ip6_table[i] = ip6_table;
     }
 
     return 0;
@@ -1009,8 +899,8 @@ static struct snat_pool *_api_snat_param_to_pool(const struct api_param *param, 
     struct snat_pool *snat = NULL;
     struct snat_ip4_rr *ip4_rr = NULL;
     struct snat_ip6_rr *ip6_rr = NULL;
-    const struct addr_info_hdr *ip4_info = NULL;
-    const struct addr_info_hdr *ip6_info = NULL;
+    const struct addr_info_hdr *ip4_info = &param->v4_hdr;
+    const struct addr_info_hdr *ip6_info = &param->v6_hdr;
 
     snat = _api_snat_pool_alloc(ip4_info->count, ip6_info->count, hw_numa_id);
     if (snat == NULL) {
@@ -1056,7 +946,7 @@ static struct snat_pool *_api_snat_param_to_pool(const struct api_param *param, 
     snat->policy = param->policy;
     dpdk_memcpy(snat->name, param->name, strlen(param->name));
 
-    return NULL;
+    return snat;
 }
 
 static int _api_snat_to_table(struct api_snat_hdr *snat_hdr, const struct root *root,
@@ -1064,11 +954,13 @@ static int _api_snat_to_table(struct api_snat_hdr *snat_hdr, const struct root *
 {
     int code = 0;
     int hw_numa_id = 0;
+    void *table = NULL;
     struct dataplane *dp = NULL;
     struct snat_pool *snat = NULL;
     struct snat_pool **pp_snat = NULL;
     const struct api_param *param = NULL;
     int cpu_count = root->hw_info.cpu_count;
+
     snat_hdr->snat_count = param_hdr->count;
 
     for (int i = 0; i < cpu_count; i++) {
@@ -1081,40 +973,38 @@ static int _api_snat_to_table(struct api_snat_hdr *snat_hdr, const struct root *
         dp = root->dpdk_thread[i];
         hw_numa_id = dp->hw_numa_id;
 
-        param = &param_hdr->params[i];
-
         for (int j = 0; j < snat_hdr->snat_count; j++) {
+            param = &param_hdr->params[j];
             snat = pp_snat[j] = _api_snat_param_to_pool(param, hw_numa_id);
             if (snat == NULL) {
                 goto _quit;
             }
         }
 
-        code = snat_conf_table_add(&snat_hdr->snat_table[i], dp->tc->snat_table, pp_snat, snat_hdr->snat_count, dp->hw_numa_id);
+        code = snat_conf_table_append(&table, dp->tc->snat_table, pp_snat, snat_hdr->snat_count, dp->hw_numa_id);
         if (code != 0) {
             goto _quit;
         }
+
+        snat_hdr->snat_table[i] = table;
     }
 
-    return 0;
-
 _quit:
-    _api_snat_pool_all_free(snat_hdr);
     return code;
 }
 
 static int _api_snat_del(struct api_snat_hdr **pp_snat_hdr, const struct root *root, const struct api_param_hdr *param_hdr)
 {
-    int code = 0;
+    // int code = 0;
     struct api_snat_hdr *snat_hdr = NULL;
+    int cpu_count = root->hw_info.cpu_count;
 
-    snat_hdr = api_malloc(sizeof(*snat_hdr));
+    snat_hdr = _api_snat_hdr_malloc(cpu_count, false);
     if (snat_hdr == NULL) {
         return ERRCODE_OOM;
     }
 
-    snat_hdr->cpu_count = root->hw_info.cpu_count;
-    code = _api_snat_to_ip4_table(snat_hdr, root, param_hdr);
+    /*code = _api_snat_to_ip4_table(snat_hdr, root, param_hdr);
     if (code != 0) {
         goto _quit;
     }
@@ -1127,27 +1017,27 @@ static int _api_snat_del(struct api_snat_hdr **pp_snat_hdr, const struct root *r
     code = _api_snat_to_table(snat_hdr, root, param_hdr);
     if (code != 0) {
         goto _quit;
-    }
+    }*/
 
+    snat_hdr->need_delete = true;
     *pp_snat_hdr = snat_hdr;
     return 0;
 
-_quit:
+/*_quit:
     _api_snat_hdr_free(snat_hdr);
-    return code;
+    return code;*/
 }
 
 static int _api_snat_add(struct api_snat_hdr **psnat_hdr, const struct root *root, struct api_param_hdr *param_hdr)
 {
     int code = 0;
     struct api_snat_hdr *snat_hdr = NULL;
+    int cpu_count = root->hw_info.cpu_count;
 
-    snat_hdr = api_malloc(sizeof(*snat_hdr));
+    snat_hdr = _api_snat_hdr_malloc(cpu_count, true);
     if (snat_hdr == NULL) {
         return ERRCODE_OOM;
     }
-
-    snat_hdr->cpu_count = root->hw_info.cpu_count;
 
     code = _api_snat_to_ip4_table(snat_hdr, root, param_hdr);
     if (code != 0) {
@@ -1164,11 +1054,7 @@ static int _api_snat_add(struct api_snat_hdr **psnat_hdr, const struct root *roo
         goto _quit;
     }
 
-    code = _api_snat_to_pkt_mbuf(&snat_hdr->pkt, root, &param_hdr->entry);
-    if (code != 0) {
-        goto _quit;
-    }
-
+    snat_hdr->need_delete = false;
     *psnat_hdr = snat_hdr;
     return 0;
 
@@ -1182,39 +1068,34 @@ static void _api_snat_update(struct root *root, const struct api_snat_hdr *hdr)
     struct dataplane *dp = NULL;
     int cpu_count = hdr->cpu_count;
     void **position[CPU_MAX] = {NULL};
-    void *thread_object[CPU_MAX] = {NULL};
 
-    // snat table
+    // ip4 table
+    if (hdr->ip4_table[0] != NULL) {
+        for (int i = 0; i < cpu_count; i++) {
+            dp = root->dpdk_thread[i];
+            position[i] = &dp->tc->ip4_table;
+        }
+
+        api_thread_config_update(root, position, (void **)hdr->ip4_table, ip4_conf_table_destroy);
+    }
+
+    // ip6 table
+    if (hdr->ip6_table[0] != NULL) {
+        for (int i = 0; i < cpu_count; i++) {
+            dp = root->dpdk_thread[i];
+            position[i] = &dp->tc->ip6_table;
+        }
+
+        api_thread_config_update(root, position, (void **)hdr->ip6_table, ip6_conf_table_destroy);
+    }
+
+    // snat pool table
     for (int i = 0; i < cpu_count; i++) {
         dp = root->dpdk_thread[i];
         position[i] = &dp->tc->snat_table;
     }
 
     api_thread_config_update(root, position, (void **)hdr->snat_table, snat_conf_table_destroy);
-
-    // ip4 table
-    for (int i = 0; i < cpu_count; i++) {
-        dp = root->dpdk_thread[i];
-        position[i] = &dp->tc->ip4_table;
-        thread_object[i] = hdr->ip4_table[dp->numa_id];
-    }
-
-    api_thread_config_update(root, position, thread_object, ip4_conf_table_destroy);
-
-    // ip6 table
-    for (int i = 0; i < cpu_count; i++) {
-        dp = root->dpdk_thread[i];
-        position[i] = &dp->tc->ip6_table;
-        thread_object[i] = hdr->ip6_table[dp->numa_id];
-    }
-
-    api_thread_config_update(root, position, thread_object, ip6_conf_table_destroy);
-
-    // arp and ndp
-    if (hdr->pkt.count != 0) {
-        dp = root->dpdk_thread[0];
-        dpdk_ring_mp_push(dp->notice_ring, hdr->pkt.mbuf, hdr->pkt.count);
-    }
 }
 
 static int _api_snat_ip4_policy_to_json(void *obj, const void *ptr)
@@ -1258,7 +1139,7 @@ static int _api_snat_ip4_policy_to_json(void *obj, const void *ptr)
     }
     subobj = NULL;
 
-    code = api_json_add_object(obj, "ip4_entrys", array);
+    code = api_json_add_object(obj, "ip4_entries", array);
     if (code != 0) {
         goto _quit;
     }
@@ -1312,7 +1193,7 @@ static int _api_snat_ip6_policy_to_json(void *obj, const void *ptr)
     }
     subobj = NULL;
 
-    code = api_json_add_object(obj, "ip6_entrys", array);
+    code = api_json_add_object(obj, "ip6_entries", array);
     if (code != 0) {
         goto _quit;
     }
@@ -1515,7 +1396,7 @@ static int _api_snat_query(void *array, struct snat_pool *snats[], int count)
                     goto _quit;
                 }
 
-                code = api_json_add_long(obj, "max_port", ip6_rr->max_port);
+                code = api_json_add_long(obj, "max_port", ip4_rr->max_port);
                 if (code != 0) {
                     goto _quit;
                 }
@@ -1575,14 +1456,15 @@ API_POST(/v1/network/snat_pool, snat_pool)
     }
 
     _api_snat_update(root, snat_hdr);
-    _api_snat_hdr_part_free(snat_hdr);
-
-    return api_succ(NULL);
 
 _quit:
     _api_snat_param_hdr_free(param_hdr);
     _api_snat_hdr_free(snat_hdr);
-    return api_fail(code);
+
+    if (code != 0) {
+        return api_fail(code);
+    }
+    return api_succ(NULL);
 }
 
 API_PUT(/v1/network/snat_pool, snat_pool)
@@ -1625,6 +1507,7 @@ API_GET(/v1/network/snat_pool, snat_pool)
     int count = 0;
     void *array = NULL;
     struct root *root = cfg;
+    void *snat_table = NULL;
     struct snat_pool **pp_snat = NULL;
     struct dataplane *dp = root->dpdk_thread[0];
 
@@ -1633,26 +1516,35 @@ API_GET(/v1/network/snat_pool, snat_pool)
         return api_fail(code);
     }
 
-    pp_snat = api_malloc(DP_SNAT_POOL_MAX * sizeof(*pp_snat));
-    if (pp_snat == NULL) {
-        return api_fail(ERRCODE_OOM);
+    snat_table = dp->tc->snat_table;
+    code = snat_conf_table_get_count(snat_table, &count);
+    if (code != 0) {
+        goto _quit;
     }
 
-    code = snat_conf_get_all(dp->tc->snat_table, pp_snat, &count);
+    if (count == 0) {
+        goto _quit;
+    }
+
+    pp_snat = api_malloc(count * sizeof(*pp_snat));
+    if (pp_snat == NULL) {
+        code = ERRCODE_OOM;
+        goto _quit;
+    }
+
+    code = snat_conf_table_get_element(snat_table, pp_snat, count);
     if (code != 0) {
         goto _quit;
     }
 
     code = _api_snat_query(array, pp_snat, count);
-    if (code != 0) {
-        goto _quit;
-    }
 
 _quit:
     api_free(pp_snat);
-    if (code == 0) {
-        return api_succ(array);
-    } else {
+
+    if (code != 0) {
+        api_json_free(array);
         return api_fail(code);
     }
+    return api_succ(array);
 }

@@ -242,7 +242,7 @@ int pool_conf_get_by_id(void *arg, struct pool **pp_pool, uint32_t id)
 {
     struct pool_table *table = arg;
 
-    if (UNLIKELY(arg != NULL || pp_pool != NULL || id > table->max_id)) {
+    if (UNLIKELY(arg == NULL || pp_pool == NULL || id > table->max_id)) {
         LOG_ERROR("Inner invalid parameter.");
         return ERRCODE_PARAMETER_INVALID;
     }

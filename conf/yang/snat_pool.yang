@@ -68,9 +68,7 @@ submodule snat_pool {
 
                 leaf end_addr {
                     type inet:ipv4-address;
-                    must ". >= ../start_addr" {
-                        error-message "end_addr must be >= start_addr (IPv4).";
-                    }
+                    description "IPv4 end address.";
                 }
             }
 
@@ -84,9 +82,6 @@ submodule snat_pool {
 
                 leaf end_addr {
                     type inet:ipv6-address;
-                    must ". >= ../start_addr" {
-                        error-message "end_addr must be >= start_addr (IPv6).";
-                    }
                     description "IPv6 end address";
                 }
             }

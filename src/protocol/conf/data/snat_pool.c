@@ -47,7 +47,7 @@ static INLINE struct snat_table *_snat_conf_table_create(int count, int hw_numa_
     return hdr;
 }
 
-static int _snat_conf_table_add_check(const struct snat_table *table, struct snat_pool **pp_snat, int count)
+static int _snat_conf_table_append_check(const struct snat_table *table, struct snat_pool **pp_snat, int count)
 {
     if (UNLIKELY(table->count + count > DP_SNAT_POOL_MAX)) {
         LOG_ERROR("The number of SNAT pools exceeds the threshold.");
@@ -57,29 +57,28 @@ static int _snat_conf_table_add_check(const struct snat_table *table, struct sna
     return 0;
 }
 
-static int _snat_conf_table_add_create(struct snat_table **dst, const struct snat_table *table, int count, int hw_numa_id)
+static int _snat_conf_table_append_create(struct snat_table **dst, const struct snat_table *table, int count, int hw_numa_id)
 {
-    int max_id = table->max_id;
     struct snat_table *target = NULL;
+    int cur_count = table->max_id + 1;
 
-    if (table->count + count > table->max_id) {
-        max_id = table->count + count;
+    if (table->count + count > cur_count) {
+        cur_count = table->count + count;
     }
 
-    target = _snat_conf_table_create(max_id, hw_numa_id);
+    target = _snat_conf_table_create(cur_count, hw_numa_id);
     if (UNLIKELY(target == NULL)) {
         return ERRCODE_OOM;
     }
 
-    target->max_id = max_id;
     *dst = target;
-
     return 0;
 }
 
-static int _snat_conf_table_add(struct snat_table *dst, const struct snat_table *src, struct snat_pool *pp_snat[], int count)
+static int _snat_conf_table_append(struct snat_table *dst, const struct snat_table *src, struct snat_pool *pp_snat[], int count)
 {
     int n = 0;
+    struct snat_pool *snat = NULL;
 
     for (int i = 0; i <= src->max_id; i++) {
         dst->store[i] = src->store[i];
@@ -92,7 +91,9 @@ static int _snat_conf_table_add(struct snat_table *dst, const struct snat_table 
             continue;
         }
 
-        dst->store[i] = pp_snat[n++];
+        snat = pp_snat[n++];
+        snat->id = i;
+        dst->store[i] = snat;
         if (n == count) {
             break;
         }
@@ -125,7 +126,7 @@ int snat_conf_get_by_name(void *arg, struct snat_pool **pp_snat, const char *nam
     struct snat_pool *snat = NULL;
     struct snat_table *table = arg;
 
-    if (UNLIKELY(arg == NULL || pp_snat || name == NULL)) {
+    if (UNLIKELY(arg == NULL || pp_snat == NULL || name == NULL)) {
         LOG_ERROR("Inner parameter invalid.");
         return ERRCODE_INNER;
     }
@@ -141,48 +142,95 @@ int snat_conf_get_by_name(void *arg, struct snat_pool **pp_snat, const char *nam
     return ERRCODE_SNAT_POOL_NOT_EXIST;
 }
 
-int snat_conf_get_all(const void *arg, struct snat_pool *pp_snat[], int *p_count)
+int snat_conf_table_get_count(void *arg, int *p_count)
 {
-    int n = 0;
-    const struct snat_table *table = (const struct snat_table *)arg;
+    struct snat_table *table = arg;
 
-    if (UNLIKELY(arg == NULL || pp_snat == NULL || p_count == NULL)) {
+    if (UNLIKELY(arg == NULL || p_count == NULL)) {
         LOG_ERROR("Invalid parameter.");
         return ERRCODE_PARAMETER_INVALID;
     }
 
-    for (int i = 0; i <= table->max_id; i++) {
-        if (table->store[i] != NULL) {
-            pp_snat[n++] = table->store[i];
-        }
-    }
-
-    *p_count = n;
+    *p_count = table->count;
     return 0;
 }
 
-int snat_conf_table_add(void **dst, const void *arg, struct snat_pool **pp_snat, int count, int hw_numa_id)
+int snat_conf_table_get_element(void *arg, struct snat_pool *pp_snat[], int count)
 {
-    int code = 0;
+    struct snat_table *table = arg;
+
+    if (UNLIKELY(arg == NULL || pp_snat == NULL || count < 0)) {
+        LOG_ERROR("Invalid parameter.");
+        return ERRCODE_PARAMETER_INVALID;
+    }
+
+    for (int i = 0; i < table->count; i++) {
+        pp_snat[i] = table->store[i];
+        if (i == count) {
+            break;
+        }
+    }
+
+    return 0;
+}
+
+int snat_conf_table_delete(void **dst, const void *arg, struct snat_pool **pp_snat, int count, int hw_numa_id)
+{
+    /*int code = 0;
     struct snat_table *target = NULL;
-    const struct snat_table *table = (const struct snat_table *)arg;
+    const struct snat_table *table = (const struct snat_table *) arg;
 
     if (UNLIKELY(arg == NULL || pp_snat == NULL || count == 0)) {
         LOG_ERROR("Inner invalid parameter.");
         return ERRCODE_PARAMETER_INVALID;
     }
 
-    code = _snat_conf_table_add_check(table, pp_snat, count);
+    code = _snat_conf_table_delete_check(table, pp_snat, count);
     if (UNLIKELY(code != 0)) {
         return code;
     }
 
-    code = _snat_conf_table_add_create(&target, table, count, hw_numa_id);
+    code = _snat_conf_table_delete_create(&target, table, count, hw_numa_id);
     if (UNLIKELY(code != 0)) {
         goto _quit;
     }
 
-    code = _snat_conf_table_add(target, table, pp_snat, count);
+    code = _snat_conf_table_delete(target, table, pp_snat, count);
+    if (UNLIKELY(code != 0)) {
+        goto _quit;
+    }
+
+    *dst = target;
+    return 0;
+
+_quit:
+    _snat_conf_table_destroy(target);
+    return code;*/
+    return 0;
+}
+
+int snat_conf_table_append(void **dst, const void *arg, struct snat_pool **pp_snat, int count, int hw_numa_id)
+{
+    int code = 0;
+    struct snat_table *target = NULL;
+    const struct snat_table *table = (const struct snat_table *) arg;
+
+    if (UNLIKELY(arg == NULL || pp_snat == NULL || count == 0)) {
+        LOG_ERROR("Inner invalid parameter.");
+        return ERRCODE_PARAMETER_INVALID;
+    }
+
+    code = _snat_conf_table_append_check(table, pp_snat, count);
+    if (UNLIKELY(code != 0)) {
+        return code;
+    }
+
+    code = _snat_conf_table_append_create(&target, table, count, hw_numa_id);
+    if (UNLIKELY(code != 0)) {
+        goto _quit;
+    }
+
+    code = _snat_conf_table_append(target, table, pp_snat, count);
     if (UNLIKELY(code != 0)) {
         goto _quit;
     }

@@ -70,7 +70,9 @@ struct api_param {
     };
     const char *name;
     const struct vserver *vs;
+    const char *pool_name;
     struct pool_info *pool_info;
+    const char *snat_pool_name;
     struct snat_pool_info *snat_info;
 
     struct param_info *info;
@@ -99,14 +101,14 @@ struct api_ip4 {
     int count;
     struct ip4_info array[DP_VSERVER_MAX];
 
-    void *table[NUMA_MAX];
+    void *table[CPU_MAX];
 };
 
 struct api_ip6 {
     int count;
     struct ip6_info array[DP_VSERVER_MAX];
 
-    void *table[NUMA_MAX];
+    void *table[CPU_MAX];
 };
 
 struct api_vs_hdr {
@@ -235,6 +237,7 @@ static void *_api_vs_param_hdr_alloc(int count)
         param->info = &param_hdr->info;
     }
 
+    param_hdr->count = count;
     return param_hdr;
 }
 
@@ -264,7 +267,7 @@ static int _api_vs_param_type_parse(enum PROTO_TYPE *type, const char *type_str)
     return ERRCODE_VSERVER_TYPE_NOT_SUPPORT;
 }
 
-static int _api_vs_param_addr_parse(struct api_param *param, struct param_info *info, void *obj)
+static int _api_vs_add_param_parse(struct api_param *param, void *obj)
 {
     int code = 0;
     uint64_t port = 0;
@@ -275,29 +278,55 @@ static int _api_vs_param_addr_parse(struct api_param *param, struct param_info *
     const char *type_str = NULL;
     const char *interface = NULL;
     struct dpdk_ip6_addr ip6_addr = {0};
+    struct param_info *info = param->info;
 
-    code = api_json_get_long(&port, obj, "port");
-    if (code != 0) {
+    code = ERRCODE_PARAMETER_INVALID;
+    param->name = api_json_get_string(obj, "name");
+    if (param->name == NULL) {
         LOG_ERROR("Invalid parameter.");
-        return ERRCODE_PARAMETER_INVALID;
+        return code;
     }
 
     addr_str = api_json_get_string(obj, "addr");
     if (addr_str == NULL) {
         LOG_ERROR("Invalid parameter.");
-        return ERRCODE_PARAMETER_INVALID;
+        return code;
     }
 
     interface = api_json_get_string(obj, "interface");
     if (interface == NULL) {
         LOG_ERROR("Invalid parameter.");
-        return ERRCODE_PARAMETER_INVALID;
+        return code;
+    }
+
+    code = api_json_get_long(&port, obj, "port");
+    if (code != 0) {
+        LOG_ERROR("Invalid parameter.");
+        return code;
     }
 
     type_str = api_json_get_string(obj, "protocol-type");
     if (type_str == NULL) {
         LOG_ERROR("Invalid parameter.");
-        return ERRCODE_PARAMETER_INVALID;
+        return code;
+    }
+
+    param->pool_name = api_json_get_string(obj, "pool_name");
+    if (param->pool_name == NULL) {
+        LOG_ERROR("Invalid parameter.");
+        return code;
+    }
+
+    param->snat_pool_name = api_json_get_string(obj, "snat_pool_name");
+    if (param->snat_pool_name == NULL) {
+        LOG_ERROR("Invalid parameter.");
+        return code;
+    }
+
+    port_id = dpdk_port_by_name_get(interface);
+    if (port_id == UINT8_MAX) {
+        LOG_ERROR("Interface name '%s' invalid.", interface);
+        return code;
     }
 
     code = _api_vs_param_type_parse(&type, type_str);
@@ -305,14 +334,8 @@ static int _api_vs_param_addr_parse(struct api_param *param, struct param_info *
         return code;
     }
 
-    port_id = dpdk_port_by_name_get(interface);
-    if (port_id == UINT8_MAX) {
-        LOG_ERROR("Interface name '%s' invalid.", interface);
-        return ERRCODE_PARAMETER_INVALID;
-    }
-
     param->type = type;
-    param->port = (uint16_t) port;
+    param->port = dpdk_cpu_to_be_16((uint16_t) port);
 
     if (strchr(addr_str, ':') == NULL) {
         struct addr_v4_info *v4_info = NULL;
@@ -339,7 +362,7 @@ static int _api_vs_param_addr_parse(struct api_param *param, struct param_info *
     return 0;
 }
 
-static int _api_vs_param_pool(struct api_param *param, void *pool_table, void *obj)
+static int _api_vs_param_pool(struct api_param *param, void *pool_table)
 {
     int code = 0;
     bool has = false;
@@ -347,12 +370,7 @@ static int _api_vs_param_pool(struct api_param *param, void *pool_table, void *o
     const char *pool_name = NULL;
     struct pool_info *pool_info = NULL;
 
-    pool_name = api_json_get_string(obj, "pool_name");
-    if (pool_name == NULL) {
-        LOG_ERROR("Invalid parameter.");
-        return ERRCODE_PARAMETER_INVALID;
-    }
-
+    pool_name = param->pool_name;
     for (int i = 0; i < param->info->pool_count; i++) {
         pool_info = &param->info->pool_info[i];
 
@@ -367,8 +385,8 @@ static int _api_vs_param_pool(struct api_param *param, void *pool_table, void *o
         pool_info = param->pool_info = &param->info->pool_info[param->info->pool_count++];
     }
 
-    code = pool_conf_get_by_name(pool_table, &pool, pool_name);
-    if (code != 0) {
+    code = pool_conf_get_by_name(&pool, pool_table, pool_name);
+    if (code != ERRCODE_POOL_EXISTS) {
         LOG_ERROR("Pool '%s' not exist", pool_name);
         return ERRCODE_POOL_NOT_EXIST;
     }
@@ -379,7 +397,7 @@ static int _api_vs_param_pool(struct api_param *param, void *pool_table, void *o
     return 0;
 }
 
-static int _api_vs_param_snat_pool_parse(struct api_param *param, void *snat_table, void *obj)
+static int _api_vs_param_snat_pool_parse(struct api_param *param, void *snat_table)
 {
     int code = 0;
     bool has = false;
@@ -388,12 +406,7 @@ static int _api_vs_param_snat_pool_parse(struct api_param *param, void *snat_tab
     struct param_info *param_info = NULL;
     struct snat_pool_info *snat_pool_info = NULL;
 
-    snat_name = api_json_get_string(obj, "snat_pool_name");
-    if (snat_name == NULL) {
-        LOG_ERROR("Invalid parameter.");
-        return ERRCODE_PARAMETER_INVALID;
-    }
-
+    snat_name = param->snat_pool_name;
     param_info = param->info;
     for (int i = 0; i < param_info->snat_count; i++) {
         snat_pool_info = &param_info->snat_info[i];
@@ -425,26 +438,17 @@ static int _api_vs_ip4_table_create(struct api_ip4 *ip4, struct root *root, cons
 {
     int code = 0;
     void *ip4_table = NULL;
-    void *route4_table = NULL;
     struct ip4_info *info = NULL;
     int cpu_count = root->hw_info.cpu_count;
     const struct addr_v4_info *v4_info = NULL;
     struct dataplane *dp = root->dpdk_thread[0];
-
-    route4_table = dp->tc->route4_table;
 
     // to struct ip4_info
     for (int i = 0; i < param_info->ip4_count; i++) {
         info = &ip4->array[i];
         v4_info = &param_info->v4_info[i];
 
-        INIT_LIST_HEAD(&info->node);
-        info->addr = v4_info->addr;
-        info->refcnt = v4_info->refcnt;
-        info->port = v4_info->port;
-        info->type = 0;
-
-        code = route4_conf_mask_find(&info->mask, route4_table, v4_info->addr, v4_info->port);
+        code = ip4_info_init(info, v4_info->addr, 32, v4_info->port, info->type, 0);
         if (code != 0) {
             return code;
         }
@@ -499,6 +503,9 @@ static int _api_vs_ip6_table_create(struct api_ip6 *ip6, struct root *root, cons
     }
 
     ip6->count = param_info->ip6_count;
+    if (ip6->count == 0) {
+        return 0;
+    }
 
     // to ip6_table
     for (int i = 0; i < cpu_count; i++) {
@@ -618,7 +625,7 @@ static struct vserver *_api_vs_param_to_vserver(const struct api_param *param, i
         v4_info = param->addr_info;
 
         v4->vs.af = AF_INET;
-        v4->vs.af = VSERVER_ID_INVALID;
+        v4->vs.id = VSERVER_ID_INVALID;
         v4->type = param->type;
         v4->port = param->port;
         v4->vip = v4_info->addr;
@@ -638,7 +645,7 @@ static struct vserver *_api_vs_param_to_vserver(const struct api_param *param, i
         v6_info = param->addr_info;
 
         v6->vs.af = AF_INET6;
-        v6->vs.af = VSERVER_ID_INVALID;
+        v6->vs.id = VSERVER_ID_INVALID;
         v6->type = param->type;
         v6->port = param->port;
         dpdk_memcpy(&v6->vip, &v6_info->addr, sizeof(v6->vip));
@@ -834,6 +841,23 @@ _quit:
     return code;
 }
 
+static int _api_vs_add_param_process(struct api_param *param, struct dataplane *dp)
+{
+    int code = 0;
+
+    code = _api_vs_param_pool(param, dp->tc->pool_table);
+    if (code != 0) {
+        return code;
+    }
+
+    code = _api_vs_param_snat_pool_parse(param, dp->tc->snat_table);
+    if (code != 0) {
+        return code;
+    }
+
+    return 0;
+}
+
 static int _api_vs_add_parse(struct api_param_hdr **pp_param_hdr, struct root *root, void *json)
 {
     int code = 0;
@@ -854,7 +878,6 @@ static int _api_vs_add_parse(struct api_param_hdr **pp_param_hdr, struct root *r
         goto _quit;
     }
 
-    param_hdr->count = count;
     for (int i = 0; i < count; i++) {
         void *obj = NULL;
 
@@ -862,25 +885,16 @@ static int _api_vs_add_parse(struct api_param_hdr **pp_param_hdr, struct root *r
         obj = api_json_array_get(array, i);
         if (obj == NULL) {
             LOG_ERROR("Invalid parameter.");
+            code = ERRCODE_PARAMETER_INVALID;
             goto _quit;
         }
 
-        param->name = api_json_get_string(obj, "name");
-        if (param->name == NULL) {
-            goto _quit;
-        }
-
-        code = _api_vs_param_addr_parse(param, param->info, obj);
+        code = _api_vs_add_param_parse(param, obj);
         if (code != 0) {
             goto _quit;
         }
 
-        code = _api_vs_param_pool(param, dp->tc->pool_table, obj);
-        if (code != 0) {
-            goto _quit;
-        }
-
-        code = _api_vs_param_snat_pool_parse(param, dp->tc->snat_table, obj);
+        code = _api_vs_add_param_process(param, dp);
         if (code != 0) {
             goto _quit;
         }
@@ -905,7 +919,6 @@ static int _api_vs_add(struct api_vs_hdr **pp_vs_hdr, struct root *root, const s
     }
 
     vs_hdr->cpu_count = root->hw_info.cpu_count;
-
     code = _api_vs_ip4_table_create(&vs_hdr->ip4, root, &param_hdr->info, ip4_conf_table_create_and_append);
     if (code != 0) {
         goto _quit;
@@ -1211,19 +1224,23 @@ static void _api_vs_update(struct root *root, struct api_vs_hdr *vs_hdr)
     struct api_pkt *pkt = &vs_hdr->pkt;
     int cpu_count = root->hw_info.cpu_count;
 
-    for (int i = 0; i < cpu_count; i++) {
-        dp = root->dpdk_thread[i];
-        position[i] = &dp->tc->ip4_table;
+    if (ip4->table[0] != NULL) {
+        for (int i = 0; i < cpu_count; i++) {
+            dp = root->dpdk_thread[i];
+            position[i] = &dp->tc->ip4_table;
+        }
+
+        api_thread_config_update(root, position, ip4->table, ip4_conf_table_destroy);
     }
 
-    api_thread_config_update(root, position, ip4->table, ip4_conf_table_destroy);
+    if (ip6->table[0] != NULL) {
+        for (int i = 0; i < cpu_count; i++) {
+            dp = root->dpdk_thread[i];
+            position[i] = &dp->tc->ip6_table;
+        }
 
-    for (int i = 0; i < cpu_count; i++) {
-        dp = root->dpdk_thread[i];
-        position[i] = &dp->tc->ip6_table;
+        api_thread_config_update(root, position, ip6->table, ip6_conf_table_destroy);
     }
-
-    api_thread_config_update(root, position, ip6->table, ip6_conf_table_destroy);
 
     for (int i = 0; i < cpu_count; i++) {
         dp = root->dpdk_thread[i];
@@ -1266,7 +1283,6 @@ _quit:
     if (code != 0) {
         return api_fail(code);
     }
-
     return api_succ(NULL);
 }
 
@@ -1298,10 +1314,10 @@ API_DEL(/v1/network/vserver, vserver)
 _quit:
     _api_vs_hdr_free(vs_hdr);
     _api_vs_param_hdr_free(param_hdr);
+
     if (code != 0) {
         return api_fail(code);
     }
-
     return api_succ(NULL);
 }
 
@@ -1323,6 +1339,10 @@ API_GET(/v1/network/vserver, vserver)
     code = vs_conf_table_get_count(&count, dp->tc->vs_table);
     if (code != 0) {
         goto _quit;
+    }
+
+    if (count == 0) {
+        return api_succ(array);
     }
 
     pp_vs = api_malloc(count * sizeof(*pp_vs));

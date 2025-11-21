@@ -33,7 +33,7 @@ struct ip4_info {
     struct list_head node;
     uint32_t addr;
     uint16_t port;
-    uint8_t mask;
+    uint8_t mask; // this field is unnecessary and may be removed
     uint8_t type; // enum IP_TYPE
     uint32_t refcnt;
 };
@@ -41,7 +41,7 @@ struct ip4_info {
 struct ip6_info {
     struct dpdk_ip6_addr addr;
     uint16_t port;
-    uint8_t mask;
+    uint8_t mask; // this field is unnecessary and may be removed
     uint8_t type;
     uint32_t refcnt;
 };

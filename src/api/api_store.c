@@ -341,7 +341,7 @@ static int _api_store_load(sr_session_ctx_t *sess, struct api_db *db, const char
         json_decref(json); json = NULL;
     }
 
-    LOG_DEBUG("Module config load success !!!!!!.");
+    LOG_DEBUG("Module config load success !!!!!!");
     return 0;
 
 _quit:

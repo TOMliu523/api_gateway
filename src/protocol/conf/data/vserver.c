@@ -287,11 +287,8 @@ int vs_conf_table_get_element(struct vserver *pp_arr[], int count, void *arg)
         return ERRCODE_PARAMETER_INVALID;
     }
 
-    for (int i = 0; i < table->count; i++) {
+    for (int i = 0; i < table->count && i != count; i++) {
         pp_arr[i] = table->store[i];
-        if (i == count) {
-            break;
-        }
     }
 
     return 0;
@@ -365,12 +362,12 @@ int vs_conf_table_create_and_append(void **dst, void *src, struct vserver **pp_v
     }
 
     max = table->max_id + 1;
-    if (max > table->count + count) {
+    if (max < table->count + count) {
         max = table->count + count;
     }
 
     target = _vs_conf_table_create(max, hw_numa_id);
-    if (UNLIKELY(target != 0)) {
+    if (UNLIKELY(target == NULL)) {
         code = ERRCODE_OOM;
         goto _quit;
     }
@@ -380,6 +377,7 @@ int vs_conf_table_create_and_append(void **dst, void *src, struct vserver **pp_v
         goto _quit;
     }
 
+    *dst = target;
     return 0;
 
 _quit:
