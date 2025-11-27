@@ -9,6 +9,8 @@
 #include "l3.h"
 #include "dpdk_type.h"
 
+#define IP6_HDR_MIN (sizeof(struct dpdk_ip6_hdr))
+
 extern void ip6_process(void **, int);
 extern void ip6_table_destroy(void *);
 

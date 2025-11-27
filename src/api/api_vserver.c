@@ -567,6 +567,8 @@ static int _api_vs_pkt_create(struct api_pkt *pkt, const struct root *root, cons
             code = ERRCODE_INNER;
             goto _quit;
         }
+
+        DPDK_HEADROOM(pkt->array[i])->type = PKT_MBUF_GARP;
     }
 
     for (int i = 0; i < ip6_count; i++) {
@@ -583,6 +585,8 @@ static int _api_vs_pkt_create(struct api_pkt *pkt, const struct root *root, cons
             code = ERRCODE_INNER;
             goto _quit;
         }
+
+        DPDK_HEADROOM(pkt->array[i])->type = PKT_MBUF_NDP_AD;
     }
 
     return 0;

@@ -53,14 +53,14 @@
  *   Use external synchronization or atomic primitives if multiple threads
  *   may modify the same word concurrently.
  */
-static INLINE unsigned int dpdk_bit_test_u32(uint32_t x, int n)
+static INLINE bool dpdk_bit_test_u32(uint32_t x, int n)
 {
-    return ((x >> n) & 0x1);
+    return ((x >> n) & 0x1) ? true : false;
 }
 
-static INLINE unsigned int dpdk_bit_test_u64(uint64_t x, int n)
+static INLINE bool dpdk_bit_test_u64(uint64_t x, int n)
 {
-    return ((x >> n) & 0x1);
+    return ((x >> n) & 0x1) ? true : false;
 }
 
 static INLINE uint32_t dpdk_bit_set_u32(uint32_t x, int n)

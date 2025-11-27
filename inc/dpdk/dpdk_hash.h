@@ -88,6 +88,11 @@ static INLINE int dpdk_hash_lookup(const struct dpdk_hash *hash, const void *key
     return rte_hash_lookup_data(hash, key, data);
 }
 
+static INLINE int dpdk_hash_lookup_bulk_position(const struct dpdk_hash *h, const void **keys, uint32_t n_keys, int32_t *positions)
+{
+    return rte_hash_lookup_bulk(h, keys, n_keys, positions);
+}
+
 /*
  * If the parameters are correct, there will be no errors;
  * you can determine this from the interface’s error codes.

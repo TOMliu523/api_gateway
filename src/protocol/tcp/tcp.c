@@ -15,7 +15,7 @@
 #include "dpdk_limits.h"
 #include "dpdk_atomic.h"
 
-#define TCP_CONN_CACHE_MAX 64
+#define TCP_CONN_CACHE_MAX 256
 #define TCP_CONN_EXPIRE_SECOND 900
 
 #define TCP_FIXED_NO_OPTION_MIN (sizeof(struct dpdk_eth_hdr) + sizeof(struct dpdk_tcp_hdr))
@@ -29,29 +29,79 @@ static __thread void *sp_tcp_conn_cache[TCP_CONN_CACHE_MAX];
 
 static INLINE void *_tcp_conn_pop(void)
 {
+    int ret = 0;
+
     if (UNLIKELY(s_cache_count == 0)) {
-        s_cache_count = dpdk_ring_sc_pop(sp_tcp_conn_pool, sp_tcp_conn_cache, ARR_NUMS(sp_tcp_conn_cache));
-        if (UNLIKELY(s_cache_count == 0)) {
-            LOG_WARN("Thread(%d) Conn table is empty.", tlv_thread_id);
-            return NULL;
+        ret = dpdk_mempool_pop(sp_tcp_conn_pool, sp_tcp_conn_cache, ARR_NUMS(sp_tcp_conn_cache));
+        if (LIKELY(ret == 0)) {
+            s_cache_count = ARR_NUMS(sp_tcp_conn_cache);
+        } else {
+            s_cache_count = dpdk_mempool_avail_count(sp_tcp_conn_pool);
+            if (LIKELY(s_cache_count != 0)) {
+                dpdk_mempool_pop(sp_tcp_conn_pool, sp_tcp_conn_cache, s_cache_count);
+            } else {
+                LOG_WARN("Thread(%d) Conn table is empty.", tlv_thread_id);
+                return NULL;
+            }
         }
     }
 
     return sp_tcp_conn_cache[--s_cache_count];
 }
 
+static INLINE void __tcp_conn_push_bulk(void *cache[], int *out_count, void *conn[], int in_count)
+{
+    int i = 0;
+    int count = *out_count;
+
+    switch (in_count) {
+    case 7:
+        cache[count++] = conn[i++];
+        FALLTHROUGH;
+    case 6:
+        cache[count++] = conn[i++];
+        FALLTHROUGH;
+    case 5:
+        cache[count++] = conn[i++];
+        FALLTHROUGH;
+    case 4:
+        cache[count++] = conn[i++];
+        FALLTHROUGH;
+    case 3:
+        cache[count++] = conn[i++];
+        FALLTHROUGH;
+    case 2:
+        cache[count++] = conn[i++];
+        FALLTHROUGH;
+    case 1:
+        cache[count++] = conn[i++];
+        break;
+    default:
+        dpdk_memcpy(cache + count, conn, in_count * sizeof(*conn));
+        count += in_count;
+        break;
+    }
+
+    *out_count = count;
+}
+
 static INLINE void _tcp_conn_push_bulk(void *conn[], int count)
 {
     if (s_cache_count + count <= TCP_CONN_CACHE_MAX) {
-        dpdk_memcpy(sp_tcp_conn_cache + s_cache_count, conn, count * sizeof(*conn));
-        s_cache_count += count;
+        __tcp_conn_push_bulk(sp_tcp_conn_cache, &s_cache_count, conn, count);
     } else {
-        int n_fill = TCP_CONN_CACHE_MAX - s_cache_count;
-        if (UNLIKELY(n_fill != 0)) {
-            dpdk_memcpy(sp_tcp_conn_cache + s_cache_count, conn, n_fill);
-            s_cache_count = TCP_CONN_CACHE_MAX;
+        int half = TCP_CONN_CACHE_MAX / 2;
+        int diff = s_cache_count - half;
+
+        if (diff < 0) {
+            diff = -diff;
+            __tcp_conn_push_bulk(sp_tcp_conn_cache, &s_cache_count, conn, diff);
+            dpdk_mempool_push(sp_tcp_conn_pool, conn + diff, count - diff);
+        } else {
+            dpdk_mempool_push(sp_tcp_conn_pool, sp_tcp_conn_cache + half, diff);
+            s_cache_count = half;
+            dpdk_mempool_push(sp_tcp_conn_pool, conn, count);
         }
-        dpdk_ring_sp_push(sp_tcp_conn_pool, conn + n_fill, count - n_fill);
     }
 }
 
@@ -65,7 +115,12 @@ static INLINE void tcp_conn_close(struct tcp_conn *conn)
 
 }
 
-static void _tcp_listen_process(struct dpdk_mbuf *mbuf, struct tcp_conn *conn, struct tcp_ops *ops)
+static INLINE void tcp_conn_state_set(struct tcp_conn *conn, enum TCP_STATE state)
+{
+    conn->state = state;
+}
+
+static INLINE int _tcp_listen_process(struct dpdk_mbuf *mbuf, struct tcp_conn *conn, const struct tcp_ops *ops)
 {
     int ret = 0;
     struct dpdk_tcp_hdr *tcphdr = DPDK_HEADROOM(mbuf)->l4;
@@ -74,13 +129,13 @@ static void _tcp_listen_process(struct dpdk_mbuf *mbuf, struct tcp_conn *conn, s
     case TCP_F_SYN:
         ret = ops->syn_ack_reply(mbuf, conn);
         if (UNLIKELY(ret != 0)) {
-            pktmbuf_drop(mbuf);
             tcp_conn_close(conn);
-            break;
+            return -1;
         }
 
         pktmbuf_send(mbuf);
-        break;
+        tcp_conn_state_set(conn, TCP_SYN_RECEIVE);
+        return 0;
     case TCP_F_RST:
     case TCP_F_FIN_RST:
     case TCP_F_SYN_RST:
@@ -89,8 +144,7 @@ static void _tcp_listen_process(struct dpdk_mbuf *mbuf, struct tcp_conn *conn, s
     case TCP_F_FIN_RST_ACK:
     case TCP_F_SYN_RST_ACK:
     case TCP_F_ALL:
-        pktmbuf_drop(mbuf);
-        break;
+        return -1;
     case TCP_F_ACK:
     case TCP_F_FIN_ACK:
     case TCP_F_SYN_ACK:
@@ -102,15 +156,13 @@ static void _tcp_listen_process(struct dpdk_mbuf *mbuf, struct tcp_conn *conn, s
         seq = dpdk_be_to_cpu_32(tcphdr->recv_ack);
         ack = dpdk_be_to_cpu_32(tcphdr->sent_seq) + DPDK_HEADROOM(mbuf)->payload_len;
         ops->rst_reply(mbuf, seq, ack);
-        break;
+        return 0;
     }
-    default: // TCP_F_FIN TCP_F_SYN_FIN TCP_F_NONE
-        pktmbuf_drop(mbuf);
-        break;
+    default: return -1; // TCP_F_FIN TCP_F_SYN_FIN TCP_F_NONE
     }
 }
 
-static void _tcp_close_process(struct dpdk_mbuf *mbuf, struct tcp_ops *ops)
+static INLINE int _tcp_close_process(struct dpdk_mbuf *mbuf, const struct tcp_ops *ops)
 {
     uint32_t ack = 0;
     uint32_t seq = 0;
@@ -124,9 +176,7 @@ static void _tcp_close_process(struct dpdk_mbuf *mbuf, struct tcp_ops *ops)
     case TCP_F_FIN_SYN_RST:
     case TCP_F_FIN_RST_ACK:
     case TCP_F_SYN_RST_ACK:
-    case TCP_F_ALL:
-        pktmbuf_drop(mbuf);
-        break;
+    case TCP_F_ALL: return -1;
     case TCP_F_ACK:
     case TCP_F_FIN_ACK:
     case TCP_F_SYN_ACK:
@@ -137,46 +187,118 @@ static void _tcp_close_process(struct dpdk_mbuf *mbuf, struct tcp_ops *ops)
         ack = dpdk_be_to_cpu_16(tcphdr->sent_seq) + DPDK_HEADROOM(mbuf)->payload_len;
         ops->rst_reply(mbuf, seq, ack);
         pktmbuf_send(mbuf);
-        break;
+        return 0;
     }
 }
 
-void tcp_state_process(struct dpdk_mbuf *mbuf, struct tcp_conn *conn, void *arg)
+static INLINE int _tcp_syn_receive_ack_process(struct dpdk_mbuf *mbuf, struct tcp_conn *conn, const struct tcp_ops *ops)
+{
+    int ret = 0;
+    int len = 0;
+    uint32_t seq = 0;
+    uint32_t ack = 0;
+    uint8_t *data = NULL;
+    struct tcb *tcb = NULL;
+    struct tcp_opt_info info = {0};
+    struct dpdk_tcp_hdr *tcphdr = DPDK_HEADROOM(mbuf)->l4;
+
+    data = (uint8_t *)(tcphdr + 1);
+    len = tcp_header_len(tcphdr) - sizeof(struct dpdk_tcp_hdr);
+
+    ret = tcp_option_get(&info, data, len);
+    if (UNLIKELY(ret != 0)) {
+        return -1;
+    }
+
+    // timestamp check
+    tcb = &conn->tcb;
+    if (UNLIKELY(tcb->send_ts_ok && info.tsval < tcb->ts_recent)) {
+        return -1;
+    }
+
+    seq = dpdk_be_to_cpu_32(tcphdr->sent_seq);
+    ack = dpdk_be_to_cpu_32(tcphdr->recv_ack);
+    if (UNLIKELY(seq != tcb->rcv.nxt || ack != tcb->snd.nxt)) {
+        return -1;
+    }
+
+    tcp_conn_state_set(conn, TCP_ESTABLISHED);
+    // send to rs
+    return 0;
+}
+
+static INLINE int _tcp_syn_receive_process(struct dpdk_mbuf *mbuf, struct tcp_conn *conn, struct tcp_ops *ops)
+{
+    struct dpdk_tcp_hdr *tcphdr = DPDK_HEADROOM(mbuf)->l4;
+
+    switch (tcphdr->tcp_flags & TCP_F_MASK) {
+    case TCP_F_ACK: return _tcp_syn_receive_ack_process(mbuf, conn, ops);
+    case TCP_F_FIN:
+        break;
+    default:
+        break;
+    }
+
+    return -1;
+}
+
+static INLINE int _tcp_syn_sent_process(struct dpdk_mbuf *mbuf, struct tcp_conn *conn, const struct tcp_ops *ops)
+{
+    return 0;
+}
+
+static INLINE int _tcp_fin_wait1_process(struct dpdk_mbuf *mbuf, struct tcp_conn *conn, const struct tcp_ops *ops)
+{
+    return 0;
+}
+
+static INLINE int _tcp_fin_wait2_process(struct dpdk_mbuf *mbuf, struct tcp_conn *conn, const struct tcp_ops *ops)
+{
+    return 0;
+}
+
+static INLINE int _tcp_close_wait_process(struct dpdk_mbuf *mbuf, struct tcp_conn *conn, const struct tcp_ops *ops)
+{
+    return 0;
+}
+
+static INLINE int _tcp_last_ack_process(struct dpdk_mbuf *mbuf, struct tcp_conn *conn, const struct tcp_ops *ops)
+{
+    return 0;
+}
+
+static INLINE int _tcp_closing_process(struct dpdk_mbuf *mbuf, struct tcp_conn *conn, const struct tcp_ops *ops)
+{
+    return 0;
+}
+
+static INLINE int _tcp_time_wait_process(struct dpdk_mbuf *mbuf, struct tcp_conn *conn, const struct tcp_ops *ops)
+{
+    return 0;
+}
+
+int tcp_state_process(struct dpdk_mbuf *mbuf, struct tcp_conn *conn, const void *arg)
 {
     int state = 0;
     struct tcp_ops *ops = (struct tcp_ops *)arg;
 
     state = (conn != NULL) ? conn->state : TCP_CLOSE;
     switch (state) {
-    case TCP_ESTABLISHED:
-        break;
-    case TCP_LISTEN:
-        _tcp_listen_process(mbuf, conn, ops);
-        break;
-    case TCP_CLOSE:
-        _tcp_close_process(mbuf, ops);
-        break;
-    case TCP_SYN_SENT:
-        break;
-    case TCP_SYN_RECEIVE:
-        break;
-    case TCP_FIN_WAIT1:
-        break;
-    case TCP_FIN_WAIT2:
-        break;
-    case TCP_CLOSE_WAIT:
-        break;
-    case TCP_LAST_ACK:
-        break;
-    case TCP_CLOSING:
-        break;
-    case TCP_TIME_WAIT:
-        break;
-    default:
-        LOG_ERROR("Looking at this code… how did it end up like this?");
-        pktmbuf_drop(mbuf);
-        return;
+    case TCP_ESTABLISHED: break;
+    case TCP_LISTEN: return _tcp_listen_process(mbuf, conn, ops);
+    case TCP_CLOSE: return _tcp_close_process(mbuf, ops);
+    case TCP_SYN_SENT: return _tcp_syn_sent_process(mbuf, conn, ops);
+    case TCP_SYN_RECEIVE: return _tcp_syn_receive_process(mbuf, conn, ops);
+    case TCP_FIN_WAIT1: return _tcp_fin_wait1_process(mbuf, conn, ops);
+    case TCP_FIN_WAIT2: return _tcp_fin_wait2_process(mbuf, conn, ops);
+    case TCP_CLOSE_WAIT: return _tcp_close_wait_process(mbuf, conn, ops);
+    case TCP_LAST_ACK: return _tcp_last_ack_process(mbuf, conn, ops);
+    case TCP_CLOSING: return _tcp_closing_process(mbuf, conn, ops);
+    case TCP_TIME_WAIT: return _tcp_time_wait_process(mbuf, conn, ops);
+    default: LOG_ERROR("Looking at this code… how did it end up like this?"); return -1;
     }
+
+    return -1;
 }
 
 void *tcp_conn_client_create(int af, uint16_t port, uint32_t vs_id, struct tcp_tuple *tuple)
@@ -210,13 +332,13 @@ void tcp_conn_lookup(struct tcp4_lookup_blk *blk)
 {
     int count = blk->count;
     uint64_t *hit_mask = &blk->resutl;
-    void **data = (void **)blk->conns;
+    void **datas = (void **)blk->conns;
     const void **keys = (const void **)blk->keys;
 
-    dpdk_hash_lookup_bulk(sp_tcp_conn_hash, keys, count, hit_mask, data);
+    dpdk_hash_lookup_bulk(sp_tcp_conn_hash, keys, count, hit_mask, datas);
 }
 
-int tcp_thread_create(void)
+int tcp_thread_resource_init(void)
 {
     int ret = 0;
     void *conn_hash = NULL;
@@ -224,14 +346,14 @@ int tcp_thread_create(void)
     char name[CACHE_LINE] = "";
 
     snprintf(name, sizeof(name), "TCP_CONN_%u_%u", tlv_thread_id, (uint32_t)tlv_dp->off_time);
-    conn_pool = dpdk_ring_ss_create(name, DP_TCP_CONN_MAX_PER_THREAD, tlv_hw_numa_id);
+    conn_pool = dpdk_pool_ss_create(name, DP_TCP_CONN_MAX_PER_THREAD, sizeof(struct tcp_conn), tlv_hw_numa_id);
     if (UNLIKELY(conn_pool == NULL)) {
         goto _quit;
     }
 
     sp_tcp_conn_pool = conn_pool;
 
-    conn_hash = dpdk_hash_create(DP_TCP_CONN_MAX_PER_THREAD, sizeof(struct tcp6_tuple), tlv_hw_numa_id, memcmp);
+    conn_hash = dpdk_hash_create(DP_TCP_CONN_MAX_PER_THREAD, sizeof(struct tcp4_tuple), tlv_hw_numa_id, memcmp);
     if (UNLIKELY(conn_hash == NULL)) {
         goto _quit;
     }
@@ -246,11 +368,11 @@ int tcp_thread_create(void)
     return 0;
 
 _quit:
-    tcp_thread_destroy();
+    tcp_thread_resource_fini();
     return -1;
 }
 
-void tcp_thread_destroy(void)
+void tcp_thread_resource_fini(void)
 {
     if (sp_tcp_conn_pool != NULL) {
         dpdk_ring_destroy(sp_tcp_conn_pool);

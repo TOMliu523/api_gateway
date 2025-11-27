@@ -36,14 +36,14 @@
 
 #define DPDK_TCP_TX_CKSUM RTE_MBUF_F_TX_TCP_CKSUM
 
-static INLINE uint16_t dpdk_tcp4_mbuf_cksum(struct dpdk_mbuf *m, const struct dpdk_ip4_hdr *ip4hdr)
+static INLINE void dpdk_tcp4_mbuf_cksum(struct dpdk_mbuf *m, const struct dpdk_ip4_hdr *ip4hdr)
 {
+    struct dpdk_tcp_hdr *tcphdr = (struct dpdk_tcp_hdr *)(ip4hdr + 1);
     if (m->nb_segs == 1) {
-        const void *tcphdr = (const void *)(ip4hdr + 1);
-        return rte_ipv4_udptcp_cksum(ip4hdr, tcphdr);
+        tcphdr->cksum = rte_ipv4_udptcp_cksum(ip4hdr, tcphdr);
     } else {
         uint16_t l4_off = (intptr_t)ip4hdr - (intptr_t)DPDK_HEADROOM(m)->l2;
-        return rte_ipv4_udptcp_cksum_mbuf(m, ip4hdr, l4_off);
+        tcphdr->cksum = rte_ipv4_udptcp_cksum_mbuf(m, ip4hdr, l4_off);
     }
 }
 

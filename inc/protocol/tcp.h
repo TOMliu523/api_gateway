@@ -8,11 +8,10 @@
 #define __TCP_H__
 
 #include "util.h"
+#include "list.h"
 #include "dpdk_ip6.h"
 #include "dpdk_tcp.h"
 #include "dpdk_atomic.h"
-
-#include "list.h"
 
 // The following focuses on the state machine–related flags.
 #define TCP_F_MASK (DPDK_TCP_FIN_F | DPDK_TCP_SYN_F | DPDK_TCP_RST_F | DPDK_TCP_ACK_F)
@@ -39,7 +38,7 @@
 #define TCP_F_SYN_RST_ACK (DPDK_TCP_SYN_F | DPDK_TCP_RST_F | DPDK_TCP_ACK_F)
 
 // All flags set (4 bits)
-#define TCP_F_ALL (DPDK_TCP_FIN_F | DPDK_TCP_SYN_F | DPDK_TCP_RST_F | DPDK_TCP_ACK_F)
+#define TCP_F_ALL TCP_F_MASK
 
 #define TCP_CLIENTSIDE 0
 #define TCP_SERVERSIDE 1
@@ -47,7 +46,12 @@
 #define TCP_RTX_R1 6
 #define TCP_RTX_R2 10
 
+#define TCP_OPTION_MSS_LEN 4
+#define TCP_OPTION_SCALE_LEN 3
+#define TCP_OPTION_TS_LEN 10
 #define TCP_OPTION_LEN_MAX 40
+#define TCP_HDR_MIN (sizeof(struct dpdk_tcp_hdr))
+
 #define TCP_HDR_WIN (32768)
 #define TCP_WIN_SCALE (6)
 #define TCP_WIN_SIZE_DEFAULT (TCP_HDR_WIN * (1 << TCP_WIN_SCALE))
@@ -86,12 +90,18 @@ struct tcp_opt_info {
     union {
         uint64_t tsopt;
         struct {
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+            uint64_t tsecr : 32;
+            uint64_t tsval : 32;
+#else
             uint64_t tsval : 32;
             uint64_t tsecr : 32;
+#endif
         };
     };
 };
 
+struct tcp_tuple;
 struct tcp4_tuple {
     uint32_t sip;
     uint32_t dip;
@@ -111,7 +121,7 @@ struct tcp6_tuple {
 struct send_win {
     uint32_t una;
     uint32_t nxt;
-    uint32_t wnd;
+    // uint32_t wnd;
     uint32_t wl1;
     uint32_t wl2;
     uint32_t iss;
@@ -155,11 +165,11 @@ struct tcp_conn {
     uint32_t vs_id : 14; // max 16383
     uint32_t rs_id : 18; // max 262143
     uint32_t expire_time; // Since system startup to the current time
+    int32_t bucket_id; // hash position
     struct tcb tcb; // Transmission Control Block
     void *rcv_queue;
     void *snd_queue;
     void *resnd_queue;
-    struct tcp_tuple *tuple; // Convert to tcp4_tuple or tcp6_tuple according to the AF type.
     union {
         struct tcp_conn *proxy;
         struct http *http;
@@ -177,24 +187,28 @@ struct tcp_conn {
 
 struct tcp4_lookup_blk {
     int count;
+    void **mbufs;
     uint64_t resutl;
-    struct tcp4_tuple tuples[DP_BATCH_MAX];
     struct tcp4_tuple *keys[DP_BATCH_MAX];
     struct tcp_conn *conns[DP_BATCH_MAX];
-    void **mbufs;
+    /*
+     * The IPv4 and IPv6 five-tuple fields have the same length,
+     * so we cannot require the IPv6 header layout to occupy additional space.
+     */
+    struct tcp6_tuple tuples[DP_BATCH_MAX];
 };
 
 struct tcp6_lookup_blk {
     int count;
+    void **mbufs;
     uint64_t result;
-    struct tcp6_tuple tuple[DP_BATCH_MAX];
     struct tcp4_tuple *keys[DP_BATCH_MAX];
     struct tcp_conn *conn[DP_BATCH_MAX];
-    void **mbufs;
+    struct tcp6_tuple tuple[DP_BATCH_MAX];
 };
 
-extern int tcp_thread_create(void);
-extern void tcp_thread_destroy(void);
+extern int tcp_thread_resource_init(void);
+extern void tcp_thread_resource_fini(void);
 extern void tcp_conn_lookup(struct tcp4_lookup_blk *);
 
 extern int tcp4_thread_create(void);
@@ -202,7 +216,7 @@ extern void tcp4_thread_destroy(void);
 extern void tcp4_process(void *[], int);
 extern void tcp6_process(void *[], int);
 
-extern void tcp_state_process(struct dpdk_mbuf *, struct tcp_conn *, void *);
+extern int tcp_state_process(struct dpdk_mbuf *, struct tcp_conn *, const void *);
 extern void *tcp_conn_client_create(int, uint16_t, uint32_t, struct tcp_tuple *);
 
 static INLINE int tcp_header_len(const struct dpdk_tcp_hdr *tcp_hdr)
@@ -239,7 +253,7 @@ static INLINE int __tcp_option_timestamp_set(uint8_t data[], uint64_t tsopt)
     data[n++] = TCP_OPTION_TIMESTAMP;
     data[n++] = 10;
     dpdk_memcpy(&data[n], &be64, sizeof(be64));
-    n += 8;
+    n += sizeof(be64);
 
     return n;
 }
@@ -256,7 +270,7 @@ static INLINE int tcp_option_set(uint8_t data[], const struct tcp_opt_info *info
     }
 }
 
-static INLINE int tcp_syn_option_set(uint8_t data[], const struct tcp_opt_info *info)
+static INLINE int tcp_option_syn_set(uint8_t data[], const struct tcp_opt_info *info)
 {
     int n = 0;
 
@@ -271,6 +285,8 @@ static INLINE int tcp_syn_option_set(uint8_t data[], const struct tcp_opt_info *
     data[n++] = TCP_OPTION_WIN_SCALE;
     data[n++] = 3;
     data[n++] = info->scale;
+
+    data[n++] = TCP_OPTION_NOP;
 
     n += __tcp_option_timestamp_set(&data[n], info->tsopt);
     switch (n & 3) {
@@ -316,10 +332,9 @@ static INLINE int tcp_option_get(struct tcp_opt_info *info, uint8_t data[], int 
             }
 
             start += 1;
-            dpdk_memcpy(&info->tsopt, start, sizeof(info->tsopt));
-            info->tsopt = dpdk_be_to_cpu_64(info->tsopt);
-            start += 8;
-            info->send_ts_ok = 1;
+            info->tsopt = dpdk_be_to_cpu_64(*(uint64_t *)start);
+            start += sizeof(uint64_t);
+            info->send_ts_ok = TCP_OPTION_TS_OK;
             break;
         default:
             if (UNLIKELY(start + 1 >= end)) {
@@ -338,6 +353,17 @@ static INLINE int tcp_option_get(struct tcp_opt_info *info, uint8_t data[], int 
     }
 
     return 0;
+}
+
+static INLINE uint64_t tcp_ts_init(void)
+{
+    return ((uint64_t)(1000000 / 4) << 32) / dpdk_timer_hz();
+}
+
+static INLINE uint32_t tcp_ts_now(uint64_t mult)
+{
+    const uint64_t cycles = dpdk_timer_cycles();
+    return (uint32_t)((cycles * mult) >> 32);
 }
 
 /*

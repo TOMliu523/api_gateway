@@ -184,6 +184,36 @@ static INLINE void *dpdk_pktmbuf_prepend(struct dpdk_mbuf *mbuf, size_t len)
     return rte_pktmbuf_prepend(mbuf, len);
 }
 
+static INLINE void *dpdk_pktmbuf_append(struct dpdk_mbuf *mbuf, size_t len)
+{
+    return rte_pktmbuf_append(mbuf, len);
+}
+
+static INLINE int dpdk_pktmbuf_set_len(struct dpdk_mbuf *m, int l2_len, int l3_len, int l4_len, int total_len)
+{
+    int diff = 0;
+    int cur_len = rte_pktmbuf_data_len(m);
+
+    m->l2_len = l2_len;
+    m->l3_len = l3_len;
+    m->l4_len = l4_len;
+    m->ol_flags = 0;
+
+    diff = cur_len - total_len;
+    if (diff == 0) {
+        return 0;
+    }
+
+    if (diff < 0) {
+        diff = -diff;
+        return (dpdk_pktmbuf_trim(m, diff) == 0) ? 0 : -1;
+    } else {
+        return (dpdk_pktmbuf_append(m, diff) != NULL) ? 0 : -1;
+    }
+
+    return 0;
+}
+
 static INLINE struct dpdk_arp_hdr *dpdk_pktmbuf_arp(struct dpdk_mbuf *m)
 {
     return rte_pktmbuf_mtod_offset(m, struct dpdk_arp_hdr *, sizeof(struct dpdk_eth_hdr));

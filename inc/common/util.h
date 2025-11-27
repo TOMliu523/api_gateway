@@ -11,8 +11,8 @@
 
 #include "macro.h"
 
-#define UTIL_ALIGN_UP(v, p) (((v) + ((p) - 1)) & ~((p) - 1))
 #define UTIL_ALIGN_DOWN(v, p) ((v) & ~((p) - 1))
+#define UTIL_ALIGN_UP(v, p) (((v) + ((p) - 1)) & ~((p) - 1))
 
 /**
  * @brief Perform an incremental update of a 16-bit Internet checksum

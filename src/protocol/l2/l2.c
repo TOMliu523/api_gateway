@@ -18,13 +18,13 @@
 #include "dpdk_core.h"
 #include "dpdk_common.h"
 
-#if defined(__ORDER_LITTLE_ENDIAN__)
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
 #define L2_ARP_REQUEST (0x0100040600080100UL)
 #define L2_ARP_RESPONSE (0x0200040600080100UL)
 #else
 #define L2_ARP_REQUEST (0x0001080006040001UL)
 #define L2_ARP_RESPONSE (0x0001080006040002UL)
-#endif // __ORDER_LITTLE_ENDIAN__
+#endif
 
 #define ARP_GC_MAX 64
 #define ARP_ITEM_MAX 65536

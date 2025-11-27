@@ -11,6 +11,8 @@
 #include "l3.h"
 #include "dpdk_ip4.h"
 
+#define IP4_HDR_MIN (sizeof(struct dpdk_ip4_hdr))
+
 extern void ip4_process(void *[], int);
 extern void ip4_table_destroy(void *);
 extern void *ip4_table_startup(void ***, int, int);

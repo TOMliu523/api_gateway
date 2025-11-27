@@ -15,13 +15,15 @@
 #define MAC_IS_MULTICAST(p) (((uint8_t *)(p))[0] & 1)
 #define MAC_IS_TO_LOCAL(p) (((uint8_t *)(p))[0] & 1)
 
-#if defined(__ORDER_LITTLE_ENDIAN__)
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
 #define MAC_ADDR_CMP(p1, p2) ((*(uint64_t *)(p1) & MAC_ADDR_MASK) == ((*(uint64_t *)(p2)) & MAC_ADDR_MASK))
 #define MAC_IS_BROADCASTS(p) ((*(uint64_t *)(p) & MAC_ADDR_MASK) == MAC_ADDR_MASK)
 #else
 #define MAC_ADDR_CMP(p1, p2) ((*(uint64_t *)(p1) >> 16) == (*(uint64_t *)(p2) >> 16))
 #define MAC_IS_BROADCASTS(p) ((*(uint64_t *)(p) >> 16) == MAC_ADDR_MASK)
-#endif // __ORDER_LITTLE_ENDIAN__
+#endif
+
+#define L2_MAC_HDR_MIN (sizeof(struct dpdk_eth_hdr))
 
 struct iface {
     int nums;

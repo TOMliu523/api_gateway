@@ -8,6 +8,7 @@
 #include "ip4.h"
 #include "log.h"
 #include "tcp.h"
+#include "util.h"
 #include "type.h"
 #include "vserver.h"
 #include "dpdk_crc.h"
@@ -17,29 +18,35 @@
 #include "dpdk_bitops.h"
 
 #define TCP_IP4_IRS_SECRETKEY 0x49893759
-#define TCP_IP4_HDR_MIN (sizeof(struct dpdk_eth_hdr) + sizeof(struct dpdk_ip4_hdr))
-#define TCP_IP_HDR_PAYLOAD_MIN (sizeof(struct dpdk_ip4_hdr) + sizeof(struct dpdk_tcp_hdr))
-#define TCP_HDR_MIN (TCP_IP4_HDR_MIN + sizeof(struct dpdk_tcp_hdr))
+#define TCP_IP4_HDR_MIN (L2_MAC_HDR_MIN + IP4_HDR_MIN)
+#define TCP_IP_HDR_PAYLOAD_MIN (IP4_HDR_MIN + TCP_HDR_MIN)
+#define TCP_PKTMBUF_MIN (TCP_IP4_HDR_MIN + TCP_HDR_MIN)
 
 #define TCP_IP4_MSS (tlv_dp->mtu - TCP_IP_HDR_PAYLOAD_MIN)
 #define TCP_IP4_MSS_DEFAULT (576 - TCP_IP_HDR_PAYLOAD_MIN)
 
-static void _tcp4_rst_reply(struct dpdk_mbuf *m, uint32_t seq, uint32_t ack);
 static int _tcp4_syn_ack_reply(struct dpdk_mbuf *m, struct tcp_conn *conn);
+static void _tcp4_rst_reply(struct dpdk_mbuf *m, uint32_t seq, uint32_t ack);
 
-static __thread uint64_t s_inv_hz_us;
+static __thread uint64_t s_tcp_ts_mul;
 static __thread struct vserver4_kv_blk *sp_vs4_blk;
 static __thread struct tcp4_lookup_blk *sp_tcp4_lookup_blk;
-static __thread struct tcp_ops s_tcp_ops = {
-    .rst_reply = _tcp4_rst_reply,
+static struct tcp_ops s_tcp_ops = {
     .syn_ack_reply = _tcp4_syn_ack_reply,
+    .rst_reply = _tcp4_rst_reply,
 };
+
+static INLINE int _tcp4_state_process(struct dpdk_mbuf *m, struct tcp_conn *conn)
+{
+    return tcp_state_process(m, conn, &s_tcp_ops);
+}
 
 static int _tcp4_validate_and_prepare(struct tcp4_lookup_blk *blk, void *data[], int count)
 {
     int n = 0;
     int payload_len = 0;
     struct dpdk_mbuf *mbuf = NULL;
+    struct tcp4_tuple *tuple = NULL;
     struct dpdk_ip4_hdr *ip4hdr = NULL;
     struct dpdk_tcp_hdr *tcphdr = NULL;
 
@@ -49,7 +56,7 @@ static int _tcp4_validate_and_prepare(struct tcp4_lookup_blk *blk, void *data[],
         ip4hdr = DPDK_HEADROOM(mbuf)->l3;
         tcphdr = DPDK_HEADROOM(mbuf)->l4;
 
-        payload_len = dpdk_be_to_cpu_32(ip4hdr->total_length) - mbuf->l3_len - tcp_header_len(tcphdr);
+        payload_len = dpdk_be_to_cpu_16(ip4hdr->total_length) - dpdk_ip4_header_len(ip4hdr) - tcp_header_len(tcphdr);
         if (UNLIKELY(payload_len < 0)) {
             pktmbuf_drop(mbuf);
             continue;
@@ -62,11 +69,12 @@ static int _tcp4_validate_and_prepare(struct tcp4_lookup_blk *blk, void *data[],
 
         DPDK_HEADROOM(mbuf)->payload_len = payload_len;
 
-        blk->keys[n]->dip = ip4hdr->dst_addr;
-        blk->keys[n]->sip = ip4hdr->src_addr;
-        blk->keys[n]->sport = tcphdr->src_port;
-        blk->keys[n]->dport = tcphdr->dst_port;
-        blk->keys[n]->version = 0;
+        tuple = blk->keys[n];
+        tuple->sip = ip4hdr->src_addr;
+        tuple->dip = ip4hdr->dst_addr;
+        tuple->sport = tcphdr->src_port;
+        tuple->dport = tcphdr->dst_port;
+        tuple->version = 0;
         blk->mbufs[n] = mbuf;
 
         n += 1;
@@ -82,18 +90,23 @@ static INLINE void _tcp4_conn_lookup(struct tcp4_lookup_blk *blk, int n)
     tcp_conn_lookup(blk);
 }
 
-static int _tcp4_header_syn_process(const struct dpdk_mbuf *mbuf)
+static int _tcp4_header_syn_process(struct dpdk_mbuf *mbuf)
 {
     struct dpdk_ip4_hdr *ip4hdr = NULL;
     struct dpdk_tcp_hdr *tcphdr = DPDK_HEADROOM(mbuf)->l4;
 
     if (UNLIKELY((tcphdr->tcp_flags & TCP_F_MASK) != TCP_F_SYN)) {
+        _tcp4_state_process(mbuf, NULL);
         return -1;
     }
 
-    // SYN packets are not allowed to carry any data
+    /*
+     * RFC 9293 does not prohibit SYN segments from carrying data;
+     * however, this implementation does not allow any data in SYN packets.
+     */
     ip4hdr = DPDK_HEADROOM(mbuf)->l3;
-    if (UNLIKELY(mbuf->l3_len + tcp_header_len(tcphdr) != dpdk_cpu_to_be_16(ip4hdr->total_length))) {
+    if (UNLIKELY(dpdk_ip4_header_len(ip4hdr) + tcp_header_len(tcphdr) != dpdk_cpu_to_be_16(ip4hdr->total_length))) {
+        pktmbuf_drop(mbuf);
         return -1;
     }
 
@@ -102,7 +115,7 @@ static int _tcp4_header_syn_process(const struct dpdk_mbuf *mbuf)
     return 0;
 }
 
-static INLINE int _tcp4_dispatch(struct vserver4_kv_blk *vs4_blk, struct tcp4_lookup_blk *blk)
+static INLINE int _tcp4_conn_dispatch(struct vserver4_kv_blk *vs4_blk, struct tcp4_lookup_blk *blk)
 {
     int n = 0;
     int ret = 0;
@@ -110,25 +123,34 @@ static INLINE int _tcp4_dispatch(struct vserver4_kv_blk *vs4_blk, struct tcp4_lo
     uint64_t result = blk->resutl;
     struct dpdk_mbuf *mbuf = NULL;
     struct tcp4_tuple *tuple = NULL;
+    struct vserver4_key *key = NULL;
 
     vs4_blk->mbufs = blk->mbufs;
     for (int i = 0; i < count; i++) {
         if (dpdk_bit_test_u64(result, i)) {
-            // TODO has tcp connection, entry tcp stack
+            mbuf = blk->mbufs[i];
+            ret = _tcp4_state_process(mbuf, blk->conns[i]);
+            if (UNLIKELY(ret != 0)) {
+                pktmbuf_drop(mbuf);
+                continue;
+            }
         } else {
             mbuf = blk->mbufs[i];
 
             ret = _tcp4_header_syn_process(mbuf);
             if (UNLIKELY(ret != 0)) {
-                tcp_state_process(mbuf, NULL, &s_tcp_ops);
                 continue;
             }
 
-            tuple = &blk->tuples[i];
-            vs4_blk->keys[n]->addr = tuple->dip;
-            vs4_blk->keys[n]->port = tuple->dport;
-            vs4_blk->keys[n]->protocol = PROTO_TCP; // TCP
+            tuple = blk->keys[i];
+
+            key = vs4_blk->keys[n];
+            key->addr = tuple->dip;
+            key->port = tuple->dport;
+            key->protocol = PROTO_TCP; // TCP
+
             vs4_blk->mbufs[n] = mbuf;
+            vs4_blk->tuple[n] = blk->keys[i];
 
             n += 1;
         }
@@ -145,26 +167,16 @@ static INLINE void _tcp4_vs_lookup(struct vserver4_kv_blk *vs4_blk, int n)
     vserver4_lookup(vs4_blk);
 }
 
-static INLINE int _tcp4_conn_create(struct vserver_v4 *v4, struct dpdk_mbuf *mbuf)
+static INLINE int _tcp4_conn_create(struct vserver_v4 *v4, struct dpdk_mbuf *mbuf, struct tcp4_tuple *tuple)
 {
     struct tcp_conn *conn = NULL;
-    struct tcp4_tuple tuple = {0};
-    struct dpdk_ip4_hdr *ip4hdr = DPDK_HEADROOM(mbuf)->l3;
-    struct dpdk_tcp_hdr *tcphdr = DPDK_HEADROOM(mbuf)->l4;
 
-    tuple.sip = ip4hdr->dst_addr;
-    tuple.dip = ip4hdr->src_addr;
-    tuple.sport = tcphdr->src_port;
-    tuple.dport = tcphdr->dst_port;
-    tuple.version = 0;
-
-    conn = tcp_conn_client_create(AF_INET, mbuf->port, v4->vs.id, (struct tcp_tuple *)&tuple);
+    conn = tcp_conn_client_create(AF_INET, mbuf->port, v4->vs.id, (struct tcp_tuple *)tuple);
     if (UNLIKELY(conn == NULL)) {
         return -1;
     }
 
-    tcp_state_process(mbuf, conn, &s_tcp_ops);
-    return 0;
+    return _tcp4_state_process(mbuf, conn);
 }
 
 static INLINE void _tcp4_rst_reply(struct dpdk_mbuf *m, uint32_t seq, uint32_t ack)
@@ -174,10 +186,10 @@ static INLINE void _tcp4_rst_reply(struct dpdk_mbuf *m, uint32_t seq, uint32_t a
 
     tcp_header_init(tcphdr, dpdk_be_to_cpu_16(tcphdr->dst_port), dpdk_be_to_cpu_16(tcphdr->src_port), seq, ack,
         ((ack != 0) ? TCP_F_RST_ACK : TCP_F_RST), 0, sizeof(struct dpdk_tcp_hdr));
-    total_len = sizeof(struct dpdk_ip4_hdr) + sizeof(struct dpdk_tcp_hdr);
+    total_len = dpdk_ip4_header_len(DPDK_HEADROOM(m)->l3) + tcp_header_len(tcphdr);
     ip4_pktmbuf_replay(m, IPPROTO_TCP, total_len);
     l2_pktmbuf_repay(m);
-    dpdk_pktmbuf_trim(m, TCP_HDR_MIN);
+    dpdk_pktmbuf_trim(m, total_len - TCP_PKTMBUF_MIN);
 }
 
 static INLINE uint32_t _tcp4_irs_get(const struct dpdk_tcp_hdr *tcphdr, const struct dpdk_ip4_hdr *ip4hdr)
@@ -199,15 +211,16 @@ static INLINE uint32_t _tcp4_irs_get(const struct dpdk_tcp_hdr *tcphdr, const st
     };
 
     irs = dpdk_hash_crc(&f, sizeof(f));
-    return (irs + ((uint32_t)(s_inv_hz_us * dpdk_timer_cycles()) >> 2));
+    return (irs + tcp_ts_now(s_tcp_ts_mul));
 }
 
-static INLINE void _tcp_tcb_init(struct tcb *tcb, struct dpdk_tcp_hdr *tcphdr, struct dpdk_ip4_hdr *ip4hdr)
+static INLINE void _tcp4_tcb_init(struct tcb *tcb, struct dpdk_tcp_hdr *tcphdr, struct dpdk_ip4_hdr *ip4hdr)
 {
     uint32_t iss = _tcp4_irs_get(tcphdr, ip4hdr);
 
-    tcb->snd.una = tcb->snd.nxt = tcb->snd.iss = iss;
-    tcb->snd.wnd = TCP_HDR_WIN;
+    tcb->snd.iss = iss;
+    tcb->snd.una = iss;
+    tcb->snd.nxt = iss + 1;
     tcb->send_win_shift = TCP_WIN_SCALE;
 }
 
@@ -230,18 +243,66 @@ static INLINE int _tcp4_pktmbuf_syn_parse(struct dpdk_tcp_hdr *tcphdr, struct tc
     tcb = &conn->tcb;
     tcb->recv_win_shift = opt_info.scale;
     tcb->send_ts_ok = opt_info.send_ts_ok;
+    tcb->ts_recent = opt_info.tsval;
     tcb->mss = MIN(((opt_info.mss != 0) ? opt_info.mss : TCP_IP4_MSS_DEFAULT), TCP_IP4_MSS);
 
-    if (opt_info.tsval != 0) {
-        tcb->send_ts_ok = TCP_OPTION_TS_OK;
-    }
-
     tcb->rcv.irs = dpdk_be_to_cpu_32(tcphdr->sent_seq);
-    tcb->rcv.nxt = tcb->rcv.irs;
+    tcb->rcv.nxt = tcb->rcv.irs + 1;
     tcb->rcv.wnd = dpdk_be_to_cpu_32(tcphdr->rx_win);
     tcb->rcv.end = tcb->rcv.nxt + tcb->rcv.wnd;
 
     return 0;
+}
+
+static INLINE void _tcp4_pktmbuf_verify(struct dpdk_mbuf *m, struct dpdk_tcp_hdr *tcphdr, void *l3hdr)
+{
+    if (LIKELY(tlv_tx_offload[m->port] & DPDK_TCP_TX_CKSUM) != 0) {
+        m->ol_flags |= DPDK_TCP_TX_CKSUM;
+        tcphdr->cksum = dpdk_ip4_phdr_cksum(l3hdr, m->ol_flags);
+    } else {
+        dpdk_tcp4_mbuf_cksum(m, l3hdr);
+    }
+}
+
+static INLINE void _tcp4_pktmbuf_syn_ack(struct dpdk_mbuf *m, struct dpdk_tcp_hdr *tcphdr, struct tcp_conn *conn, int hdr_bytes)
+{
+    struct tcb *tcb = &conn->tcb;
+    struct tcp_opt_info opt_info = {
+        .mss = TCP_IP4_MSS,
+        .scale = TCP_WIN_SCALE,
+        .send_ts_ok = tcb->send_ts_ok,
+        .tsval = tcp_ts_now(s_tcp_ts_mul),
+        .tsecr = tcb->ts_recent,
+    };
+
+    tcp_header_init(tcphdr, dpdk_be_to_cpu_16(tcphdr->dst_port), dpdk_be_to_cpu_16(tcphdr->src_port),
+                    tcb->snd.una, tcb->rcv.nxt, TCP_F_SYN_ACK, TCP_HDR_WIN, hdr_bytes);
+    tcp_option_syn_set((uint8_t *)(tcphdr + 1), &opt_info);
+    _tcp4_pktmbuf_verify(m, DPDK_HEADROOM(m)->l4, DPDK_HEADROOM(m)->l3);
+}
+
+static INLINE void _tcp4_make_syn_ack(struct dpdk_mbuf *m, struct tcp_conn *conn)
+{
+    int total_len = 0;
+    int l3_payload = 0;
+    int tcp_hdr_len = 0;
+    struct dpdk_tcp_hdr *tcphdr = NULL;
+
+    tcp_hdr_len += TCP_HDR_MIN;
+    tcp_hdr_len += TCP_OPTION_MSS_LEN;
+    tcp_hdr_len += TCP_OPTION_SCALE_LEN;
+    tcp_hdr_len += (conn->tcb.send_ts_ok ? TCP_OPTION_TS_LEN : 0);
+    tcp_hdr_len = UTIL_ALIGN_UP(tcp_hdr_len, 4);
+
+    l3_payload = IP4_HDR_MIN + tcp_hdr_len;
+    total_len = L2_MAC_HDR_MIN + l3_payload;
+
+    dpdk_pktmbuf_set_len(m, L2_MAC_HDR_MIN, IP4_HDR_MIN, tcp_hdr_len, total_len);
+    tcphdr = DPDK_HEADROOM(m)->l4 = DPDK_HEADROOM(m)->l3 + sizeof(struct dpdk_ip4_hdr);
+
+    l2_pktmbuf_repay(m);
+    ip4_pktmbuf_replay(m, IPPROTO_TCP, (uint16_t)l3_payload);
+    _tcp4_pktmbuf_syn_ack(m, tcphdr, conn, tcp_hdr_len);
 }
 
 static INLINE int _tcp4_syn_ack_reply(struct dpdk_mbuf *m, struct tcp_conn *conn)
@@ -255,7 +316,8 @@ static INLINE int _tcp4_syn_ack_reply(struct dpdk_mbuf *m, struct tcp_conn *conn
         return -1;
     }
 
-    _tcp_tcb_init(&conn->tcb, tcphdr, ip4hdr);
+    _tcp4_tcb_init(&conn->tcb, tcphdr, ip4hdr);
+    _tcp4_make_syn_ack(m, conn);
 
     return 0;
 }
@@ -269,19 +331,20 @@ static void _tcp4_vs_process(struct vserver4_kv_blk *vs4_blk)
     uint64_t result = vs4_blk->result;
 
     for (int i = 0; i < count; i++) {
+        mbuf = vs4_blk->mbufs[i];
+
         if (dpdk_bit_test_u64(result, i)) {
             v4 = vs4_blk->data[i];
-            mbuf = vs4_blk->mbufs[i];
-
-            ret = _tcp4_conn_create(v4, mbuf);
-            if (LIKELY(ret == 0)) {
-                continue;
+            ret = _tcp4_conn_create(v4, mbuf, vs4_blk->tuple[i]);
+            if (UNLIKELY(ret != 0)) {
+                pktmbuf_drop(mbuf);
+            }
+        } else {
+            ret = _tcp4_state_process(mbuf, NULL);
+            if (UNLIKELY(ret != 0)) {
+                pktmbuf_drop(mbuf);
             }
         }
-
-        // TODO entry tck stack
-        tlv_drop->data[tlv_drop->count++] = vs4_blk->mbufs[i];
-        vs4_blk->mbufs[i] = NULL;
     }
 }
 
@@ -290,11 +353,15 @@ static INLINE void _tcp4_conn_process(struct tcp4_lookup_blk *blk)
     int n = 0;
     struct vserver4_kv_blk *vs4_blk = sp_vs4_blk;
 
-    n = _tcp4_dispatch(vs4_blk, blk);
+    n = _tcp4_conn_dispatch(vs4_blk, blk);
     if (n == 0) {
         return;
     }
 
+    /*
+     * For packets that do not find a matching session entry,
+     * proceed to the next step to look up the VSERVER and create a new session entry.
+     */
     _tcp4_vs_lookup(vs4_blk, n);
     _tcp4_vs_process(vs4_blk);
 }
@@ -327,7 +394,7 @@ int tcp4_thread_create(void)
     memset(blk, 0, sizeof(*blk));
 
     for (int i = 0; i < ARR_NUMS(blk->keys); i++) {
-        blk->keys[i] = &blk->tuples[i];
+        blk->keys[i] = (struct tcp4_tuple *)&blk->tuples[i];
     }
 
     blk->mbufs = tlv_tcp4->data;
@@ -345,9 +412,10 @@ int tcp4_thread_create(void)
         v4_kv_blk->keys[i] = &v4_kv_blk->v4_keys[i];
     }
 
+    v4_kv_blk->tuple = (void **)blk->keys;
     sp_vs4_blk = v4_kv_blk;
+    s_tcp_ts_mul = tcp_ts_init();
 
-    s_inv_hz_us = 1000000.0 / (double) dpdk_timer_hz();
     return 0;
 
 _quit:

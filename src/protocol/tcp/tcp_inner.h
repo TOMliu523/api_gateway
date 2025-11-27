@@ -28,13 +28,4 @@ static INLINE bool tcp4_mbuf_cksum_verify(const struct dpdk_mbuf *mbuf, const st
     return true;
 }
 
-static INLINE void UNUSED tcp4_mbuf_cksum(struct dpdk_mbuf *m, const struct dpdk_ip4_hdr *ip4hdr)
-{
-    int port = m->port;
-
-    if ((tlv_tx_offload[port] & DPDK_TCP_TX_CKSUM) == 0) {
-        dpdk_tcp4_mbuf_cksum(m, ip4hdr);
-    }
-}
-
 #endif // __TCP_INNER_H__

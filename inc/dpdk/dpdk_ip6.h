@@ -24,13 +24,13 @@
 
 #define DPDK_TX_IP_TX_IP6_CKSUM (RTE_MBUF_F_TX_IP_CKSUM | RTE_MBUF_F_TX_IPV6)
 
-#if defined(__ORDER_LITTLE_ENDIAN__)
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
 #define DPDK_IP6_LOOKBACK_BYTE0 (uint64_t) 0
 #define DPDK_IP6_LOOKBACK_BYTE1 (uint64_t) 0x1000000000000
 #else
 #define DPDK_IP6_LOOKBACK_BYTE0 (uint64_t) 0
 #define DPDK_IP6_LOOKBACK_BYTE1 (uint64_t) 0x1
-#endif // __ORDER_LITTLE_ENDIAN__
+#endif
 
 #define dpdk_ip6_hdr rte_ipv6_hdr
 #define dpdk_ip6_addr rte_ipv6_addr

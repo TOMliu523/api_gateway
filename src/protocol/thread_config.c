@@ -11,6 +11,7 @@
 #include "ip4.h"
 #include "ip6.h"
 #include "log.h"
+#include "tcp.h"
 #include "type.h"
 #include "pool.h"
 #include "route4.h"
@@ -77,11 +78,14 @@ void tc_fini(struct thread_config *tc)
     ip6_thread_ndp_table_destroy(tc->ndp_table);
     route6_thread_destroy(tc->route6_table);
 
+    tcp_thread_resource_fini();
+
     dpdk_free(tc);
 }
 
 struct thread_config *tc_init(void *arg, int nic_count, int hw_numa_id, int cpu_id)
 {
+    int ret = 0;
     struct thread_ctx *ctx = arg;
     struct thread_config *tc = NULL;
 
@@ -147,6 +151,11 @@ struct thread_config *tc_init(void *arg, int nic_count, int hw_numa_id, int cpu_
 
     tc->route6_table = route6_thread_create(&ctx->pp_route6_table, hw_numa_id);
     if (UNLIKELY(tc->route6_table == NULL)) {
+        goto _quit;
+    }
+
+    ret = tcp_thread_resource_init();
+    if (UNLIKELY(ret != 0)) {
         goto _quit;
     }
 

@@ -31,8 +31,8 @@
 
 #define DPDK_ETHER_TYPE_IPV4 RTE_ETHER_TYPE_IPV4
 
-#define dpdk_ip4_HDR_MF_SHIFT RTE_IPV4_HDR_MF_SHIFT
-#define dpdk_ip4_HDR_DF_SHIFT RTE_IPV4_HDR_DF_SHIFT
+#define DPDK_IP4_HDR_DF_F RTE_IPV4_HDR_DF_FLAG
+#define DPDK_IP4_HDR_MF_F RTE_IPV4_HDR_MF_FLAG
 
 static INLINE struct dpdk_ip4_hdr *dpdk_pktmbuf_ip4_hdr(struct dpdk_mbuf *m)
 {
@@ -44,6 +44,11 @@ static INLINE uint8_t dpdk_ip4_header_len(const struct dpdk_ip4_hdr *ip4hdr)
     return rte_ipv4_hdr_len(ip4hdr);
 }
 
+static INLINE uint16_t dpdk_ip4_phdr_cksum(const struct dpdk_ip4_hdr *ip4hdr, uint64_t ol_flags)
+{
+    return rte_ipv4_phdr_cksum(ip4hdr, ol_flags);
+}
+
 static INLINE bool dpdk_ip4_header_cksum_verify(const struct dpdk_mbuf *mbuf, const struct dpdk_ip4_hdr *ip4hdr)
 {
     switch (mbuf->ol_flags & DPDK_IP_RX_CKSUM_MASK) {
@@ -51,12 +56,6 @@ static INLINE bool dpdk_ip4_header_cksum_verify(const struct dpdk_mbuf *mbuf, co
     case DPDK_IP_RX_CKSUM_BAD: return false;
     default: return (rte_raw_cksum(ip4hdr, dpdk_ip4_header_len(ip4hdr)) == 0xFFFF);
     }
-}
-
-static INLINE void dpdk_ip4_cksum(struct dpdk_ip4_hdr *ip4hdr)
-{
-    ip4hdr->hdr_checksum = 0;
-    ip4hdr->hdr_checksum = rte_ipv4_cksum(ip4hdr);
 }
 
 static INLINE bool dpdk_ip4_mbuf_is_fragmented(const struct dpdk_ip4_hdr *ip4hdr)
