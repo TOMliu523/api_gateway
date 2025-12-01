@@ -9,13 +9,15 @@
 
 #include "tcp.h"
 #include "type.h"
-#include "dpdk_tcp.h"
 #include "dpdk_type.h"
 
 struct tcp_ops {
-    void (*rst_reply)(struct dpdk_mbuf *, uint32_t seq, uint32_t ack);
-    int (*syn_ack_reply)(struct dpdk_mbuf *, struct tcp_conn *);
+    int (*syn_ack_reply)(struct dpdk_mbuf *m, struct tcp_conn *conn);
+    void (*rst_reply)(struct dpdk_mbuf *m, uint32_t seq, uint32_t ack);
+    void (*rst_ts_reply)(struct dpdk_mbuf *m, struct tcp_conn *conn);
 };
+
+extern void *tcp4_thread_ops_get(void);
 
 static INLINE bool tcp4_mbuf_cksum_verify(const struct dpdk_mbuf *mbuf, const struct dpdk_tcp_hdr *tcphdr)
 {

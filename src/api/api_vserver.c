@@ -600,8 +600,8 @@ static struct vserver *_api_vs_param_to_vserver(const struct api_param *param, i
 {
     uint32_t pool_id = 0;
     uint32_t snat_pool_id = 0;
-    struct vserver_v4 *v4 = NULL;
-    struct vserver_v6 *v6 = NULL;
+    struct vserver4 *v4 = NULL;
+    struct vserver6 *v6 = NULL;
     struct vserver_mutable *mtb = NULL;
     struct vserver_stats *stats = NULL;
     struct addr_v4_info *v4_info = NULL;
@@ -725,8 +725,8 @@ static int _api_vs_query(void *array, struct vserver *pp_arr[], int count, struc
     char str[CACHE_LINE] = "";
     struct snat_pool *snat = NULL;
     const struct vserver *vs = NULL;
-    const struct vserver_v4 *v4 = NULL;
-    const struct vserver_v6 *v6 = NULL;
+    const struct vserver4 *v4 = NULL;
+    const struct vserver6 *v6 = NULL;
 
     for (int i = 0; i < count; i++) {
         code = api_json_object(&obj);
@@ -736,7 +736,7 @@ static int _api_vs_query(void *array, struct vserver *pp_arr[], int count, struc
 
         vs = pp_arr[i];
         if (vs->af == AF_INET) {
-            v4 = (const struct vserver_v4 *) vs;
+            v4 = (const struct vserver4 *) vs;
 
             code = api_json_add_string(obj, "name", v4->name);
             if (code != 0) {
@@ -786,7 +786,7 @@ static int _api_vs_query(void *array, struct vserver *pp_arr[], int count, struc
 
             obj = NULL;
         } else {
-            v6 = (const struct vserver_v6 *) vs;
+            v6 = (const struct vserver6 *) vs;
 
             code = api_json_add_string(obj, "name", v6->name);
             if (code != 0) {
@@ -951,7 +951,7 @@ _quit:
     return code;
 }
 
-static int _api_vs_v4_param_info_add(struct param_info *info, struct vserver_v4 *v4)
+static int _api_vs_v4_param_info_add(struct param_info *info, struct vserver4 *v4)
 {
     bool has = false;
     int ip4_count = 0;
@@ -978,7 +978,7 @@ static int _api_vs_v4_param_info_add(struct param_info *info, struct vserver_v4 
     return 0;
 }
 
-static int _api_vs_v6_param_info_add(struct param_info *info, struct vserver_v6 *v6)
+static int _api_vs_v6_param_info_add(struct param_info *info, struct vserver6 *v6)
 {
     bool has = false;
     int ip6_count = 0;
@@ -1067,8 +1067,8 @@ static int _api_vs_param_prepare(struct api_param_hdr *param_hdr, struct datapla
     uint32_t pool_id = 0;
     struct vserver *vs = NULL;
     uint32_t snat_pool_id = 0;
-    struct vserver_v4 *v4 = NULL;
-    struct vserver_v6 *v6 = NULL;
+    struct vserver4 *v4 = NULL;
+    struct vserver6 *v6 = NULL;
     struct api_param *param = NULL;
     struct param_info *param_info = &param_hdr->info;
 
@@ -1080,7 +1080,7 @@ static int _api_vs_param_prepare(struct api_param_hdr *param_hdr, struct datapla
         }
 
         if (vs->af == AF_INET) {
-            v4 = (struct vserver_v4 *) vs;
+            v4 = (struct vserver4 *) vs;
 
             code = _api_vs_v4_param_info_add(param_info, v4);
             if (code != 0) {
@@ -1090,7 +1090,7 @@ static int _api_vs_param_prepare(struct api_param_hdr *param_hdr, struct datapla
             pool_id = v4->base.pool_id;
             snat_pool_id = v4->base.snat_pool_id;
         } else {
-            v6 = (struct vserver_v6 *) vs;
+            v6 = (struct vserver6 *) vs;
 
             code = _api_vs_v6_param_info_add(param_info, v6);
             if (code != 0) {

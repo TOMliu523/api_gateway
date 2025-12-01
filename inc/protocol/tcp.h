@@ -83,6 +83,23 @@ enum TCP_STATE {
 
 typedef int (*tcp_cb_t)(void *);
 
+struct tcp_context {
+    struct tcp_conn *client_conn;
+    struct tcp_conn *server_conn;
+    union {
+        void *vs;
+        struct vserver4 *vs4;
+        struct vserver6 *vs6;
+    };
+    struct pool *pool;
+    union {
+        void *rs;
+        struct rserver_v4 *rs4;
+        struct rserver_v6 *rs6;
+    };
+    struct snat_pool *snat;
+};
+
 struct tcp_opt_info {
     uint16_t mss;
     uint8_t scale;
@@ -165,7 +182,9 @@ struct tcp_conn {
     uint32_t vs_id : 14; // max 16383
     uint32_t rs_id : 18; // max 262143
     uint32_t expire_time; // Since system startup to the current time
-    int32_t bucket_id; // hash position
+    uint32_t type : 4; // proto type
+    uint32_t bucket_id: 24; // hash position
+    uint32_t :0;
     struct tcb tcb; // Transmission Control Block
     void *rcv_queue;
     void *snd_queue;
@@ -211,13 +230,13 @@ extern int tcp_thread_resource_init(void);
 extern void tcp_thread_resource_fini(void);
 extern void tcp_conn_lookup(struct tcp4_lookup_blk *);
 
-extern int tcp4_thread_create(void);
+extern int tcp4_thread_resource_init(void);
 extern void tcp4_thread_destroy(void);
 extern void tcp4_process(void *[], int);
 extern void tcp6_process(void *[], int);
 
 extern int tcp_state_process(struct dpdk_mbuf *, struct tcp_conn *, const void *);
-extern void *tcp_conn_client_create(int, uint16_t, uint32_t, struct tcp_tuple *);
+extern void *tcp_conn_client_create(int, uint16_t, uint32_t, struct tcp_tuple *, int);
 
 static INLINE int tcp_header_len(const struct dpdk_tcp_hdr *tcp_hdr)
 {
@@ -238,12 +257,12 @@ static INLINE void tcp_header_init(struct dpdk_tcp_hdr *tcphdr, uint16_t sport, 
     tcphdr->tcp_urp = 0;
 }
 
-static INLINE int __tcp_option_timestamp_set(uint8_t data[], uint64_t tsopt)
+static INLINE int __tcp_option_timestamp_set(uint8_t data[], bool has, uint64_t tsopt)
 {
     int n = 0;
     uint64_t be64 = 0;
 
-    if (tsopt == 0) {
+    if (!has) {
         return 0;
     }
 
@@ -261,7 +280,7 @@ static INLINE int __tcp_option_timestamp_set(uint8_t data[], uint64_t tsopt)
 static INLINE int tcp_option_set(uint8_t data[], const struct tcp_opt_info *info)
 {
     int n = 0;
-    n = __tcp_option_timestamp_set(data, info->tsopt);
+    n = __tcp_option_timestamp_set(data, info->send_ts_ok, info->tsopt);
     switch (n & 3) {
     case 1: data[n++] = 0; FALLTHROUGH;
     case 2: data[n++] = 0; FALLTHROUGH;
@@ -288,7 +307,7 @@ static INLINE int tcp_option_syn_set(uint8_t data[], const struct tcp_opt_info *
 
     data[n++] = TCP_OPTION_NOP;
 
-    n += __tcp_option_timestamp_set(&data[n], info->tsopt);
+    n += __tcp_option_timestamp_set(&data[n], info->send_ts_ok, info->tsopt);
     switch (n & 3) {
     case 1: data[n++] = 0; FALLTHROUGH;
     case 2: data[n++] = 0; FALLTHROUGH;

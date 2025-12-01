@@ -27,6 +27,7 @@
 
 static int _tcp4_syn_ack_reply(struct dpdk_mbuf *m, struct tcp_conn *conn);
 static void _tcp4_rst_reply(struct dpdk_mbuf *m, uint32_t seq, uint32_t ack);
+static INLINE void _tcp4_rst_ts_reply(struct dpdk_mbuf *m, struct tcp_conn *conn);
 
 static __thread uint64_t s_tcp_ts_mul;
 static __thread struct vserver4_kv_blk *sp_vs4_blk;
@@ -34,11 +35,22 @@ static __thread struct tcp4_lookup_blk *sp_tcp4_lookup_blk;
 static struct tcp_ops s_tcp_ops = {
     .syn_ack_reply = _tcp4_syn_ack_reply,
     .rst_reply = _tcp4_rst_reply,
+    .rst_ts_reply = _tcp4_rst_ts_reply,
 };
 
 static INLINE int _tcp4_state_process(struct dpdk_mbuf *m, struct tcp_conn *conn)
 {
     return tcp_state_process(m, conn, &s_tcp_ops);
+}
+
+static INLINE void _tcp4_pktmbuf_verify(struct dpdk_mbuf *m, struct dpdk_tcp_hdr *tcphdr, void *l3hdr)
+{
+    if (LIKELY(tlv_tx_offload[m->port] & DPDK_TCP_TX_CKSUM) != 0) {
+        tcphdr->cksum = dpdk_ip4_phdr_cksum(l3hdr, m->ol_flags);
+        m->ol_flags |= DPDK_TCP_TX_CKSUM;
+    } else {
+        dpdk_tcp4_mbuf_cksum(m, l3hdr);
+    }
 }
 
 static int _tcp4_validate_and_prepare(struct tcp4_lookup_blk *blk, void *data[], int count)
@@ -167,11 +179,11 @@ static INLINE void _tcp4_vs_lookup(struct vserver4_kv_blk *vs4_blk, int n)
     vserver4_lookup(vs4_blk);
 }
 
-static INLINE int _tcp4_conn_create(struct vserver_v4 *v4, struct dpdk_mbuf *mbuf, struct tcp4_tuple *tuple)
+static INLINE int _tcp4_conn_create(struct vserver4 *v4, struct dpdk_mbuf *mbuf, struct tcp4_tuple *tuple, struct vserver4 *vs4)
 {
     struct tcp_conn *conn = NULL;
 
-    conn = tcp_conn_client_create(AF_INET, mbuf->port, v4->vs.id, (struct tcp_tuple *)tuple);
+    conn = tcp_conn_client_create(AF_INET, mbuf->port, v4->vs.id, (struct tcp_tuple *)tuple, vs4->type);
     if (UNLIKELY(conn == NULL)) {
         return -1;
     }
@@ -179,17 +191,53 @@ static INLINE int _tcp4_conn_create(struct vserver_v4 *v4, struct dpdk_mbuf *mbu
     return _tcp4_state_process(mbuf, conn);
 }
 
-static INLINE void _tcp4_rst_reply(struct dpdk_mbuf *m, uint32_t seq, uint32_t ack)
+static INLINE void _tcp4_pktmbuf_rst_ack(struct dpdk_mbuf *m, struct dpdk_tcp_hdr *tcphdr, struct tcp_conn *conn, int hdr_len)
 {
+    struct tcb *tcb = &conn->tcb;
+    struct tcp_opt_info opt_info = {
+        .send_ts_ok = 1,
+        .tsval = tcp_ts_now(s_tcp_ts_mul),
+        .tsecr = tcb->ts_recent,
+    };
+
+    tcp_header_init(tcphdr, dpdk_be_to_cpu_16(tcphdr->dst_port), dpdk_be_to_cpu_16(tcphdr->src_port),
+                    tcb->snd.una, tcb->rcv.nxt, TCP_F_RST_ACK, TCP_HDR_WIN, hdr_len);
+    tcp_option_set((uint8_t *)(tcphdr + 1), &opt_info);
+    _tcp4_pktmbuf_verify(m, tcphdr, DPDK_HEADROOM(m)->l3);
+}
+
+static INLINE void _tcp4_rst_ts_reply(struct dpdk_mbuf *m, struct tcp_conn *conn)
+{
+    int l3_payload = 0;
+    int tcp_hdr_len = 0;
     uint16_t total_len = 0;
     struct dpdk_tcp_hdr *tcphdr = DPDK_HEADROOM(m)->l4;
 
-    tcp_header_init(tcphdr, dpdk_be_to_cpu_16(tcphdr->dst_port), dpdk_be_to_cpu_16(tcphdr->src_port), seq, ack,
-        ((ack != 0) ? TCP_F_RST_ACK : TCP_F_RST), 0, sizeof(struct dpdk_tcp_hdr));
-    total_len = dpdk_ip4_header_len(DPDK_HEADROOM(m)->l3) + tcp_header_len(tcphdr);
-    ip4_pktmbuf_replay(m, IPPROTO_TCP, total_len);
+    tcp_hdr_len = TCP_HDR_MIN + TCP_OPTION_TS_LEN;
+    tcp_hdr_len = UTIL_ALIGN_UP(tcp_hdr_len, 4);
+
+    l3_payload = IP4_HDR_MIN + tcp_hdr_len;
+    total_len = L2_MAC_HDR_MIN + l3_payload;
+
+    dpdk_pktmbuf_set_len(m, L2_MAC_HDR_MIN, IP4_HDR_MIN, tcp_hdr_len, total_len);
     l2_pktmbuf_repay(m);
-    dpdk_pktmbuf_trim(m, total_len - TCP_PKTMBUF_MIN);
+    ip4_pktmbuf_replay(m, IPPROTO_TCP, (uint16_t) l3_payload);
+    _tcp4_pktmbuf_rst_ack(m, tcphdr, conn, tcp_hdr_len);
+}
+
+static INLINE void _tcp4_rst_reply(struct dpdk_mbuf *m, uint32_t seq, uint32_t ack)
+{
+    struct dpdk_ip4_hdr *ip4hdr = DPDK_HEADROOM(m)->l3;
+    struct dpdk_tcp_hdr *tcphdr = DPDK_HEADROOM(m)->l4;
+
+    dpdk_pktmbuf_set_len(m, L2_MAC_HDR_MIN, IP4_HDR_MIN, TCP_HDR_MIN, TCP_PKTMBUF_MIN);
+
+    l2_pktmbuf_repay(m);
+    ip4_pktmbuf_replay(m, IPPROTO_TCP, dpdk_ip4_header_len(ip4hdr) + tcp_header_len(tcphdr));
+
+    tcp_header_init(tcphdr, dpdk_be_to_cpu_16(tcphdr->dst_port), dpdk_be_to_cpu_16(tcphdr->src_port), seq, ack,
+        ((ack != 0) ? TCP_F_RST_ACK : TCP_F_RST), 0, TCP_HDR_MIN);
+    _tcp4_pktmbuf_verify(m, tcphdr, ip4hdr);
 }
 
 static INLINE uint32_t _tcp4_irs_get(const struct dpdk_tcp_hdr *tcphdr, const struct dpdk_ip4_hdr *ip4hdr)
@@ -221,7 +269,7 @@ static INLINE void _tcp4_tcb_init(struct tcb *tcb, struct dpdk_tcp_hdr *tcphdr, 
     tcb->snd.iss = iss;
     tcb->snd.una = iss;
     tcb->snd.nxt = iss + 1;
-    tcb->send_win_shift = TCP_WIN_SCALE;
+    tcb->send_win_shift = TCP_OPTION_WIN_SCALE;
 }
 
 static INLINE int _tcp4_pktmbuf_syn_parse(struct dpdk_tcp_hdr *tcphdr, struct tcp_conn *conn)
@@ -248,23 +296,13 @@ static INLINE int _tcp4_pktmbuf_syn_parse(struct dpdk_tcp_hdr *tcphdr, struct tc
 
     tcb->rcv.irs = dpdk_be_to_cpu_32(tcphdr->sent_seq);
     tcb->rcv.nxt = tcb->rcv.irs + 1;
-    tcb->rcv.wnd = dpdk_be_to_cpu_32(tcphdr->rx_win);
+    tcb->rcv.wnd = ((uint32_t)dpdk_be_to_cpu_16(tcphdr->rx_win)) << opt_info.scale;
     tcb->rcv.end = tcb->rcv.nxt + tcb->rcv.wnd;
 
     return 0;
 }
 
-static INLINE void _tcp4_pktmbuf_verify(struct dpdk_mbuf *m, struct dpdk_tcp_hdr *tcphdr, void *l3hdr)
-{
-    if (LIKELY(tlv_tx_offload[m->port] & DPDK_TCP_TX_CKSUM) != 0) {
-        m->ol_flags |= DPDK_TCP_TX_CKSUM;
-        tcphdr->cksum = dpdk_ip4_phdr_cksum(l3hdr, m->ol_flags);
-    } else {
-        dpdk_tcp4_mbuf_cksum(m, l3hdr);
-    }
-}
-
-static INLINE void _tcp4_pktmbuf_syn_ack(struct dpdk_mbuf *m, struct dpdk_tcp_hdr *tcphdr, struct tcp_conn *conn, int hdr_bytes)
+static INLINE void _tcp4_pktmbuf_syn_ack(struct dpdk_mbuf *m, struct dpdk_tcp_hdr *tcphdr, struct tcp_conn *conn, int hdr_len)
 {
     struct tcb *tcb = &conn->tcb;
     struct tcp_opt_info opt_info = {
@@ -276,7 +314,7 @@ static INLINE void _tcp4_pktmbuf_syn_ack(struct dpdk_mbuf *m, struct dpdk_tcp_hd
     };
 
     tcp_header_init(tcphdr, dpdk_be_to_cpu_16(tcphdr->dst_port), dpdk_be_to_cpu_16(tcphdr->src_port),
-                    tcb->snd.una, tcb->rcv.nxt, TCP_F_SYN_ACK, TCP_HDR_WIN, hdr_bytes);
+                    tcb->snd.una, tcb->rcv.nxt, TCP_F_SYN_ACK, TCP_HDR_WIN, hdr_len);
     tcp_option_syn_set((uint8_t *)(tcphdr + 1), &opt_info);
     _tcp4_pktmbuf_verify(m, DPDK_HEADROOM(m)->l4, DPDK_HEADROOM(m)->l3);
 }
@@ -286,7 +324,7 @@ static INLINE void _tcp4_make_syn_ack(struct dpdk_mbuf *m, struct tcp_conn *conn
     int total_len = 0;
     int l3_payload = 0;
     int tcp_hdr_len = 0;
-    struct dpdk_tcp_hdr *tcphdr = NULL;
+    struct dpdk_tcp_hdr *tcphdr = DPDK_HEADROOM(m)->l4;
 
     tcp_hdr_len += TCP_HDR_MIN;
     tcp_hdr_len += TCP_OPTION_MSS_LEN;
@@ -298,7 +336,6 @@ static INLINE void _tcp4_make_syn_ack(struct dpdk_mbuf *m, struct tcp_conn *conn
     total_len = L2_MAC_HDR_MIN + l3_payload;
 
     dpdk_pktmbuf_set_len(m, L2_MAC_HDR_MIN, IP4_HDR_MIN, tcp_hdr_len, total_len);
-    tcphdr = DPDK_HEADROOM(m)->l4 = DPDK_HEADROOM(m)->l3 + sizeof(struct dpdk_ip4_hdr);
 
     l2_pktmbuf_repay(m);
     ip4_pktmbuf_replay(m, IPPROTO_TCP, (uint16_t)l3_payload);
@@ -326,7 +363,7 @@ static void _tcp4_vs_process(struct vserver4_kv_blk *vs4_blk)
 {
     int ret = 0;
     int count = vs4_blk->count;
-    struct vserver_v4 *v4 = NULL;
+    struct vserver4 *v4 = NULL;
     struct dpdk_mbuf *mbuf = NULL;
     uint64_t result = vs4_blk->result;
 
@@ -335,7 +372,7 @@ static void _tcp4_vs_process(struct vserver4_kv_blk *vs4_blk)
 
         if (dpdk_bit_test_u64(result, i)) {
             v4 = vs4_blk->data[i];
-            ret = _tcp4_conn_create(v4, mbuf, vs4_blk->tuple[i]);
+            ret = _tcp4_conn_create(v4, mbuf, vs4_blk->tuple[i], vs4_blk->data[i]);
             if (UNLIKELY(ret != 0)) {
                 pktmbuf_drop(mbuf);
             }
@@ -380,7 +417,12 @@ void tcp4_process(void *data[], int count)
     _tcp4_conn_process(blk);
 }
 
-int tcp4_thread_create(void)
+void *tcp4_thread_ops_get(void)
+{
+    return &s_tcp_ops;
+}
+
+int tcp4_thread_resource_init(void)
 {
     struct tcp4_lookup_blk *blk = NULL;
     struct vserver4_kv_blk *v4_kv_blk = NULL;

@@ -128,8 +128,8 @@ static int _vs_conf_get_max_id(struct vserver_table *table, struct vserver **pp_
 static int _vs_conf_table_add_element(struct vserver_table *table, struct vserver *vs)
 {
     int code = 0;
-    struct vserver_v4 *v4 = NULL;
-    struct vserver_v6 *v6 = NULL;
+    struct vserver4 *v4 = NULL;
+    struct vserver6 *v6 = NULL;
     struct vserver4_key v4_key = {0};
     struct vserver6_key v6_key = {0};
 
@@ -137,7 +137,7 @@ static int _vs_conf_table_add_element(struct vserver_table *table, struct vserve
     table->store[table->count++] = vs;
 
     if (vs->af == AF_INET) {
-        v4 = (struct vserver_v4 *) vs;
+        v4 = (struct vserver4 *) vs;
 
         v4_key.addr = v4->vip;
         v4_key.port = v4->port;
@@ -149,7 +149,7 @@ static int _vs_conf_table_add_element(struct vserver_table *table, struct vserve
             return ERRCODE_INNER;
         }
     } else {
-        v6 = (struct vserver_v6 *) vs;
+        v6 = (struct vserver6 *) vs;
 
         v6_key.addr = v6->vip;
         v6_key.port = v6->port;
@@ -171,8 +171,8 @@ static int _vs_conf_table_del(struct vserver_table *dst, struct vserver_table *s
     bool has = false;
     const char *name = NULL;
     struct vserver *vs = NULL;
-    struct vserver_v4 *v4 = NULL;
-    struct vserver_v6 *v6 = NULL;
+    struct vserver4 *v4 = NULL;
+    struct vserver6 *v6 = NULL;
 
     for (int i = 0; i <= src->max_id; i++) {
         has = false;
@@ -183,22 +183,22 @@ static int _vs_conf_table_del(struct vserver_table *dst, struct vserver_table *s
         }
 
         if (vs->af == AF_INET) {
-            v4 = (struct vserver_v4 *) vs;
+            v4 = (struct vserver4 *) vs;
             name = v4->name;
         } else {
-            v6 = (struct vserver_v6 *) vs;
+            v6 = (struct vserver6 *) vs;
             name = v6->name;
         }
 
         for (int i = 0; i < count; i++) {
             if (pp_vs[i]->af == AF_INET) {
-                struct vserver_v4 *del_v4 = (struct vserver_v4 *)pp_vs[i];
+                struct vserver4 *del_v4 = (struct vserver4 *)pp_vs[i];
                 if (strcmp(name, del_v4->name) == 0) {
                     has = true;
                     break;
                 }
             } else {
-                struct vserver_v6 *del_v6 = (struct vserver_v6 *)pp_vs[i];
+                struct vserver6 *del_v6 = (struct vserver6 *)pp_vs[i];
                 if (strcmp(name, del_v6->name) == 0) {
                     has = true;
                     break;
@@ -248,8 +248,8 @@ void vs_conf_table_destroy(void *arg)
 
 int vs_conf_get_by_name(void *arg, struct vserver **pp_vs, const char *name)
 {
-    struct vserver_v4 *v4 = NULL;
-    struct vserver_v6 *v6 = NULL;
+    struct vserver4 *v4 = NULL;
+    struct vserver6 *v6 = NULL;
     struct vserver *target = NULL;
     struct vserver_table *table = (struct vserver_table *) arg;
 
@@ -261,13 +261,13 @@ int vs_conf_get_by_name(void *arg, struct vserver **pp_vs, const char *name)
     for (int i = 0; i < table->count; i++) {
         target = table->store[i];
         if (target->af == AF_INET) {
-            v4 = (struct vserver_v4 *) target;
+            v4 = (struct vserver4 *) target;
             if (strcmp(v4->name, name) == 0) {
                 *pp_vs = &v4->vs;
                 return 0;
             }
         } else {
-            v6 = (struct vserver_v6 *) target;
+            v6 = (struct vserver6 *) target;
             if (strcmp(v6->name, name) == 0) {
                 *pp_vs = &v6->vs;
                 return 0;

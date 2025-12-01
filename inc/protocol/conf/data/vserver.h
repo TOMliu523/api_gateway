@@ -40,7 +40,7 @@ struct vserver {
     uint32_t id;
 };
 
-struct vserver_v4 {
+struct vserver4 {
     struct vserver vs;
     enum PROTO_TYPE type;
     uint16_t port;
@@ -50,7 +50,7 @@ struct vserver_v4 {
     char name[DATA_NAME_LEN_MAX];
 };
 
-struct vserver_v6 {
+struct vserver6 {
     struct vserver vs;
     enum PROTO_TYPE type;
     uint16_t port;
@@ -78,7 +78,7 @@ struct vserver4_kv_blk {
     uint64_t result;
     struct vserver4_key *keys[DP_BATCH_MAX];
     void **tuple;
-    struct vserver_v4 *data[DP_BATCH_MAX];
+    struct vserver4 *data[DP_BATCH_MAX];
     struct vserver4_key v4_keys[DP_BATCH_MAX];
 };
 
@@ -87,7 +87,7 @@ struct vserver6_kv_blk {
     void **mbufs;
     uint64_t result;
     struct vserver6_key *keys[DP_BATCH_MAX];
-    struct vserver_v6 *data[DP_BATCH_MAX];
+    struct vserver6 *data[DP_BATCH_MAX];
     struct vserver6_key v6_keys[DP_MBUF_MAX];
 };
 

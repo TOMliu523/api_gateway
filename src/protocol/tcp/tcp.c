@@ -9,6 +9,7 @@
 #include "ip6.h"
 #include "tcp.h"
 #include "type.h"
+#include "vserver.h"
 #include "tcp_inner.h"
 #include "dpdk_hash.h"
 #include "dpdk_core.h"
@@ -26,6 +27,8 @@ static __thread void *sp_tcp_conn_pool;
 static __thread void *sp_tcp_conn_hash;
 static __thread int s_cache_count;
 static __thread void *sp_tcp_conn_cache[TCP_CONN_CACHE_MAX];
+static struct tcp_ops *sp_tcp4_ops;
+static UNUSED struct tcp_ops *sp_tcp6_ops;
 
 static INLINE void *_tcp_conn_pop(void)
 {
@@ -110,6 +113,16 @@ static INLINE void _tcp_conn_push(void *conn)
     _tcp_conn_push_bulk(&conn, 1);
 }
 
+static INLINE void _tcp_win_ack(struct tcb *tcb, uint32_t ack)
+{
+    tcb->snd.una += 1;
+}
+
+static INLINE void tcp_direct_close(struct tcp_conn *conn)
+{
+
+}
+
 static INLINE void tcp_conn_close(struct tcp_conn *conn)
 {
 
@@ -191,6 +204,15 @@ static INLINE int _tcp_close_process(struct dpdk_mbuf *mbuf, const struct tcp_op
     }
 }
 
+static INLINE int _tcp_server_trigger(struct dpdk_mbuf *mbuf, struct tcp_conn *conn)
+{
+    struct tcp_context ctx = {0};
+
+
+
+    return 0;
+}
+
 static INLINE int _tcp_syn_receive_ack_process(struct dpdk_mbuf *mbuf, struct tcp_conn *conn, const struct tcp_ops *ops)
 {
     int ret = 0;
@@ -222,8 +244,34 @@ static INLINE int _tcp_syn_receive_ack_process(struct dpdk_mbuf *mbuf, struct tc
         return -1;
     }
 
+    if (tcb->send_ts_ok) {
+        tcb->ts_recent = info.tsval;
+    }
+
+    conn->tcb.snd.una += 1;
     tcp_conn_state_set(conn, TCP_ESTABLISHED);
-    // send to rs
+
+    switch (conn->type) {
+    case PROTO_TCP:
+        ret = _tcp_server_trigger(mbuf, conn);
+        if (UNLIKELY(ret != 0)) {
+            ops->rst_ts_reply(mbuf, conn);
+            pktmbuf_send(mbuf);
+            tcp_direct_close(conn);
+        }
+        break;
+    case PROTO_UDP:
+        break;
+    case PROTO_HTTP:
+        break;
+    case PROTO_HTTPS:
+        break;
+    case PROTO_HTTP2:
+        break;
+    default:
+        break;
+    }
+
     return 0;
 }
 
@@ -301,7 +349,7 @@ int tcp_state_process(struct dpdk_mbuf *mbuf, struct tcp_conn *conn, const void 
     return -1;
 }
 
-void *tcp_conn_client_create(int af, uint16_t port, uint32_t vs_id, struct tcp_tuple *tuple)
+void *tcp_conn_client_create(int af, uint16_t port, uint32_t vs_id, struct tcp_tuple *tuple, int type)
 {
     int ret = 0;
     struct tcp_conn *conn = NULL;
@@ -315,6 +363,7 @@ void *tcp_conn_client_create(int af, uint16_t port, uint32_t vs_id, struct tcp_t
     conn->af = af;
     conn->state = TCP_LISTEN;
     conn->port = port;
+    conn->type = type;
     conn->vs_id = vs_id;
     conn->expire_time = tlv_dp->off_time + TCP_CONN_EXPIRE_SECOND;
     dpdk_atomic16_init(&conn->refcnt);
@@ -360,11 +409,12 @@ int tcp_thread_resource_init(void)
 
     sp_tcp_conn_hash = conn_hash;
 
-    ret = tcp4_thread_create();
+    ret = tcp4_thread_resource_init();
     if (UNLIKELY(ret != 0)) {
         goto _quit;
     }
 
+    sp_tcp4_ops = tcp4_thread_ops_get();
     return 0;
 
 _quit:
