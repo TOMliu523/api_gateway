@@ -141,8 +141,8 @@ static int _api_rs_info_get(void **ptr, const struct rserver *rs)
 {
     int ret = 0;
     json_t *obj = NULL;
-    const struct rserver_v4 *v4 = NULL;
-    const struct rserver_v6 *v6 = NULL;
+    const struct rserver4 *v4 = NULL;
+    const struct rserver6 *v6 = NULL;
     const struct rserver_base *base = NULL;
 
     obj = json_object();
@@ -152,7 +152,7 @@ static int _api_rs_info_get(void **ptr, const struct rserver *rs)
     }
 
     if (rs->af == AF_INET) {
-        v4 = (const struct rserver_v4 *)rs;
+        v4 = (const struct rserver4 *)rs;
         ret = api_json_add_string(obj, "ip", conf_ip4_to_str(v4->addr));
         if (ret != 0) {
             goto _quit;
@@ -160,7 +160,7 @@ static int _api_rs_info_get(void **ptr, const struct rserver *rs)
 
         base = &v4->base;
     } else {
-        v6 = (const struct rserver_v6 *)rs;
+        v6 = (const struct rserver6 *)rs;
         ret = api_json_add_string(obj, "ip", conf_ip6_to_str(&v6->addr));
         if (ret != 0) {
             goto _quit;
@@ -305,8 +305,8 @@ static int _api_rs_del(struct api_vs_hdr **pp_vs_hdr, struct root *root, struct 
     int code = 0;
     struct rserver *rs = NULL;
     struct dataplane *dp = NULL;
-    struct rserver_v4 *v4 = NULL;
-    struct rserver_v6 *v6 = NULL;
+    struct rserver4 *v4 = NULL;
+    struct rserver6 *v6 = NULL;
     struct api_param *param = NULL;
     struct api_vs_hdr *vs_hdr = NULL;
     int cpu_count = root->hw_info.cpu_count;
@@ -329,14 +329,14 @@ static int _api_rs_del(struct api_vs_hdr **pp_vs_hdr, struct root *root, struct 
             }
 
             if (rs->af == AF_INET) {
-                v4 = (struct rserver_v4 *) rs;
+                v4 = (struct rserver4 *) rs;
                 if (v4->base.mtb->pool_refcnt != 0) {
                     LOG_ERROR("Resource busy.");
                     code = ERRCODE_RESOURCE_BUSY;
                     goto _quit;
                 }
             } else {
-                v6 = (struct rserver_v6 *) rs;
+                v6 = (struct rserver6 *) rs;
                 if (v6->base.mtb->pool_refcnt != 0) {
                     LOG_ERROR("Resource busy.");
                     code = ERRCODE_RESOURCE_BUSY;
@@ -367,8 +367,8 @@ static int _api_rs_add(struct api_vs_hdr **pp_vs_hdr, struct root *root, struct 
 {
     int code = 0;
     struct dataplane *dp = NULL;
-    struct rserver_v4 *v4 = NULL;
-    struct rserver_v6 *v6 = NULL;
+    struct rserver4 *v4 = NULL;
+    struct rserver6 *v6 = NULL;
     struct api_param *param = NULL;
     struct api_vs_hdr *vs_hdr = NULL;
     int cpu_count = root->hw_info.cpu_count;

@@ -587,8 +587,8 @@ static int _api_pool_rs_to_json(void *array, struct dataplane *dp, struct rserve
     uint32_t rs_id = 0;
     char str[CACHE_LINE] = "";
     struct rserver *rs = NULL;
-    struct rserver_v4 *v4 = NULL;
-    struct rserver_v6 *v6 = NULL;
+    struct rserver4 *v4 = NULL;
+    struct rserver6 *v6 = NULL;
 
     if (rr == NULL || rr->rs_count == 0) {
         return 0;
@@ -607,7 +607,7 @@ static int _api_pool_rs_to_json(void *array, struct dataplane *dp, struct rserve
         }
 
         if (rs->af == AF_INET) {
-            v4 = (struct rserver_v4 *) rs;
+            v4 = (struct rserver4 *) rs;
             inet_ntop(AF_INET, &v4->addr, str, sizeof(str));
 
             code = api_json_add_string(obj, "addr", str);
@@ -623,7 +623,7 @@ static int _api_pool_rs_to_json(void *array, struct dataplane *dp, struct rserve
                 return code;
             }
         } else {
-            v6 = (struct rserver_v6 *) rs;
+            v6 = (struct rserver6 *) rs;
             inet_ntop(AF_INET6, &v6->addr, str, sizeof(str));
 
             code = api_json_add_string(obj, "addr", str);
@@ -844,8 +844,8 @@ static void _api_pool_update(struct api_pool_hdr *pool_hdr, struct root *root)
 
     /* Modify the reference count of the real server */
     for (int i = 0; i < cpu_count; i++) {
-        struct rserver_v4 *v4 = NULL;
-        struct rserver_v4 *v6 = NULL;
+        struct rserver4 *v4 = NULL;
+        struct rserver4 *v6 = NULL;
         struct rserver_info *one = NULL;
 
         one = pool_hdr->rs_info[i];
@@ -856,10 +856,10 @@ static void _api_pool_update(struct api_pool_hdr *pool_hdr, struct root *root)
                 }
 
                 if (one[j].rs->af == AF_INET) {
-                    v4 = (struct rserver_v4 *)one[j].rs;
+                    v4 = (struct rserver4 *)one[j].rs;
                     v4->base.mtb->pool_refcnt += one->refcnt;
                 } else {
-                    v6 = (struct rserver_v4 *)one[j].rs;
+                    v6 = (struct rserver4 *)one[j].rs;
                     v6->base.mtb->pool_refcnt += one->refcnt;
                 }
             }

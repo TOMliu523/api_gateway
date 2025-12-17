@@ -249,6 +249,12 @@ _quit:
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
 // Data plane interface
 
+struct snat_pool *snat_get_by_id(uint32_t id)
+{
+    struct snat_table *table = s_snat_table;
+    return table->store[id];
+}
+
 void *snat_thread_create(void ***pp_snat_table, int hw_numa_id)
 {
     s_snat_table = _snat_conf_table_create(0, hw_numa_id);

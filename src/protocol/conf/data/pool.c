@@ -164,6 +164,10 @@ static uint32_t _pool_rs_rr_get_next(void *arg)
     struct pool *pool = arg;
     struct rserver_rr *rr = pool->rr;
 
+    if (rr->rs_count == 0) {
+        return RSERVER_INVALID_ID;
+    }
+
     uint32_t idx = rr->next;
     uint32_t id = rr->ids[idx];
 
@@ -369,6 +373,12 @@ int pool_conf_table_append(void **dst, void *arg, struct pool *pools[], int coun
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
 // Data plane interface
+
+struct pool *pool_get_by_id(uint32_t id)
+{
+    struct pool_table *table = s_pool_table;
+    return table->store[id];
+}
 
 void *pool_thread_create(void ***pp_pool_table, int hw_numa_id)
 {

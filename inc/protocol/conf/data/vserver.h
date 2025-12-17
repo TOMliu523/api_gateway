@@ -75,9 +75,9 @@ struct vserver6_key {
 struct vserver4_kv_blk {
     int count;
     void **mbufs;
+    void **tuple;
     uint64_t result;
     struct vserver4_key *keys[DP_BATCH_MAX];
-    void **tuple;
     struct vserver4 *data[DP_BATCH_MAX];
     struct vserver4_key v4_keys[DP_BATCH_MAX];
 };
@@ -85,6 +85,7 @@ struct vserver4_kv_blk {
 struct vserver6_kv_blk {
     int count;
     void **mbufs;
+    void **tuple;
     uint64_t result;
     struct vserver6_key *keys[DP_BATCH_MAX];
     struct vserver6 *data[DP_BATCH_MAX];
@@ -93,6 +94,10 @@ struct vserver6_kv_blk {
 
 extern void *vserver_thread_create(void ***, int);
 extern void vserver_thread_destroy(void *);
-extern void vserver4_lookup(struct vserver4_kv_blk *);
+extern void vserver4_lookup(const void *, void **);
+extern void vserver4_lookup_bulk(struct vserver4_kv_blk *);
+extern void vserver6_lookup(const void *, void **);
+extern void vserver6_lookup_bulk(struct vserver6_kv_blk *);
+extern struct vserver *vserver_get_by_id(uint32_t);
 
 #endif // __VSERVER_H__

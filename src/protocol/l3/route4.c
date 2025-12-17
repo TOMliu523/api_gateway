@@ -480,6 +480,20 @@ void route4_conf_table_get(void *src, struct route4_item **item, int *count)
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
 // Data plane interface
 
+int route4_next_hop_get(uint32_t *next_hop, uint32_t dst_addr)
+{
+    int ret = 0;
+    uint64_t next_hop_id = 0;
+    struct route4_table *route = s_route4_table;
+
+    ret = dpdk_fib_lookup(route->fib, &dst_addr, &next_hop_id, 1);
+    if (UNLIKELY(ret )) {
+
+    }
+
+    return 0;
+}
+
 void *route4_thread_create(void ***pp_route4_table, int hw_numa_id)
 {
     struct route4_table *table = NULL;

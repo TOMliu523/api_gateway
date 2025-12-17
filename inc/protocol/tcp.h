@@ -84,18 +84,18 @@ enum TCP_STATE {
 typedef int (*tcp_cb_t)(void *);
 
 struct tcp_context {
-    struct tcp_conn *client_conn;
-    struct tcp_conn *server_conn;
+    uint16_t port;
+    struct dpdk_eth_hdr eth;
     union {
-        void *vs;
-        struct vserver4 *vs4;
-        struct vserver6 *vs6;
+        uint32_t addr;
+        struct dpdk_ip6_addr ip6addr;
     };
+    uint16_t nic_port;
     struct pool *pool;
     union {
         void *rs;
-        struct rserver_v4 *rs4;
-        struct rserver_v6 *rs6;
+        struct rserver4 *rs4;
+        struct rserver6 *rs6;
     };
     struct snat_pool *snat;
 };

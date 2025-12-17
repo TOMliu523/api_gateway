@@ -10,8 +10,8 @@
 #include "rserver.h"
 
 extern void rs_conf_free(void *);
-extern struct rserver_v4 *rs_conf_v4_alloc(int);
-extern struct rserver_v6 *rs_conf_v6_alloc(int);
+extern struct rserver4 *rs_conf_v4_alloc(int);
+extern struct rserver6 *rs_conf_v6_alloc(int);
 
 extern int rs_conf_table_get_count(int *, const void *);
 extern int rs_conf_table_get_element(const void *, struct rserver *[], int *);

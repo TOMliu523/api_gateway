@@ -391,7 +391,19 @@ _quit:
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
 // Data plane interface
 
-void vserver4_lookup(struct vserver4_kv_blk *blk)
+struct vserver *vserver_get_by_id(uint32_t id)
+{
+    struct vserver_table *table = sp_vs_table;
+    return table->store[id];
+}
+
+void vserver4_lookup(const void *key, void **data)
+{
+    struct vserver_table *table = sp_vs_table;
+    dpdk_hash_lookup(table->hash4, key, data);
+}
+
+void vserver4_lookup_bulk(struct vserver4_kv_blk *blk)
 {
     int count = blk->count;
     uint64_t *result = &blk->result;
@@ -400,6 +412,23 @@ void vserver4_lookup(struct vserver4_kv_blk *blk)
     const void **key = (const void **)blk->keys;
 
     dpdk_hash_lookup_bulk(table->hash4, key, count, result, data);
+}
+
+void vserver6_lookup(const void *key, void **data)
+{
+    struct vserver_table *table = sp_vs_table;
+    dpdk_hash_lookup(table->hash6, key, data);
+}
+
+void vserver6_lookup_bulk(struct vserver6_kv_blk *blk)
+{
+    int count = blk->count;
+    uint64_t *result = &blk->result;
+    void **data = (void **)blk->data;
+    struct vserver_table *table = sp_vs_table;
+    const void **key = (const void **)blk->keys;
+
+    dpdk_hash_lookup_bulk(table->hash6, key, count, result, data);
 }
 
 void *vserver_thread_create(void ***pp_vs_table, int hw_numa_id)

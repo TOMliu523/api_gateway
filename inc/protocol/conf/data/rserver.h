@@ -45,13 +45,13 @@ struct rserver_base {
     struct rserver_mutable *mtb;
 };
 
-struct rserver_v4 {
+struct rserver4 {
     struct rserver rs;
     uint32_t addr;
     struct rserver_base base;
 };
 
-struct rserver_v6 {
+struct rserver6 {
     struct rserver rs;
     struct dpdk_ip6_addr addr;
     struct rserver_base base;
@@ -59,23 +59,24 @@ struct rserver_v6 {
 
 extern void *rserver_thread_create(void ***, int);
 extern void rserver_thread_destroy(void *);
+extern struct rserver *rserver_get_by_id(uint32_t);
 
-static INLINE void rserver_v4_refcnt_inc(struct rserver_v4 *v4)
+static INLINE void rserver4_refcnt_inc(struct rserver4 *v4)
 {
     v4->base.stat->refcnt += 1;
 }
 
-static INLINE void rerver_v4_refcnt_dec(struct rserver_v4 *v4)
+static INLINE void rerver_v4_refcnt_dec(struct rserver4 *v4)
 {
     v4->base.stat->refcnt -= 1;
 }
 
-static INLINE void rserver_v6_refcnt_inc(struct rserver_v6 *v6)
+static INLINE void rserver6_refcnt_inc(struct rserver6 *v6)
 {
     v6->base.stat->refcnt += 1;
 }
 
-static INLINE void rserver_v6_refcnt_dec(struct rserver_v6 *v6)
+static INLINE void rserver6_refcnt_dec(struct rserver6 *v6)
 {
     v6->base.stat->refcnt -= 1;
 }

@@ -60,5 +60,6 @@ struct snat_pool {
 
 extern void *snat_thread_create(void ***, int);
 extern void snat_thread_destroy(void *);
+extern struct snat_pool *snat_get_by_id(uint32_t);
 
 #endif // __SNAT_POOL_H__

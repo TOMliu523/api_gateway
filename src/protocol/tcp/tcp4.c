@@ -57,29 +57,29 @@ static int _tcp4_validate_and_prepare(struct tcp4_lookup_blk *blk, void *data[],
 {
     int n = 0;
     int payload_len = 0;
-    struct dpdk_mbuf *mbuf = NULL;
+    struct dpdk_mbuf *m = NULL;
     struct tcp4_tuple *tuple = NULL;
     struct dpdk_ip4_hdr *ip4hdr = NULL;
     struct dpdk_tcp_hdr *tcphdr = NULL;
 
     blk->mbufs = data;
     for (int i = 0; i < count; i++) {
-        mbuf = data[i];
-        ip4hdr = DPDK_HEADROOM(mbuf)->l3;
-        tcphdr = DPDK_HEADROOM(mbuf)->l4;
+        m = data[i];
+        ip4hdr = DPDK_HEADROOM(m)->l3;
+        tcphdr = DPDK_HEADROOM(m)->l4;
 
         payload_len = dpdk_be_to_cpu_16(ip4hdr->total_length) - dpdk_ip4_header_len(ip4hdr) - tcp_header_len(tcphdr);
         if (UNLIKELY(payload_len < 0)) {
-            pktmbuf_drop(mbuf);
+            pktmbuf_drop(m);
             continue;
         }
 
-        if (UNLIKELY(!tcp4_mbuf_cksum_verify(mbuf, tcphdr))) {
-            pktmbuf_drop(mbuf);
+        if (UNLIKELY(!tcp4_mbuf_cksum_verify(m, tcphdr))) {
+            pktmbuf_drop(m);
             continue;
         }
 
-        DPDK_HEADROOM(mbuf)->payload_len = payload_len;
+        DPDK_HEADROOM(m)->payload_len = payload_len;
 
         tuple = blk->keys[n];
         tuple->sip = ip4hdr->src_addr;
@@ -87,7 +87,7 @@ static int _tcp4_validate_and_prepare(struct tcp4_lookup_blk *blk, void *data[],
         tuple->sport = tcphdr->src_port;
         tuple->dport = tcphdr->dst_port;
         tuple->version = 0;
-        blk->mbufs[n] = mbuf;
+        blk->mbufs[n] = m;
 
         n += 1;
     }
@@ -102,13 +102,13 @@ static INLINE void _tcp4_conn_lookup(struct tcp4_lookup_blk *blk, int n)
     tcp_conn_lookup(blk);
 }
 
-static int _tcp4_header_syn_process(struct dpdk_mbuf *mbuf)
+static int _tcp4_header_syn_process(struct dpdk_mbuf *m)
 {
     struct dpdk_ip4_hdr *ip4hdr = NULL;
-    struct dpdk_tcp_hdr *tcphdr = DPDK_HEADROOM(mbuf)->l4;
+    struct dpdk_tcp_hdr *tcphdr = DPDK_HEADROOM(m)->l4;
 
     if (UNLIKELY((tcphdr->tcp_flags & TCP_F_MASK) != TCP_F_SYN)) {
-        _tcp4_state_process(mbuf, NULL);
+        _tcp4_state_process(m, NULL);
         return -1;
     }
 
@@ -116,9 +116,9 @@ static int _tcp4_header_syn_process(struct dpdk_mbuf *mbuf)
      * RFC 9293 does not prohibit SYN segments from carrying data;
      * however, this implementation does not allow any data in SYN packets.
      */
-    ip4hdr = DPDK_HEADROOM(mbuf)->l3;
+    ip4hdr = DPDK_HEADROOM(m)->l3;
     if (UNLIKELY(dpdk_ip4_header_len(ip4hdr) + tcp_header_len(tcphdr) != dpdk_cpu_to_be_16(ip4hdr->total_length))) {
-        pktmbuf_drop(mbuf);
+        pktmbuf_drop(m);
         return -1;
     }
 
@@ -133,23 +133,23 @@ static INLINE int _tcp4_conn_dispatch(struct vserver4_kv_blk *vs4_blk, struct tc
     int ret = 0;
     int count = blk->count;
     uint64_t result = blk->resutl;
-    struct dpdk_mbuf *mbuf = NULL;
+    struct dpdk_mbuf *m = NULL;
     struct tcp4_tuple *tuple = NULL;
     struct vserver4_key *key = NULL;
 
     vs4_blk->mbufs = blk->mbufs;
     for (int i = 0; i < count; i++) {
         if (dpdk_bit_test_u64(result, i)) {
-            mbuf = blk->mbufs[i];
-            ret = _tcp4_state_process(mbuf, blk->conns[i]);
+            m = blk->mbufs[i];
+            ret = _tcp4_state_process(m, blk->conns[i]);
             if (UNLIKELY(ret != 0)) {
-                pktmbuf_drop(mbuf);
+                pktmbuf_drop(m);
                 continue;
             }
         } else {
-            mbuf = blk->mbufs[i];
+            m = blk->mbufs[i];
 
-            ret = _tcp4_header_syn_process(mbuf);
+            ret = _tcp4_header_syn_process(m);
             if (UNLIKELY(ret != 0)) {
                 continue;
             }
@@ -161,7 +161,7 @@ static INLINE int _tcp4_conn_dispatch(struct vserver4_kv_blk *vs4_blk, struct tc
             key->port = tuple->dport;
             key->protocol = PROTO_TCP; // TCP
 
-            vs4_blk->mbufs[n] = mbuf;
+            vs4_blk->mbufs[n] = m;
             vs4_blk->tuple[n] = blk->keys[i];
 
             n += 1;
@@ -176,19 +176,19 @@ static INLINE void _tcp4_vs_lookup(struct vserver4_kv_blk *vs4_blk, int n)
 {
     vs4_blk->count = n;
     vs4_blk->result = 0;
-    vserver4_lookup(vs4_blk);
+    vserver4_lookup_bulk(vs4_blk);
 }
 
-static INLINE int _tcp4_conn_create(struct vserver4 *v4, struct dpdk_mbuf *mbuf, struct tcp4_tuple *tuple, struct vserver4 *vs4)
+static INLINE int _tcp4_conn_create(struct vserver4 *v4, struct dpdk_mbuf *m, struct tcp4_tuple *tuple, struct vserver4 *vs4)
 {
     struct tcp_conn *conn = NULL;
 
-    conn = tcp_conn_client_create(AF_INET, mbuf->port, v4->vs.id, (struct tcp_tuple *)tuple, vs4->type);
+    conn = tcp_conn_client_create(AF_INET, m->port, v4->vs.id, (struct tcp_tuple *)tuple, vs4->type);
     if (UNLIKELY(conn == NULL)) {
         return -1;
     }
 
-    return _tcp4_state_process(mbuf, conn);
+    return _tcp4_state_process(m, conn);
 }
 
 static INLINE void _tcp4_pktmbuf_rst_ack(struct dpdk_mbuf *m, struct dpdk_tcp_hdr *tcphdr, struct tcp_conn *conn, int hdr_len)

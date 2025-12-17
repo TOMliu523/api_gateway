@@ -35,7 +35,7 @@ void _rs_conf_free(void *ptr)
     }
 
     if (rs->af == AF_INET) {
-        struct rserver_v4 *v4 = (struct rserver_v4 *) rs;
+        struct rserver4 *v4 = (struct rserver4 *) rs;
         if (v4->base.mtb != NULL) {
             dpdk_free(v4->base.mtb);
             v4->base.mtb = NULL;
@@ -48,7 +48,7 @@ void _rs_conf_free(void *ptr)
 
         dpdk_free(v4);
     } else {
-        struct rserver_v6 *v6 = (struct rserver_v6 *) rs;
+        struct rserver6 *v6 = (struct rserver6 *) rs;
         if (v6->base.mtb != NULL) {
             dpdk_free(v6->base.mtb);
             v6->base.mtb = NULL;
@@ -211,9 +211,9 @@ void rs_conf_free(void *ptr)
     return _rs_conf_free(ptr);
 }
 
-struct rserver_v4 *rs_conf_v4_alloc(int hw_numa_id)
+struct rserver4 *rs_conf_v4_alloc(int hw_numa_id)
 {
-    struct rserver_v4 *v4 = NULL;
+    struct rserver4 *v4 = NULL;
 
     v4 = dpdk_malloc_numa(sizeof(*v4), hw_numa_id);
     if (UNLIKELY(v4 == NULL)) {
@@ -245,9 +245,9 @@ _quit:
     return NULL;
 }
 
-struct rserver_v6 *rs_conf_v6_alloc(int hw_numa_id)
+struct rserver6 *rs_conf_v6_alloc(int hw_numa_id)
 {
-    struct rserver_v6 *v6 = NULL;
+    struct rserver6 *v6 = NULL;
 
     v6 = dpdk_malloc_numa(sizeof(*v6), hw_numa_id);
     if (v6 == NULL) {
@@ -319,8 +319,8 @@ int _rs_conf_table_create(struct rserver_table **pp_dst, const struct rserver_ta
 int rs_conf_get_by_key(struct rserver **pp_rs, void *rs_table, int af, const union inet_addr *addr, uint16_t port)
 {
     struct rserver *rs = NULL;
-    struct rserver_v4 *v4 = NULL;
-    struct rserver_v6 *v6 = NULL;
+    struct rserver4 *v4 = NULL;
+    struct rserver6 *v6 = NULL;
     struct rserver_table *table = rs_table;
 
     if (UNLIKELY(pp_rs == NULL || rs_table == NULL || addr == NULL)) {
@@ -335,13 +335,13 @@ int rs_conf_get_by_key(struct rserver **pp_rs, void *rs_table, int af, const uni
         }
 
         if (rs->af == AF_INET) {
-            v4 = (struct rserver_v4 *) rs;
+            v4 = (struct rserver4 *) rs;
             if (v4->addr == addr->ip && v4->base.port == port) {
                 *pp_rs = rs;
                 return 0;
             }
         } else {
-            v6 = (struct rserver_v6 *) rs;
+            v6 = (struct rserver6 *) rs;
             if (dpdk_ip6_addr_cmp(&v6->addr, addr, sizeof(*addr)) == 0 && v6->base.port == port) {
                 *pp_rs = rs;
                 return 0;
@@ -463,6 +463,12 @@ _quit:
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
 // Data plane interface
+
+struct rserver *rserver_get_by_id(uint32_t id)
+{
+    struct rserver_table *table = s_rs_table;
+    return table->store[id];
+}
 
 void *rserver_thread_create(void ***pp_rs_table, int hw_numa_id)
 {
