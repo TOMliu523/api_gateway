@@ -212,7 +212,7 @@ static INLINE void _tcp_full_nat_free(struct tcp_context *ctx)
 
 static INLINE int _tcp_full_nat_alloc(struct tcp_context *ctx, uint32_t vs_id)
 {
-    int ret = 0;
+    /*int ret = 0;
     uint32_t rs_id = 0;
     uint32_t next_hop = 0;
     struct pool *pool = NULL;
@@ -239,7 +239,8 @@ static INLINE int _tcp_full_nat_alloc(struct tcp_context *ctx, uint32_t vs_id)
         } else {
 
         }
-    }
+    }*/
+    return 0;
 }
 
 static INLINE struct tcp_conn *_tcp_server_conn_gen(struct tcp_context *ctx)

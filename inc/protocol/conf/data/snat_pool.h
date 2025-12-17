@@ -9,8 +9,9 @@
 
 #include <stdint.h>
 
-#include "conf.h"
+#include "data.h"
 #include "list.h"
+#include "dpdk_ip6.h"
 
 enum SNAT_ADDR_POLICY {
     SNAT_ADDR_INVALID = -1,
@@ -54,7 +55,7 @@ struct snat_pool {
     struct {
         uint32_t refcnt;
         enum SNAT_ADDR_POLICY policy;
-        char name[CONF_NAME_LEN_MAX];
+        char name[DATA_NAME_LEN_MAX];
     };
 };
 

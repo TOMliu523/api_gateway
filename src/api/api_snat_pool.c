@@ -10,6 +10,7 @@
 #include "snat_pool.h"
 #include "ip4_conf.h"
 #include "ip6_conf.h"
+#include "dpdk_ip6.h"
 #include "api_inner.h"
 #include "dpdk_port.h"
 #include "dpdk_limits.h"
