@@ -1,5 +1,3 @@
-# API_GATEWAY
-
 # API Gateway / DPDK L4 Load Balancer
 
 A high-performance user-space L4 load balancer built with DPDK, focusing on
@@ -30,6 +28,7 @@ lookup, and REST/YANG-based control-plane configuration.
 |                                 |
 Dataplane Thread 0        Dataplane Thread N
 RX Burst -> Parse -> Route/ARP -> NAT/LB -> TX Burst
+```
 
 # Environment
 
