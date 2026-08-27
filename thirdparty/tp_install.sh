@@ -125,7 +125,7 @@ install_lib \
     LuaJIT-2.1.zip \
     ${INSTALL}/lib/libluajit-5.1.so \
     "make -j ${PROC}" \
-    "make install DPREFIX=${INSTALL}"
+    "make install PREFIX=${INSTALL}"
 
 install_lib \
     openssl-3.5.0.tar.gz \
@@ -134,10 +134,12 @@ install_lib \
     "make -j ${PROC}" \
     "make install"
 
+# Disable pmdinfogen to skip pyelftools dependency; static linking, explicit PMD init only
 install_lib \
     dpdk-stable-24.11.2.tar.xz \
-    ${INSTALL}/lib64/librte_ring.so \
-    "meson setup build --prefix=${INSTALL} --libdir=lib64 --default-library=static" \
+    ${INSTALL}/lib64/librte_ring.a \
+    #"meson setup build --prefix=${INSTALL} --libdir=lib64 --default-library=static" \
+    "meson setup build -Denable_pmdinfogen=false --prefix=${INSTALL} --libdir=lib64 --default-library=static" \
     "cd build" \
     "ninja -j {PROC}" \
     "ninja install"
