@@ -350,7 +350,13 @@ int dpdk_port_startup(int port)
         return -1;
     }
 
+    if (dev.hash_key_size > sizeof(s_rss_key)) {
+        LOG_ERROR("RSS symmetric key is too short for this device");
+        return -1;
+    }
+
     rte_memcpy(&conf, &s_dpdk_port.eth_conf, sizeof(conf));
+    conf.rx_adv_conf.rss_conf.rss_key_len = dev.hash_key_size;
     conf.rx_adv_conf.rss_conf.rss_hf &= dev.flow_type_rss_offloads;
     conf.rxmode.offloads &= dev.rx_offload_capa;
     conf.rxmode.offloads &= ~RTE_ETH_RX_OFFLOAD_KEEP_CRC;
@@ -413,13 +419,17 @@ int dpdk_port_startup(int port)
     s_dpdk_port.up[port] = !0;
 
     ret = rte_eth_promiscuous_enable(port);
-    if (ret != 0) {
+    if (ret == -ENOTSUP) {
+        LOG_WARN("Port(%u) does not support promiscuous mode", port);
+    } else if (ret < 0) {
         LOG_ERROR("Failure port(%d) rte_eth_promiscuous_enable: %s", port, strerror(-ret));
         return -1;
     }
 
     ret = rte_eth_allmulticast_enable(port);
-    if (ret != 0) {
+    if (ret == -ENOTSUP) {
+        LOG_WARN("Port(%u) does not support all-multicast mode", port);
+    } else if (ret != 0) {
         LOG_ERROR("Failure port(%d) rte_eth_allmulticast_enable: %s", port, strerror(-ret));
         return -1;
     }
