@@ -4,10 +4,12 @@
  * description:
  ***********************************************/
 
+#define _GNU_SOURCE
 #include <time.h>
 #include <errno.h>
 #include <stdio.h>
 #include <fcntl.h>
+#include <sched.h>
 #include <stdlib.h>
 #include <signal.h>
 #include <string.h>
@@ -141,10 +143,55 @@ static INLINE struct root *root_init(struct hw_info *info)
     return root;
 }
 
+static void non_dpdk_thread_attr_fini(pthread_attr_t *attr)
+{
+    if (attr != NULL) {
+        pthread_attr_destroy(attr);
+    }
+}
+
+/*
+ * Before dpdk_init() is called, the main thread runs on non-DPDK CPUs.
+ * After dpdk_init(), the main thread is pinned to a DPDK CPU.
+ *
+ * Save the CPU affinity attributes before dpdk_init() so that
+ * non-dataplane threads created later can inherit them. This prevents
+ * those threads from competing with dataplane threads for CPU resources
+ * and ensures that they run only on non-DPDK CPUs.
+ */
+static int non_dpdk_thread_attr_init(pthread_attr_t *attr)
+{
+    int ret = 0;
+    cpu_set_t mask = {0};
+
+    CPU_ZERO(&mask);
+    ret = sched_getaffinity(0, sizeof(mask), &mask);
+    if (ret < 0) {
+        LOG_ERROR("sched_getaffinity failure.");
+        return -1;
+    }
+
+    ret = pthread_attr_init(attr);
+    if (ret < 0) {
+        LOG_ERROR("pthread_attr_init %s failure.", strerror(errno));
+        return -1;
+    }
+
+    ret = pthread_attr_setaffinity_np(attr, sizeof(mask), &mask);
+    if (ret < 0) {
+        LOG_ERROR("pthread_attr_setaffinity_np %s fialure.", strerror(errno));
+        pthread_attr_destroy(attr);
+        return -1;
+    }
+
+    return 0;
+}
+
 int main(int argc, char *argv[])
 {
     int ret = 0;
     pthread_t tid = {0};
+    pthread_attr_t attr = {0};
     struct hw_info info = {0};
 
     ret = daemon(0, 0);
@@ -156,6 +203,11 @@ int main(int argc, char *argv[])
     signal_process();
     single_instance(RUN_LOCK_FILE);
 
+    ret = non_dpdk_thread_attr_init(&attr);
+    if (ret < 0) {
+        return EXIT_FAILURE;
+    }
+
     ret = dpdk_init(argc, argv, &info);
     if (ret < 0) {
         return EXIT_FAILURE;
@@ -165,18 +217,19 @@ int main(int argc, char *argv[])
     argv += ret;
 
     s_root = root_init(&info);
-    ret = pthread_create(&tid, NULL, api_startup, s_root);
+    ret = pthread_create(&tid, &attr, api_startup, s_root);
     if (ret != 0) {
         LOG_ERROR("Startup api thread failure: %s", strerror(ret));
         return EXIT_FAILURE;
     }
 
-    ret = pthread_create(&tid, NULL, runtime_mgmt_startup, s_root);
+    ret = pthread_create(&tid, &attr, runtime_state_startup, s_root);
     if (ret != 0) {
         LOG_ERROR("Startup running thread failure: %s", strerror(ret));
         return EXIT_FAILURE;
     }
 
+    non_dpdk_thread_attr_fini(&attr);
     dpdk_thread_startup(dp_startup, s_root);
     return EXIT_SUCCESS;
 }
