@@ -21,8 +21,8 @@
 
 #define LOG_FILENAME "/var/log/api_gateway.log"
 
-static FILE *s_logfile;
 static int s_log_fd;
+static FILE *s_logfile;
 
 static PROC_INIT void log_init(void)
 {
