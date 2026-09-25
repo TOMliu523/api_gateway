@@ -1,0 +1,18 @@
+module v1 {
+    namespace "urn:v1";
+    prefix "v1";
+
+    include network;
+    include account;
+
+    revision "2025-05-31" {
+        description "Init version";
+    }
+
+    container query {
+        leaf counter {
+            type uint64;
+            default 0;
+        }
+    }
+}
