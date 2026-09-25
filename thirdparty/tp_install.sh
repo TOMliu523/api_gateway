@@ -39,11 +39,20 @@ function install_lib()
     # If the directory does not exist, unzip it
     [[ ! -d ${dirname} ]] && ${exec_cmd}
 
+    (
+        cd "$dirname" || exit 1
+
+        for i in "$@"; do
+            echo "[DEBUG] Running command: $i"
+            eval "$i" || exit "$?"
+        done
+    ) || return "$?"
+
     # Compile
-    pushd ${dirname} && for i in "$@" ;do $i; done && popd
+    # pushd ${dirname} && for i in "$@" ;do echo "[DEBUG] Running command: $i";eval "$i"; done && popd
 
     # Delete source code path
-    [[ -d ${dirname} ]] && rm -rf ${dirname}
+    [[ -d "${dirname}" ]] && rm -rf "${dirname}"
 }
 
 # variable
@@ -53,7 +62,7 @@ INSTALL=${CURDIR}/install
 [[ $# -eq 2 ]] && INSTALL="$1"
 
 # Dependent apt-get -install -y pkgconf
-export PKG_CONFIG_PATH=${INSTALL}/lib/pkgconfig:${PKG_CONFIG_PATH}
+export PKG_CONFIG_PATH=${INSTALL}/lib/pkgconfig:${INSTALL}/lib64/pkgconfig:${PKG_CONFIG_PATH}
 export LD_LIBRARY_PATH=${INSTALL}/lib:${LD_LIBRARY_PATH}
 
 function install_cmake()
@@ -66,7 +75,7 @@ function install_cmake()
         $lib \
         "mkdir -p build" \
         "cd build" \
-        "cmake -DCMAKE_INSTALL_PREFIX=${INSTALL} .." \
+        "cmake -DCMAKE_INSTALL_PREFIX=${INSTALL} -DCMAKE_INSTALL_LIBDIR=lib .." \
         "make -j ${PROC}" \
         "make install"
 }
@@ -79,7 +88,7 @@ function install_make()
     install_lib \
         $zip_file \
         $lib \
-        "./configure --prefix=${INSTALL}" \
+        "./configure --prefix=${INSTALL} --libdir=${INSTALL}/lib" \
         "make -j ${PROC}" \
         "make install"
 }
@@ -103,10 +112,29 @@ install_lib \
     "install libmongoose.a ${INSTALL}/lib"
 
 install_lib \
+    rbtree.zip \
+    ${INSTALL}/lib/librbtree.a \
+    "make" \
+    "mkdir -p ${INSTALL}/include" \
+    "mkdir -p ${INSTALL}/lib" \
+    "install rbtree.h ${INSTALL}/include" \
+    "install librbtree.a ${INSTALL}/lib"
+
+install_lib \
+    timeout-master.zip \
+    ${INSTALL}/lib/libtimeout.a \
+    "make" \
+    "ar -cr libtimeout.a timeout.o" \
+    "mkdir -p ${INSTALL}/include" \
+    "mkdir -p ${INSTALL}/lib" \
+    "install timeout.h ${INSTALL}/include" \
+    "install libtimeout.a ${INSTALL}/lib"
+
+install_lib \
     LuaJIT-2.1.zip \
     ${INSTALL}/lib/libluajit-5.1.so \
     "make -j ${PROC}" \
-    "make install DPREFIX=${INSTALL}"
+    "make install PREFIX=${INSTALL}"
 
 install_lib \
     openssl-3.5.0.tar.gz \
@@ -115,12 +143,14 @@ install_lib \
     "make -j ${PROC}" \
     "make install"
 
+# Disable pmdinfogen to skip pyelftools dependency; static linking, explicit PMD init only
+#"meson setup build -Denable_pmdinfogen=false --prefix=${INSTALL} --libdir=lib64 --default-library=static" \
 install_lib \
     dpdk-stable-24.11.2.tar.xz \
-    ${INSTALL}/lib/x86_64-linux-gnu/librte_ring.so \
-    "meson setup build --prefix=${INSTALL} --default-library=static" \
+    ${INSTALL}/lib64/librte_ring.a \
+    "meson setup build --prefix=${INSTALL} --libdir=lib64 --default-library=static" \
     "cd build" \
-    "ninja -j {PROC}" \
+    "ninja -j ${PROC}" \
     "ninja install"
 
 # Compilation complete, return
