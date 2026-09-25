@@ -16,7 +16,6 @@ submodule boot {
             type string {
                 pattern '[0-9A-Fa-f]{4}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}\.[0-7]';
             }
-            min-elements 1;
             ordered-by user;
 
             description "PCI BDF addresses of NICs used by DPDK, for example 0000:00:06.0.";

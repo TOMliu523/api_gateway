@@ -11,14 +11,8 @@ BIN=${APP_DIR}/bin/
 APP=${BIN}/${TARGET}
 DEVBIND=${BIN}/dpdk-devbind.py
 
-if [[ -z ${API_LIBYANG_PATH} ]]; then
-    export API_LIBYANG_PATH=${APP_DIR}/conf/yang:${APP_DIR}/conf/yang/common
-fi
-
-if [[ -z ${SYSREPO_REPOSITORY_PATH} ]]; then
-    export SYSREPO_REPOSITORY_PATH=${APP_DIR}/data
-fi
-
+export SYSREPO_REPOSITORY_PATH=${APP_DIR}/data
+export API_LIBYANG_PATH=${APP_DIR}/conf/yang:${APP_DIR}/conf/yang/common
 export LD_LIBRARY_PATH=${APP_DIR}/lib:${APP_DIR}/lib64:${LD_LIBRARY_PATH}
 
 # check process exists
@@ -151,6 +145,9 @@ else
     echo "PCI devices are already bound to vfio-pci"
 fi
 
+echo "SYSREPO_REPOSITORY_PATH: $SYSREPO_REPOSITORY_PATH"
+echo "API_LIBYANG_PATH: $API_LIBYANG_PATH"
+echo "LD_LIBRARY_PATH: $LD_LIBRARY_PATH"
 echo "starting application ..."
 echo "Executable: ${APP}"
 echo "Library path: ${LD_LIBRARY_PATH}"
