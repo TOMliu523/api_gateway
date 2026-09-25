@@ -1,10 +1,43 @@
-# API_GATEWAY
+# NUMA-Aware DPDK L4 Load Balancer with Lock-Free Dataplane
+
+A high-performance user-space L4 load balancer built with DPDK, focusing on
+NUMA-aware dataplane design, lock-free per-core processing, fast routing/ARP
+lookup, and REST/YANG-based control-plane configuration.
+
+## Highlights
+
+- DPDK-based packet I/O with poll-mode dataplane
+- NUMA-aware resource allocation and per-core dataplane threads
+- L2/L3/L4 forwarding pipeline: Ethernet / ARP / IPv4 / ICMP / TCP / UDP
+- Route / ARP / session table abstraction for high-speed forwarding
+- Control-plane and dataplane separation
+- YANG/sysrepo-based configuration model
+- RESTful management API
+- CMake-based build system
+
+## Architecture
+
+```text
+        REST / YANG / sysrepo
+                 |
+          Control Plane
+                 |
+        Config Snapshot / RCU
+                 |
++----------------+----------------+
+|                                 |
+Dataplane Thread 0        Dataplane Thread N
+RX Burst -> Parse -> Route/ARP -> NAT/LB -> TX Burst
+```
+
+# Environment
+## Base
 
 SYSTEM ubuntu 22.04  
 OS 5.15.0  
 DPDK 24.11.2  
 
-# DPDK 24.11.2
+## DPDK 24.11.2
 
 C11(GCC 5.0+)   
 Clang(3.6+)   
@@ -13,7 +46,7 @@ meson(0.53.2+)
 pyelftools(0.22+)   
 pkg-config or pkgconf  
 
-# Install Dependency
+## Install Dependency
 ```
 apt -y install cmake
 apt -y install zip
