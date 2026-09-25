@@ -24,6 +24,7 @@
 #include "log.h"
 #include "type.h"
 #include "macro.h"
+#include "dpdk_rcu.h"
 #include "dpdk_type.h"
 #include "dpdk_init.h"
 #include "dpdk_port.h"
@@ -36,20 +37,45 @@ static int _dpdk_memory_info(const struct rte_memseg_list *msl, const struct rte
 {
     struct hw_info *info = arg;
 
-    if (msl != NULL) {
-        info->hugepage_size = msl->page_sz;
-        info->total_memory += msl->len;
+    if (msl == NULL) {
+        return 0;
     }
+
+    return dpdk_alloc_socket_get(&info->stat[msl->socket_id], msl->socket_id);
+}
+
+int dpdk_alloc_socket_get(void *arg, int socket_id)
+{
+    int ret = 0;
+    struct dpdk_socket_stat *stat = arg;
+    struct rte_malloc_socket_stats st = {0};
+
+    ret = rte_malloc_get_socket_stats(socket_id, &st);
+    if (ret < 0) {
+        LOG_ERROR("Function(rte_malloc_get_socket_stats) failure: %s", rte_strerror(ret));
+        return -1;
+    }
+
+    stat->heap_totalsz_bytes = st.heap_totalsz_bytes;
+    stat->heap_freesz_bytes = st.heap_freesz_bytes;
+    stat->greatest_free_size = st.greatest_free_size;
+    stat->heap_allocsz_bytes = st.heap_allocsz_bytes;
+    stat->free_count = st.free_count;
+    stat->alloc_count = st.alloc_count;
 
     return 0;
 }
 
-static INLINE void _dpdk_info(struct hw_info *info)
+void dpdk_hw_info_init(void *arg)
 {
-    info->numa_count = rte_socket_count();
+    struct hw_info *info = (struct hw_info *)arg;
+
     info->cpu_count = rte_lcore_count();
     info->nic_count = rte_eth_dev_count_avail();
+    info->numa_count = dpdk_numa_cpu_init(info->cpu_count);
     rte_memseg_walk(_dpdk_memory_info, info);
+
+    LOG_INFO("cpu_count = %d, nic_count = %d, numa_count = %d", info->cpu_count, info->nic_count, info->numa_count);
 }
 
 void dpdk_thread_startup(void *f, void *arg)
@@ -85,7 +111,24 @@ void dpdk_thread_info(uint8_t *numa_idx, uint8_t *local_idx, uint8_t *cpu_lcore,
     *numa_idx = nc->c2n[*cpu_lcore].numa_id;
 }
 
-int dpdk_init(int argc, char *argv[], void *output)
+int dpdk_init(int argc, char *argv[])
+{
+    int ret = 0;
+
+    RUNTIME_ASSERT(argv != NULL);
+
+    ret = rte_eal_init(argc, argv);
+    if (ret < 0) {
+        LOG_ERROR("rte_eal_init failure: %s", rte_strerror(rte_errno));
+        return -1;
+    }
+
+    rte_srand(rte_rdtsc());
+    return ret;
+}
+
+/*
+int dpdk_init(int argc, char *argv[])
 {
     int ret = 0;
     struct hw_info *info = output;
@@ -101,7 +144,9 @@ int dpdk_init(int argc, char *argv[], void *output)
     rte_srand(rte_rdtsc());
 
     _dpdk_info(info);
-    dpdk_numa_cpu_init(info->numa_count, info->cpu_count);
+    info->numa_count = dpdk_numa_cpu_init(info->cpu_count);
+
+    dpdk_rcu_create();
 
     ret = dpdk_port_init();
     if (ret < 0) {
@@ -109,4 +154,12 @@ int dpdk_init(int argc, char *argv[], void *output)
     }
 
     return 0;
+}
+*/
+
+void dpdk_fini(int signo)
+{
+    LOG_ERROR("Receive signal no %d", signo);
+    rte_eal_cleanup();
+    exit(EXIT_FAILURE);
 }

@@ -1,0 +1,64 @@
+/*****************************************************************************
+ * filename: dpdk_fib6.h
+ * function:
+ * description:
+ ****************************************************************************/
+
+#include <time.h>
+#include <string.h>
+
+#include <rte_errno.h>
+
+#include "log.h"
+#include "atomic.h"
+#include "dpdk_fib6.h"
+
+#define DPDK_FIB6_ITEM_MIN 32
+
+struct dpdk_fib6 *dpdk_fib6_create(int hw_numa_id, int max_item)
+{
+    int ret = 0;
+    uint32_t seq = 0;
+    char name[32] = "";
+    struct timespec spec = {0};
+    struct dpdk_fib6 *fib = NULL;
+    int n_item = (max_item < DPDK_FIB6_ITEM_MIN) ? DPDK_FIB6_ITEM_MIN : max_item;
+    struct rte_fib6_conf conf = {
+        .type = RTE_FIB6_TRIE,
+        .default_nh = DPDK_FIB6_DEFAULT,
+        .max_routes = n_item,
+        .rib_ext_sz = 0,
+        .trie = {
+            .nh_sz = RTE_FIB6_TRIE_4B,
+            .num_tbl8 = 2 * n_item,
+        },
+    };
+
+    static uint32_t s_seq = 0;
+
+    seq = atomic_fetch_add(&s_seq, 1);
+    clock_gettime(CLOCK_MONOTONIC, &spec);
+    snprintf(name, sizeof(name), "FIB6_%lu_%u_%u", spec.tv_sec, hw_numa_id, seq);
+
+    fib = rte_fib6_create(name, hw_numa_id, &conf);
+    if (fib == NULL) {
+        LOG_ERROR("Failure rte_fib6_create: %s", strerror(rte_errno));
+        return NULL;
+    }
+
+    ret = rte_fib6_select_lookup(fib, RTE_FIB6_LOOKUP_DEFAULT);
+    if (ret != 0) {
+        LOG_ERROR("Failure rte_fib6_select_lookup: %s", strerror(-rte_errno));
+        rte_fib6_free(fib);
+        return NULL;
+    }
+
+    return fib;
+}
+
+void dpdk_fib6_destroy(struct dpdk_fib6 *fib)
+{
+    if (fib != NULL) {
+        rte_fib6_free(fib);
+    }
+}

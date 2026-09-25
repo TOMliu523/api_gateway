@@ -1,0 +1,97 @@
+submodule boot {
+    yang-version 1.1;
+
+    belongs-to v1 {
+        prefix v1;
+    }
+
+    import ietf-inet-types {
+        prefix inet;
+    }
+
+    container boot {
+        description "Configuration read at startup. Restrictions on runtime changes are enforced by the application.";
+
+        leaf-list nic-pci {
+            type string {
+                pattern '[0-9A-Fa-f]{4}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}\.[0-7]';
+            }
+            min-elements 1;
+            ordered-by user;
+
+            description "PCI BDF addresses of NICs used by DPDK, for example 0000:00:06.0.";
+        }
+
+        container listener {
+            presence "Enable HTTP and HTTPS listener.";
+            description "HTTP and HTTPS listener configuration.";
+
+            choice address-family {
+                mandatory true;
+                description "Select either IPv4 or IPv6, but not both.";
+
+                case ipv4 {
+                    container ipv4 {
+                        leaf address {
+                            type inet:ipv4-address-no-zone;
+                            mandatory true;
+                            description "IPv4 address to bind to. Use 0.0.0.0 to listen on all IPv4 interfaces.";
+                        }
+
+                        leaf http-port {
+                            type inet:port-number {
+                                range "1..65535";
+                            }
+                            default 8080;
+                            description "HTTP listening port.";
+                        }
+
+                        leaf https-port {
+                            type inet:port-number {
+                                range "1..65535";
+                            }
+                            default 8443;
+                            description "HTTPS listening port.";
+                        }
+
+                        must "http-port != https-port" {
+                            error-message "HTTP and HTTPS ports must be different.";
+                        }
+                    }
+                }
+
+                case ipv6 {
+                    container ipv6 {
+                        presence "Enable the IPv6 listener.";
+
+                        leaf address {
+                            type inet:ipv6-address-no-zone;
+                            mandatory true;
+                            description "IPv6 address to bind to. Use :: to listen on all IPv6 interfaces.";
+                        }
+
+                        leaf http-port {
+                            type inet:port-number {
+                                range "1..65535";
+                            }
+                            default 8080;
+                            description "HTTP listening port.";
+                        }
+
+                        leaf https-port {
+                            type inet:port-number {
+                                range "1..65535";
+                            }
+                            default 8443;
+                            description "HTTPS listening port.";
+                        }
+
+                        must "http-port != https-port" {
+                            error-message "HTTP and HTTPS ports must be different.";
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

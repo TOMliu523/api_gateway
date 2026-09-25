@@ -1,42 +1,56 @@
-/************************************************
+/*****************************************************************************
  * filename: main.c
  * function:
- * description:
- ***********************************************/
+ * description: Application Entry Point
+ ****************************************************************************/
 
+#define _GNU_SOURCE
+#include <time.h>
+#include <sched.h>
 #include <errno.h>
 #include <stdio.h>
 #include <fcntl.h>
-#include <stdlib.h>
 #include <signal.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #include <pthread.h>
-#include <sys/types.h>
+
+#include <rte_lcore.h>
+#include <rte_ethdev.h>
 
 #include "log.h"
-#include "api.h"
 #include "type.h"
+#include "macro.h"
+#include "config.h"
+#include "api_http.h"
 #include "dpdk_init.h"
-#include "dataplane.h"
 
 #define RUN_LOCK_FILE "/run/lock/api_gateway.lock"
 
-static struct root *s_root;
-static int s_fd = -1;
-
-static void _lock_file_free(void)
+static void _fd_cleanup(int *ptr)
 {
-    if (s_fd >= 0) {
-        close(s_fd);
+    int fd = *ptr;
+
+    if (fd >= 0) {
+        close(fd);
     }
 }
 
-static void single_instance(const char *filename)
+static void _signal_process(void)
+{
+    signal(SIGTERM, SIG_IGN);
+    signal(SIGUSR1, SIG_IGN);
+    signal(SIGUSR2, SIG_IGN);
+    signal(SIGTTIN, SIG_IGN);
+    signal(SIGTTOU, SIG_IGN);
+    signal(SIGCHLD, SIG_IGN);
+}
+
+static int _single_instance(const char *filename)
 {
     int fd = -1;
     int ret = 0;
-    off_t off = 0;
     int nbytes = 0;
     struct flock lock = {0};
     char buffer[BUFSIZ] = "";
@@ -48,7 +62,7 @@ static void single_instance(const char *filename)
                 break;
             } else if (fd < 0 && errno != EEXIST) {
                 LOG_ERROR("create %s failure: %s", filename, strerror(errno));
-                exit(EXIT_FAILURE);
+                return -1;
             } else {
                 continue;
             }
@@ -58,17 +72,17 @@ static void single_instance(const char *filename)
                 break;
             } else if (fd < 0 && errno != ENOENT) {
                 LOG_ERROR("open %s failure: %s.", filename, strerror(errno));
-                exit(EXIT_FAILURE);
+                return -1;
             } else {
                 continue;
             }
         }
     }
 
-    nbytes = snprintf(buffer, sizeof(buffer), "process startup time: %lu\nprocess number: %u", time(NULL), getpid());
+    nbytes = snprintf(buffer, sizeof(buffer), "process number: %u\nprocess startup time: %lu", getpid(), time(NULL));
     if (nbytes < 0) {
         LOG_ERROR("snprintf failure: %s", strerror(errno));
-        exit(EXIT_FAILURE);
+        goto _quit;
     }
 
     lock.l_type = F_WRLCK;
@@ -77,84 +91,95 @@ static void single_instance(const char *filename)
     lock.l_len = 1;
 
     ret = fcntl(fd, F_SETLK, &lock);
-    if (ret < 0) {
+    if (ret != 0) {
         LOG_ERROR("lock %s failure: %s", filename, strerror(errno));
-        exit(EXIT_FAILURE);
+        goto _quit;
     }
 
     nbytes = write(fd, buffer, nbytes);
     if (nbytes < 0) {
         LOG_ERROR("Failure write: %s.", strerror(errno));
-        exit(EXIT_FAILURE);
+        goto _quit;
     }
 
     LOG_INFO("Current process ID = %u", getpid());
-    s_fd = fd;
-    atexit(_lock_file_free);
+    return fd;
+
+_quit:
+    close(fd);
+    return -1;
 }
 
-static void signal_process(void)
+static void _non_dpdk_thread_attr_fini(pthread_attr_t *attr)
 {
-    signal(SIGTERM, SIG_IGN);
-    signal(SIGUSR1, SIG_IGN);
-    signal(SIGUSR2, SIG_IGN);
-    signal(SIGTTIN, SIG_IGN);
-    signal(SIGTTOU, SIG_IGN);
-    signal(SIGCHLD, SIG_IGN);
-}
-
-static void root_fini(void)
-{
-    struct root *root = NULL;
-
-    if (s_root == NULL) {
-        return;
+    if (attr != NULL) {
+        pthread_attr_destroy(attr);
     }
-
-    root = s_root;
-    free(root);
-    s_root = NULL;
 }
 
-static struct root *root_init(struct hw_info *info)
+/*
+ * Before dpdk_init() is called, the main thread runs on non-DPDK CPUs.
+ * After dpdk_init(), the main thread is pinned to a DPDK CPU.
+ *
+ * Save the CPU affinity attributes before dpdk_init() so that
+ * non-dataplane threads created later can inherit them. This prevents
+ * those threads from competing with dataplane threads for CPU resources
+ * and ensures that they run only on non-DPDK CPUs.
+ */
+static int _non_dpdk_thread_attr_init(pthread_attr_t *attr)
 {
     int ret = 0;
-    size_t total_size = 0;
-    struct root *root = NULL;
+    cpu_set_t set = {0};
 
-    total_size = sizeof(struct root);
-    ret = posix_memalign((void **)&root, CACHE_LINE, total_size);
+    CPU_ZERO(&set);
+    ret = sched_getaffinity(getpid(), sizeof(set), &set);
     if (ret < 0) {
-        LOG_ERROR("OOM.");
-        exit(EXIT_FAILURE);
+        LOG_ERROR("Function(sched_getaffinity) failure: %s", strerror(errno));
+        return -1;
     }
 
-    memset(root, 0, total_size);
+    ret = pthread_attr_init(attr);
+    if (ret < 0) {
+        LOG_ERROR("Function(pthread_attr_init) failure: %s", strerror(errno));
+        return -1;
+    }
 
-    memcpy(&root->hw_info, info, sizeof(*info));
+    ret = pthread_attr_setaffinity_np(attr, sizeof(set), &set);
+    if (ret < 0) {
+        LOG_ERROR("Function(pthread_attr_setaffinity_np) failure: %s", strerror(errno));
+        pthread_attr_destroy(attr);
+        return -1;
+    }
 
-    atexit(root_fini);
-    return root;
+    return 0;
 }
 
 int main(int argc, char *argv[])
 {
     int ret = 0;
-    int fd = -1;
     pthread_t tid = {0};
-    struct root *root = NULL;
-    struct hw_info info = {0};
+    struct context context = {0};
+    AUTO_CLEANUP(_fd_cleanup) int fd = -1;
+    AUTO_CLEANUP(_non_dpdk_thread_attr_fini) pthread_attr_t attr = {0};
 
     ret = daemon(0, 0);
-    if (ret != 0) {
-        LOG_ERROR("daemon failure: %s", strerror(errno));
+    if (ret < 0) {
+        LOG_ERROR("daemon failure: %s\n", strerror(errno));
         return EXIT_FAILURE;
     }
 
-    signal_process();
-    single_instance(RUN_LOCK_FILE);
+    _signal_process();
+    fd = _single_instance(RUN_LOCK_FILE);
+    if (fd < 0) {
+        return EXIT_FAILURE;
+    }
 
-    ret = dpdk_init(argc, argv, &info);
+    ret = _non_dpdk_thread_attr_init(&attr);
+    if (ret < 0) {
+        return EXIT_FAILURE;
+    }
+
+    ret = dpdk_init(argc, argv);
     if (ret < 0) {
         return EXIT_FAILURE;
     }
@@ -162,13 +187,22 @@ int main(int argc, char *argv[])
     argc -= ret;
     argv += ret;
 
-    s_root = root_init(&info);
-    ret = pthread_create(&tid, NULL, api_startup, s_root);
-    if (ret != 0) {
-        LOG_ERROR("startup api thread failure: %s", strerror(ret));
-        return EXIT_FAILURE;
+    dpdk_hw_info_init(&context.info);
+    ret = config_boot_load(&context.config);
+    if (ret < 0) {
+        goto _quit;
     }
 
-    dpdk_thread_startup(dp_startup, s_root);
+    ret = pthread_create(&tid, &attr, api_http, &context);
+    if (ret < 0) {
+        LOG_ERROR("Function(pthread_create) failure: %s", strerror(-ret));
+        goto _quit;
+    }
+
+    sleep(200);
     return EXIT_SUCCESS;
+
+_quit:
+    dpdk_fini(0);
+    return EXIT_FAILURE;
 }

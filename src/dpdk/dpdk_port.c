@@ -19,6 +19,7 @@
 #include "dpdk_core.h"
 #include "dpdk_inner.h"
 #include "dpdk_common.h"
+#include "dpdk_bitops.h"
 
 #define DPDK_SPEED_NUMS_MAX 32
 #define DPDK_RX_DESC_DEFAULT 4096
@@ -37,14 +38,17 @@ struct dpdk_speed {
     int nums;
     struct dpdk_speed_ex {
         const char *prefix;
-        int type_nums;
+        int type_nums; // start from zero
         int nums; // Users later need to perform reverse port lookup by name from static structures
     } ex[DPDK_SPEED_NUMS_MAX];
 };
 
 struct dpdk_port_st {
+    bool up[DPDK_ETHPORT_MAX];
+    uint64_t nic_rx_offload[DPDK_ETHPORT_MAX];
+    uint64_t nic_tx_offload[DPDK_ETHPORT_MAX];
     struct dpdk_speed speed;
-    struct port_name port_name;
+    struct port_info port_info;
     struct rte_eth_conf eth_conf;
 };
 
@@ -53,53 +57,177 @@ static struct dpdk_port_st s_dpdk_port = {
         .link_speeds = RTE_ETH_LINK_SPEED_AUTONEG,
         .rxmode = {
             .mq_mode = RTE_ETH_MQ_RX_RSS,
-            .offloads = RTE_ETH_RX_OFFLOAD_RSS_HASH,
+            .offloads = RTE_ETH_RX_OFFLOAD_RSS_HASH
+                        | RTE_ETH_RX_OFFLOAD_CHECKSUM
+                        | RTE_ETH_RX_OFFLOAD_VLAN,
         },
         .rx_adv_conf = {
             .rss_conf = {
                 .rss_key = s_rss_key,
                 .rss_key_len = ARR_NUMS(s_rss_key),
-                .rss_hf = (RTE_ETH_RSS_TCP | RTE_ETH_RSS_UDP),
+                .rss_hf = (/*RTE_ETH_RSS_IP |*/ RTE_ETH_RSS_TCP | RTE_ETH_RSS_UDP),
                 .algorithm = RTE_ETH_HASH_FUNCTION_DEFAULT,
             },
         },
         .txmode = {
             .mq_mode = RTE_ETH_MQ_TX_NONE,
+            .offloads = RTE_ETH_TX_OFFLOAD_VLAN_INSERT
+                        | RTE_ETH_TX_OFFLOAD_IPV4_CKSUM
+                        | RTE_ETH_TX_OFFLOAD_UDP_CKSUM
+                        | RTE_ETH_TX_OFFLOAD_TCP_CKSUM
+                        | RTE_ETH_TX_OFFLOAD_TCP_TSO
+                        | RTE_ETH_TX_OFFLOAD_UDP_TSO
+                        | RTE_ETH_TX_OFFLOAD_MULTI_SEGS,
         },
     },
     .speed = {
-        .nums = 16,
-        .ex[0] = { .prefix = "NONE", },
-        .ex[1] = { .prefix = "10ME", },
-        .ex[2] = { .prefix = "100ME", },
-        .ex[3] = { .prefix = "GE", },
-        .ex[4] = { .prefix = "2.5GE", },
-        .ex[5] = { .prefix = "5GE", },
-        .ex[6] = { .prefix = "10GE", },
-        .ex[7] = { .prefix = "20GE", },
-        .ex[8] = { .prefix = "25GE", },
-        .ex[9] = { .prefix = "40GE", },
-        .ex[10] = { .prefix = "50GE", },
-        .ex[11] = { .prefix = "56GE", },
-        .ex[12] = { .prefix = "100GE", },
-        .ex[13] = { .prefix = "200GE", },
-        .ex[14] = { .prefix = "400GE", },
-        .ex[15] = { .prefix = "UNKNOWN", },
+        .nums = 18,
+        .ex[0] = { .prefix = "UNKNOWN", },
+        .ex[1] = { .prefix = "FIXED", },
+        .ex[2] = { .prefix = "10MH", },
+        .ex[3] = { .prefix = "10M", },
+        .ex[4] = { .prefix = "100MH", },
+        .ex[5] = { .prefix = "100M", },
+        .ex[6] = { .prefix = "GE", },
+        .ex[7] = { .prefix = "2.5GE", },
+        .ex[8] = { .prefix = "5GE", },
+        .ex[9] = { .prefix = "10GE", },
+        .ex[10] = { .prefix = "20GE", },
+        .ex[11] = { .prefix = "25GE", },
+        .ex[12] = { .prefix = "40GE", },
+        .ex[13] = { .prefix = "50GE", },
+        .ex[14] = { .prefix = "56GE", },
+        .ex[15] = { .prefix = "100GE", },
+        .ex[16] = { .prefix = "200GE", },
+        .ex[17] = { .prefix = "400GE", },
     },
 };
 
-static int dpdk_port_name_init(void)
+static uint64_t _dpdk_port_tx_offload_flags(uint64_t eth_tx_offloads)
+{
+	uint64_t offload = 0;
+
+    // L3 checksum
+    if (eth_tx_offloads & RTE_ETH_TX_OFFLOAD_IPV4_CKSUM) {
+        offload |= RTE_MBUF_F_TX_IPV4 | RTE_MBUF_F_TX_IP_CKSUM;
+    }
+
+    // L4 checksums
+    if (eth_tx_offloads & RTE_ETH_TX_OFFLOAD_TCP_CKSUM) {
+        offload |= RTE_MBUF_F_TX_TCP_CKSUM;
+    }
+
+    if (eth_tx_offloads & RTE_ETH_TX_OFFLOAD_UDP_CKSUM) {
+        offload |= RTE_MBUF_F_TX_UDP_CKSUM;
+    }
+
+    if (eth_tx_offloads & RTE_ETH_TX_OFFLOAD_SCTP_CKSUM) {
+        offload |= RTE_MBUF_F_TX_SCTP_CKSUM;
+    }
+
+    // TSO
+    if (eth_tx_offloads & RTE_ETH_TX_OFFLOAD_TCP_TSO) {
+        offload |= RTE_MBUF_F_TX_TCP_SEG;
+    }
+
+    // Outer IP checksum (tunnel)
+    if (eth_tx_offloads & RTE_ETH_TX_OFFLOAD_OUTER_IPV4_CKSUM) {
+        offload |= RTE_MBUF_F_TX_OUTER_IPV4 | RTE_MBUF_F_TX_OUTER_IP_CKSUM;
+    }
+
+    // Outer UDP checksum (tunnel)
+    if (eth_tx_offloads & RTE_ETH_TX_OFFLOAD_OUTER_UDP_CKSUM) {
+        offload |= RTE_MBUF_F_TX_OUTER_UDP_CKSUM | RTE_MBUF_F_TX_OUTER_IPV4;
+    }
+
+    // VLAN
+    if (eth_tx_offloads & RTE_ETH_TX_OFFLOAD_VLAN_INSERT) {
+        offload |= RTE_MBUF_F_TX_VLAN;
+    }
+
+    if (eth_tx_offloads & RTE_ETH_TX_OFFLOAD_QINQ_INSERT) {
+        offload |= RTE_MBUF_F_TX_QINQ;
+    }
+
+    // Tunnel TSO
+    if (eth_tx_offloads & RTE_ETH_TX_OFFLOAD_VXLAN_TNL_TSO) {
+        offload |= RTE_MBUF_F_TX_TUNNEL_VXLAN | RTE_MBUF_F_TX_TCP_SEG;
+    }
+
+    if (eth_tx_offloads & RTE_ETH_TX_OFFLOAD_GRE_TNL_TSO) {
+        offload |= RTE_MBUF_F_TX_TUNNEL_GRE | RTE_MBUF_F_TX_TCP_SEG;
+    }
+
+    if (eth_tx_offloads & RTE_ETH_TX_OFFLOAD_GENEVE_TNL_TSO) {
+        offload |= RTE_MBUF_F_TX_TUNNEL_GENEVE | RTE_MBUF_F_TX_TCP_SEG;
+    }
+
+    if (eth_tx_offloads & RTE_ETH_TX_OFFLOAD_IPIP_TNL_TSO) {
+        offload |= RTE_MBUF_F_TX_TUNNEL_IPIP | RTE_MBUF_F_TX_TCP_SEG;
+    }
+
+    if (eth_tx_offloads & RTE_ETH_TX_OFFLOAD_UDP_TNL_TSO) {
+        offload |= RTE_MBUF_F_TX_TUNNEL_UDP | RTE_MBUF_F_TX_TCP_SEG;
+    }
+
+    if (eth_tx_offloads & RTE_ETH_TX_OFFLOAD_IP_TNL_TSO) {
+        offload |= RTE_MBUF_F_TX_TUNNEL_IP | RTE_MBUF_F_TX_TCP_SEG;
+    }
+
+    // UDP Fragmentation Offload (UFO)
+    if (eth_tx_offloads & RTE_ETH_TX_OFFLOAD_UDP_TSO) {
+        offload |= RTE_MBUF_F_TX_UDP_SEG;
+    }
+
+    // SECURITY offload
+    if (eth_tx_offloads & RTE_ETH_TX_OFFLOAD_SECURITY) {
+        offload |= RTE_MBUF_F_TX_SEC_OFFLOAD;
+    }
+
+    if (eth_tx_offloads & RTE_ETH_TX_OFFLOAD_MACSEC_INSERT) {
+        offload |= RTE_MBUF_F_TX_MACSEC;
+    }
+
+    // TIMESTAMP
+    if (eth_tx_offloads & RTE_ETH_TX_OFFLOAD_SEND_ON_TIMESTAMP) {
+        offload |= RTE_MBUF_F_TX_IEEE1588_TMST;
+    }
+
+    return offload;
+}
+
+static int _dpdk_port_startup(int port)
+{
+    int ret = 0;
+    int retry = 0;
+
+    for (;;) {
+        ret = rte_eth_dev_start(port);
+        if (ret == 0) {
+            return 0;
+        } else if (ret == -EAGAIN && retry < 3) { // 3 is an estimated number.
+            retry += 1;
+            continue;
+        } else {
+            LOG_ERROR("Failure port(%d) rte_eth_dev_start: %s", port, strerror(-ret));
+            return -1;
+        }
+    }
+}
+
+static int dpdk_port_info_init(void)
 {
     int ret = 0;
     int port = 0;
     int nbytes = 0;
     int speed_nums = 0;
-    struct rte_eth_link link = {0};
-    struct port_name *pn = &s_dpdk_port.port_name;
+    uint32_t speed_capa = 0;
+    struct rte_eth_dev_info dev = {0};
+    struct port_info *pn = &s_dpdk_port.port_info;
 
     RTE_ETH_FOREACH_DEV(port) {
         struct dpdk_speed_ex *ex = NULL;
-        struct port_name_entry *one = &pn->entrys[port];
+        struct port_info_entry *one = &pn->info[port];
 
         one->port = port;
         ret = rte_eth_dev_get_name_by_port(port, one->pci);
@@ -108,36 +236,38 @@ static int dpdk_port_name_init(void)
             return -1;
         }
 
-        ret = rte_eth_link_get_nowait(port, &link);
+        ret = rte_eth_dev_info_get(port, &dev);
         if (ret != 0) {
             LOG_ERROR("Failure port(%d) rte_eth_link_get_nowait: %s", port, strerror(-ret));
             return -1;
         }
 
-        switch (link.link_speed) {
-        case RTE_ETH_SPEED_NUM_NONE: speed_nums = 0; break;
-        case RTE_ETH_SPEED_NUM_10M: speed_nums = 1; break;
-        case RTE_ETH_SPEED_NUM_100M: speed_nums = 2; break;
-        case RTE_ETH_SPEED_NUM_1G: speed_nums = 3; break;
-        case RTE_ETH_SPEED_NUM_2_5G: speed_nums = 4; break;
-        case RTE_ETH_SPEED_NUM_5G: speed_nums = 5; break;
-        case RTE_ETH_SPEED_NUM_10G: speed_nums = 6; break;
-        case RTE_ETH_SPEED_NUM_20G: speed_nums = 7; break;
-        case RTE_ETH_SPEED_NUM_25G: speed_nums = 8; break;
-        case RTE_ETH_SPEED_NUM_40G: speed_nums = 9; break;
-        case RTE_ETH_SPEED_NUM_50G: speed_nums = 10; break;
-        case RTE_ETH_SPEED_NUM_56G: speed_nums = 11; break;
-        case RTE_ETH_SPEED_NUM_100G: speed_nums = 12; break;
-        case RTE_ETH_SPEED_NUM_200G: speed_nums = 13; break;
-        case RTE_ETH_SPEED_NUM_400G: speed_nums = 14; break;
-        case RTE_ETH_SPEED_NUM_UNKNOWN: speed_nums = 15; break;
+        speed_capa = dpdk_prev_32_pow2(dev.speed_capa);
+        switch (speed_capa) {
+        case RTE_ETH_LINK_SPEED_FIXED: speed_nums = 1; break;
+        case RTE_ETH_LINK_SPEED_10M_HD: speed_nums = 2; break;
+        case RTE_ETH_LINK_SPEED_10M: speed_nums = 3; break;
+        case RTE_ETH_LINK_SPEED_100M_HD: speed_nums = 4; break;
+        case RTE_ETH_LINK_SPEED_100M: speed_nums = 5; break;
+        case RTE_ETH_LINK_SPEED_1G: speed_nums = 6; break;
+        case RTE_ETH_LINK_SPEED_2_5G: speed_nums = 7; break;
+        case RTE_ETH_LINK_SPEED_5G: speed_nums = 8; break;
+        case RTE_ETH_LINK_SPEED_10G: speed_nums = 9; break;
+        case RTE_ETH_LINK_SPEED_20G: speed_nums = 9; break;
+        case RTE_ETH_LINK_SPEED_25G: speed_nums = 9; break;
+        case RTE_ETH_LINK_SPEED_40G: speed_nums = 9; break;
+        case RTE_ETH_LINK_SPEED_50G: speed_nums = 9; break;
+        case RTE_ETH_LINK_SPEED_56G: speed_nums = 9; break;
+        case RTE_ETH_LINK_SPEED_100G: speed_nums = 9; break;
+        case RTE_ETH_LINK_SPEED_200G: speed_nums = 9; break;
+        case RTE_ETH_LINK_SPEED_400G: speed_nums = 9; break;
+        default: speed_nums = 0; break;
         }
 
         ex = &s_dpdk_port.speed.ex[speed_nums];
-        ex->type_nums += 1;
         ex->nums = port;
 
-        nbytes = snprintf(one->name, sizeof(one->name), "%s.%d", ex->prefix, ex->type_nums);
+        nbytes = snprintf(one->name, sizeof(one->name), "%s.%d", ex->prefix, ex->type_nums++);
         one->name[nbytes] = 0;
 
         pn->count += 1;
@@ -146,15 +276,55 @@ static int dpdk_port_name_init(void)
     return 0;
 }
 
-const struct port_name *dpdk_port_name_get(void)
+static int _dpdk_port_meta_init(int port, int cpu_count, uint16_t reta_size)
 {
-    return &s_dpdk_port.port_name;
+    int ret = 0;
+    int bucket = 0;
+    uint16_t group = (reta_size + 63) / 64;
+    struct rte_eth_rss_reta_entry64 *one = NULL;
+    struct rte_eth_rss_reta_entry64 *reta_entry64 = NULL;
+
+    reta_entry64 = dpdk_malloc(sizeof(*reta_entry64) * group);
+    if (reta_entry64 == NULL) {
+        LOG_ERROR("OOM.");
+        return -1;
+    }
+
+    memset(reta_entry64, 0, sizeof(*reta_entry64) * group);
+
+    for (uint16_t g = 0; g < group; g++) {
+        one = &reta_entry64[g];
+
+        for (int j = 0; j < 64; j++) {
+            bucket = g * 64 + j;
+            if (bucket >= reta_size) {
+                break;
+            }
+
+            one->mask |= ((uint64_t) 1 << j);
+            one->reta[j] = bucket % cpu_count;
+        }
+    }
+
+    ret = rte_eth_dev_rss_reta_update(port, reta_entry64, reta_size);
+    dpdk_free(reta_entry64);
+    if (ret != 0) {
+        LOG_ERROR("Rss reta update failure: %s", strerror(-ret));
+        return -1;
+    }
+
+    return 0;
+}
+
+const struct port_info *dpdk_port_info_get(void)
+{
+    return &s_dpdk_port.port_info;
 }
 
 int dpdk_port_startup(int port)
 {
     int ret = 0;
-    int retry = 0;
+    uint16_t mtu = 0;
     int max_queues = 0;
     int max_rx_desc = 0;
     int max_tx_desc = 0;
@@ -180,11 +350,21 @@ int dpdk_port_startup(int port)
         return -1;
     }
 
-    rte_memcpy(&conf, &s_dpdk_port.eth_conf, sizeof(conf));
-    conf.rx_adv_conf.rss_conf.rss_hf &= dev.flow_type_rss_offloads;
-    if ((dev.tx_offload_capa & RTE_ETH_TX_OFFLOAD_MBUF_FAST_FREE) != 0) {
-        // conf.txmode.offloads |= RTE_ETH_TX_OFFLOAD_MBUF_FAST_FREE;
+    if (dev.hash_key_size > sizeof(s_rss_key)) {
+        LOG_ERROR("RSS symmetric key is too short for this device");
+        return -1;
     }
+
+    rte_memcpy(&conf, &s_dpdk_port.eth_conf, sizeof(conf));
+    conf.rx_adv_conf.rss_conf.rss_key_len = dev.hash_key_size;
+    conf.rx_adv_conf.rss_conf.rss_hf &= dev.flow_type_rss_offloads;
+    conf.rxmode.offloads &= dev.rx_offload_capa;
+    conf.rxmode.offloads &= ~RTE_ETH_RX_OFFLOAD_KEEP_CRC;
+    conf.txmode.offloads &= dev.tx_offload_capa;
+    conf.txmode.offloads &= ~RTE_ETH_TX_OFFLOAD_MBUF_FAST_FREE;
+
+    s_dpdk_port.nic_rx_offload[port] = conf.rxmode.offloads;
+    s_dpdk_port.nic_tx_offload[port] = _dpdk_port_tx_offload_flags(conf.txmode.offloads);
 
     max_queues = nc->cpu_count;
     max_rx_desc = MIN(DPDK_RX_DESC_DEFAULT, dev.rx_desc_lim.nb_max);
@@ -196,9 +376,16 @@ int dpdk_port_startup(int port)
         return -1;
     }
 
+    mtu = MIN(MAX(DPDK_PORT_MTU, dev.min_mtu), dev.max_mtu);
+    ret = dpdk_port_set_mtu(port, mtu);
+    if (ret != 0) {
+        LOG_ERROR("Failure to configure mtu: %s", strerror(-ret));
+        return -1;
+    }
+
     rx = dev.default_rxconf;
     rx.rx_drop_en = 1;
-    rx.offloads = conf.rxmode.offloads;
+    rx.offloads = 0;
 
     for (int i = 0; i < nc->cpu_count; i++) {
         int numa_id = nc->c2n[i].numa_id;
@@ -212,10 +399,9 @@ int dpdk_port_startup(int port)
     }
 
     tx = dev.default_txconf;
-    tx.offloads = conf.txmode.offloads;
+    tx.offloads = 0;
 
     for (int i = 0; i < nc->cpu_count; i++) {
-        int numa_id = nc->c2n[i].numa_id;
         int hw_numa_id = nc->c2n[i].hw_numa_id;
 
         ret = rte_eth_tx_queue_setup(port, i, max_tx_desc, hw_numa_id, &tx);
@@ -225,79 +411,97 @@ int dpdk_port_startup(int port)
         }
     }
 
-    for (;;) {
-        ret = rte_eth_dev_start(port);
-        if (ret == 0) {
-            break;
-        } else if (ret == -EAGAIN && retry < 3) { // 3 is an estimated number.
-            retry += 1;
-            continue;
-        } else {
-            LOG_ERROR("Failure port(%d) rte_eth_dev_start: %s", port, strerror(-ret));
-            return -1;
-        }
+    ret = _dpdk_port_startup(port);
+    if (ret != 0) {
+        return -1;
     }
 
+    s_dpdk_port.up[port] = !0;
+
     ret = rte_eth_promiscuous_enable(port);
-    if (ret != 0) {
+    if (ret == -ENOTSUP) {
+        LOG_WARN("Port(%u) does not support promiscuous mode", port);
+    } else if (ret < 0) {
         LOG_ERROR("Failure port(%d) rte_eth_promiscuous_enable: %s", port, strerror(-ret));
         return -1;
     }
 
     ret = rte_eth_allmulticast_enable(port);
-    if (ret != 0) {
+    if (ret == -ENOTSUP) {
+        LOG_WARN("Port(%u) does not support all-multicast mode", port);
+    } else if (ret != 0) {
         LOG_ERROR("Failure port(%d) rte_eth_allmulticast_enable: %s", port, strerror(-ret));
+        return -1;
+    }
+
+    ret = _dpdk_port_meta_init(port, nc->cpu_count, dev.reta_size);
+    if (ret != 0) {
         return -1;
     }
 
     return 0;
 }
 
-uint16_t dpdk_port_by_name_get(const char *name)
+uint8_t dpdk_port_by_name_get(const char *name)
 {
-    const char *tmp = NULL;
-    const char *anchor = NULL;
+    struct port_info *port_info = &s_dpdk_port.port_info;
 
-    if (UNLIKELY(name == NULL)) {
-        LOG_ERROR("Parameter exception.");
-        return (uint16_t)-1;
+    if (name == NULL) {
+        LOG_ERROR("Invalid parameter.");
+        return UINT8_MAX;
     }
 
-    LOG_INFO("port name: %s", name);
-    anchor = strrchr(name, '.');
-    if (anchor == NULL) {
-        LOG_ERROR("Interface name format error: %s", name);
-        return (uint16_t)-1;
-    }
+    for (int i = 0; i < port_info->count; i++) {
+        struct port_info_entry *entry = &port_info->info[i];
 
-    anchor += 1;
-    tmp = anchor;
-
-    if (*tmp == 0) {
-        LOG_ERROR("Interface name format error: %s", name);
-        return -1;
-    }
-
-    while (*tmp != 0) {
-        if ((!isdigit(*tmp))) {
-            LOG_ERROR("Interface name format error: %s", name);
-            return -1;
+        if (strcmp(entry->name, name) == 0) {
+            return entry->port;
         }
-
-        tmp += 1;
     }
 
-    return atoi(anchor);
+    LOG_ERROR("Port name('%s') not exist", name);
+    return UINT8_MAX;
 }
 
-int dpdk_port_restart(int port)
+const char *dpdk_port_id_to_name(int port)
 {
-    return rte_eth_dev_start(port);
+    struct dpdk_port_st *st = &s_dpdk_port;
+
+    if (port > st->port_info.count) {
+        LOG_ERROR("Invalid port id(%d)", port);
+        return NULL;
+    }
+
+    return st->port_info.info[port].name;
+}
+
+uint64_t dpdk_port_rx_offload_get(int nic_number)
+{
+    return s_dpdk_port.nic_rx_offload[nic_number];
+}
+
+uint64_t dpdk_port_tx_offload_get(int nic_number)
+{
+    return s_dpdk_port.nic_tx_offload[nic_number];
+}
+
+bool dpdk_port_is_up(int port)
+{
+    return s_dpdk_port.up[port];
 }
 
 int dpdk_port_stop(int port)
 {
-    return rte_eth_dev_stop(port);
+    int ret = 0;
+
+    ret = rte_eth_dev_stop(port);
+    if (ret == 0) {
+        s_dpdk_port.up[port] = 0;
+    } else {
+        LOG_ERROR("Ethdev port (%d) stop failure", port);
+    }
+
+    return ret;
 }
 
 int dpdk_port_init(void)
@@ -310,17 +514,17 @@ int dpdk_port_init(void)
         return -1;
     }
 
-    ret = dpdk_port_name_init();
+    RTE_ETH_FOREACH_DEV(port) {
+        ret = dpdk_port_startup(port);
+        if (ret != 0) {
+            return -1;
+        }
+    }
+
+    ret = dpdk_port_info_init();
     if (ret != 0) {
         return -1;
     }
-
-    /*RTE_ETH_FOREACH_DEV(port) {
-        ret = dpdk_port_startup(port);
-        if (ret < 0) {
-            return -1;
-        }
-    }*/
 
     return 0;
 }

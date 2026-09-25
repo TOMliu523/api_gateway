@@ -1,18 +1,20 @@
 module v1 {
-    namespace "urn:v1";
-    prefix "v1";
+  yang-version 1.1;
+  namespace "urn:example:v1";
+  prefix v1;
 
-    include network;
-    include account;
+  include boot;
 
-    revision "2025-05-31" {
-        description "Init version";
+  container dynamic {
+    leaf log-level {
+      type enumeration {
+        enum debug;
+        enum info;
+        enum warn;
+        enum error;
+      }
+      default info;
+      description "支持运行期间修改。";
     }
-
-    container query {
-        leaf counter {
-            type uint64;
-            default 0;
-        }
-    }
+  }
 }

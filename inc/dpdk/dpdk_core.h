@@ -1,5 +1,5 @@
 /************************************************
- * filename: dpdk_pool.h
+ * filename: dpdk_core.h
  * function:
  * description: ring mbuf pool
  ***********************************************/
@@ -10,12 +10,17 @@
 #include "log.h"
 #include "dpdk_type.h"
 
+#define dpdk_ring rte_ring
+#define dpdk_pool rte_mempool
+
 #define DPDK_POOL_CACHE_SIZE 64
 #define dpdk_append(mbuf, len, t) ((t) rte_pktmbuf_append(mbuf, len))
+#define dpdk_prepend(mbuf, len, t) ((t) rte_pktmbuf_prepend(mbuf, len))
 
 extern int dpdk_pool_pktmbuf_create(void);
 extern void * const *dpdk_pool_pktmbuf_get(void);
 extern void *dpdk_pool_pktmbuf_get_by_numa(int);
+extern void *dpdk_indirect_pool_pktmbuf_get_by_numa(int numa_id);
 
 /**********************************************************************/
 /****************************** POOL **********************************/
@@ -81,22 +86,24 @@ static INLINE void *dpdk_ring_ss_create(const char *name, unsigned count, int so
 
 static INLINE void *dpdk_ring_sm_create(const char *name, unsigned count, int socket)
 {
-    return dpdk_ring_create(name, count, socket, RING_F_SP_ENQ | RING_F_MC_RTS_DEQ);
+    return dpdk_ring_create(name, count, socket, RING_F_SP_ENQ | RING_F_MC_HTS_DEQ);
 }
 
 static INLINE void *dpdk_ring_ms_create(const char *name, unsigned count, int socket)
 {
-    return dpdk_ring_create(name, count, socket, RING_F_MP_RTS_ENQ | RING_F_SC_DEQ);
+    return dpdk_ring_create(name, count, socket, RING_F_MP_HTS_ENQ | RING_F_SC_DEQ);
 }
 
 static INLINE void *dpdk_ring_mm_create(const char *name, unsigned count, int socket)
 {
-    return dpdk_ring_create(name, count, socket, RING_F_MP_RTS_ENQ | RING_F_MC_RTS_DEQ);
+    return dpdk_ring_create(name, count, socket, RING_F_MP_HTS_ENQ | RING_F_MC_HTS_DEQ);
 }
 
 static INLINE void dpdk_ring_destroy(void *ptr)
 {
-    rte_ring_free(ptr);
+    if (ptr != NULL) {
+        rte_ring_free(ptr);
+    }
 }
 
 static INLINE unsigned int dpdk_ring_mp_push(struct dpdk_ring *r, void *const objs[], unsigned int n)
@@ -132,14 +139,14 @@ static INLINE unsigned int dpdk_ring_pop(struct dpdk_ring *r, void **objs, unsig
 /**********************************************************************/
 /****************************** PKTMBUF *******************************/
 /**********************************************************************/
-static INLINE int dpdk_pktmbuf_pop(struct dpdk_pool *pool, struct dpdk_mbuf *mbufs[], unsigned count)
+static INLINE int dpdk_pktmbuf_pop(struct dpdk_pool *pool, void *mbufs[], unsigned count)
 {
-    return rte_pktmbuf_alloc_bulk(pool, mbufs, count);
+    return rte_pktmbuf_alloc_bulk(pool, (struct dpdk_mbuf **)mbufs, count);
 }
 
-static INLINE void dpdk_pktmbuf_push(struct dpdk_mbuf *mbufs[], unsigned count)
+static INLINE void dpdk_pktmbuf_push(void *mbufs[], unsigned count)
 {
-    rte_pktmbuf_free_bulk(mbufs, count);
+    rte_pktmbuf_free_bulk((struct dpdk_mbuf **)mbufs, count);
 }
 
 static INLINE struct dpdk_mbuf *dpdk_pktmbuf_copy(const struct dpdk_mbuf *src_mbuf, struct dpdk_pool *pool)
@@ -152,29 +159,74 @@ static INLINE struct dpdk_mbuf *dpdk_pktmbuf_clone(struct dpdk_mbuf *src_mbuf, s
     return rte_pktmbuf_clone(src_mbuf, pool);
 }
 
-static INLINE int dpdk_pktmbuf_rx(uint16_t port, uint16_t queue, struct dpdk_mbuf *mbufs[], const uint16_t max)
+static INLINE int dpdk_pktmbuf_rx(uint16_t port, uint16_t queue, void *mbufs[], const uint16_t max)
 {
-    return rte_eth_rx_burst(port, queue, mbufs, max);
+    return rte_eth_rx_burst(port, queue, (struct dpdk_mbuf **)mbufs, max);
 }
 
-static INLINE int dpdk_pktmbuf_tx(uint16_t port, uint16_t queue, struct dpdk_mbuf *mbufs[], uint16_t max)
+static INLINE int dpdk_pktmbuf_tx(uint16_t port, uint16_t queue, void *mbufs[], uint16_t max)
 {
-    return rte_eth_tx_burst(port, queue, mbufs, max);
+    return rte_eth_tx_burst(port, queue, (struct dpdk_mbuf **)mbufs, max);
 }
 
-static INLINE struct dpdk_eth *dpdk_pktmbuf_eth(struct dpdk_mbuf *m)
+static INLINE char *dpdk_pktmbuf_adj(struct dpdk_mbuf *mbuf, size_t len)
 {
-    return rte_pktmbuf_mtod(m, struct dpdk_eth *);
+    return rte_pktmbuf_adj(mbuf, len);
 }
 
-static INLINE struct dpdk_ipv4 *dpdk_pktmbuf_ipv4(struct dpdk_mbuf *m)
+static INLINE int dpdk_pktmbuf_trim(struct dpdk_mbuf *m, uint16_t len)
 {
-    return rte_pktmbuf_mtod_offset(m, struct dpdk_ipv4 *, sizeof(struct dpdk_eth));
+    return rte_pktmbuf_trim(m, len);
 }
 
-static INLINE struct dpdk_ipv6 *dpdk_pktmbuf_ipv6(struct dpdk_mbuf *m)
+static INLINE void *dpdk_pktmbuf_prepend(struct dpdk_mbuf *mbuf, size_t len)
 {
-    return rte_pktmbuf_mtod_offset(m, struct dpdk_ipv6 *, sizeof(struct dpdk_eth));
+    return rte_pktmbuf_prepend(mbuf, len);
+}
+
+static INLINE void *dpdk_pktmbuf_append(struct dpdk_mbuf *mbuf, size_t len)
+{
+    return rte_pktmbuf_append(mbuf, len);
+}
+
+static INLINE int dpdk_pktmbuf_set_len(struct dpdk_mbuf *m, int l2_len, int l3_len, int l4_len, int total_len)
+{
+    int diff = 0;
+    int cur_len = rte_pktmbuf_data_len(m);
+
+    m->l2_len = l2_len;
+    m->l3_len = l3_len;
+    m->l4_len = l4_len;
+    m->ol_flags = 0;
+
+    diff = cur_len - total_len;
+    if (diff == 0) {
+        return 0;
+    }
+
+    if (diff < 0) {
+        diff = -diff;
+        return (dpdk_pktmbuf_trim(m, diff) == 0) ? 0 : -1;
+    } else {
+        return (dpdk_pktmbuf_append(m, diff) != NULL) ? 0 : -1;
+    }
+
+    return 0;
+}
+
+static INLINE struct dpdk_arp_hdr *dpdk_pktmbuf_arp(struct dpdk_mbuf *m)
+{
+    return rte_pktmbuf_mtod_offset(m, struct dpdk_arp_hdr *, sizeof(struct dpdk_eth_hdr));
+}
+
+static INLINE const void *dpdk_pktmbuf_read(const struct dpdk_mbuf *mbuf, uint32_t off, uint32_t len, void *buf)
+{
+    return rte_pktmbuf_read(mbuf, off, len, buf);
+}
+
+static INLINE bool dpdk_pktmbuf_is_continue(const struct dpdk_mbuf *mbuf)
+{
+    return rte_pktmbuf_is_contiguous(mbuf);
 }
 
 #define DPDK_PKTMBUF_TO_TYPE(m, type, offset) rte_pktmbuf_mtod_offset(m, type, offset)
@@ -182,14 +234,42 @@ static INLINE struct dpdk_ipv6 *dpdk_pktmbuf_ipv6(struct dpdk_mbuf *m)
 /**********************************************************************/
 /****************************** MBUF **********************************/
 /**********************************************************************/
-static INLINE int dpdk_mbuf_pop(struct dpdk_pool *pool, void *obj[], unsigned int n)
+static INLINE int dpdk_mempool_pop(struct dpdk_pool *pool, void *obj[], unsigned int n)
 {
     return rte_mempool_get_bulk(pool, obj, n);
 }
 
-static INLINE void dpdk_mbuf_push(struct dpdk_pool *pool, void *const obj, unsigned int n)
+static INLINE void dpdk_mempool_push(struct dpdk_pool *pool, void *const obj, unsigned int n)
 {
     rte_mempool_put_bulk(pool, obj, n);
+}
+
+static INLINE uint16_t dpdk_mbuf_refcnt_read(const struct dpdk_mbuf *m)
+{
+    return rte_mbuf_refcnt_read(m);
+}
+
+static INLINE void dpdk_mbuf_refcnt_set(struct dpdk_mbuf *m, uint16_t new_value)
+{
+    return rte_mbuf_refcnt_set(m, new_value);
+}
+
+static INLINE uint16_t dpdk_mbuf_refcnt_update(struct dpdk_mbuf *m, int16_t value)
+{
+    return rte_mbuf_refcnt_update(m, value);
+}
+
+/**********************************************************************/
+/****************************** COUNT *********************************/
+/**********************************************************************/
+static INLINE unsigned int dpdk_mempool_avail_count(const struct dpdk_pool *pool)
+{
+    return rte_mempool_avail_count(pool);
+}
+
+static INLINE unsigned int dpdk_mempool_used_count(const struct dpdk_pool *pool)
+{
+    return rte_mempool_in_use_count(pool);
 }
 
 #endif // __DPDK_CORE_H__
