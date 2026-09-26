@@ -10,6 +10,7 @@ TARGET=api_gateway
 BIN=${APP_DIR}/bin/
 APP=${BIN}/${TARGET}
 DEVBIND=${BIN}/dpdk-devbind.py
+MODULE_FILE=${APP_DIR}/conf/yang/v1.yang
 
 export SYSREPO_REPOSITORY_PATH=${APP_DIR}/data
 export API_LIBYANG_PATH=${APP_DIR}/conf/yang:${APP_DIR}/conf/yang/common
@@ -33,10 +34,79 @@ CHANEL=`dmidecode -t memory | awk '
             print used
         }'`
 
-nic_pci=(
-    "0000:00:06.0"
-    "0000:00:07.0"
-)
+# Usage: config_init /path/to/v1.yang
+# Prints one PCI address per line. Requires jq.
+function config_init()
+{
+    local yang_file=$1
+    local modules name flags installed=0 data
+
+    modules=$("${BIN}/sysrepoctl" -l) || return 1
+
+    while IFS='|' read -r name _ flags _; do
+        if [[ $name =~ ^[[:space:]]*v1[[:space:]]*$ &&
+              $flags =~ ^[[:space:]]*I[[:space:]]*$ ]]; then
+            installed=1
+            break
+        fi
+    done <<< "$modules"
+
+    if (( ! installed )); then
+        # Install the module and search its directory for submodules.
+        "${BIN}/sysrepoctl" -i "$yang_file" \
+            -s "$(dirname "$yang_file")" >/dev/null || return 1
+
+        # Initialize the startup datastore from inline JSON.
+        "${BIN}/sysrepocfg" --import \
+            --datastore startup --module v1 --format json >/dev/null <<'JSON' || return 1
+{
+    "v1:boot" : {
+        "nic-pci": [
+            "0000:00:06.0",
+            "0000:00:07.0"
+        ],
+        "listener": {
+            "ipv4": {
+                "address": "0.0.0.0",
+                "http-port": 8080,
+                "https-port": 8443
+            }
+        }
+    }
+}
+JSON
+
+        # The application reads SR_DS_RUNNING, so initialize it as well.
+        "${BIN}/sysrepocfg" --copy-from startup \
+            --datastore running --module v1 >/dev/null || return 1
+    fi
+
+    data=$("${BIN}/sysrepocfg" --export \
+        --datastore startup --module v1 --format json) || return 1
+
+    #jq -r '.["v1:boot:nic-pci"][]?' <<< "$data"
+    jq -er '
+        .["v1:boot"]["nic-pci"] as $pci
+        | if ($pci | type) == "array" and ($pci | length) > 0
+        then $pci[]
+        else error("nic-pci is missing or empty")
+        end
+    ' <<< "$data"
+}
+
+if ! pci_output=$(config_init "${MODULE_FILE}"); then
+    echo "config_init failed" >&2
+    exit 1
+fi
+
+mapfile -t nic_pci <<< "$pci_output"
+
+declare -p nic_pci
+# Output: declare -a nic_pci=([0]="0000:00:06.0" [1]="0000:00:07.0")
+#nic_pci=(
+#    "0000:00:06.0"
+#    "0000:00:07.0"
+#)
 
 NO_IOMMU=""
 
