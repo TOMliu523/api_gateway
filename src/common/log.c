@@ -24,7 +24,7 @@
 static int s_log_fd;
 static FILE *s_logfile;
 
-static PROC_INIT void log_init(void)
+static PROC_INIT(101) void log_init(void)
 {
     int fd = -1;
 

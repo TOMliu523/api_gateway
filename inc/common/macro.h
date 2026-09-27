@@ -32,7 +32,7 @@
 #endif
 
 #ifndef PROC_INIT
-#define PROC_INIT __attribute__((constructor))
+#define PROC_INIT(priority) __attribute__((constructor(priority)))
 #endif // PROC_INIT
 
 #ifndef PROC_FINI

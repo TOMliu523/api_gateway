@@ -93,7 +93,7 @@ void *api_http(void *arg)
     struct mg_connection *conn = NULL;
     struct context *context = (struct context *)arg;
 
-    pthread_setname_np(pthread_self(), "API_HTTP");
+    // pthread_setname_np(pthread_self(), "API_HTTP");
     mg_log_set(MG_LL_INFO);
     mg_mgr_init(&mgr);
 

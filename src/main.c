@@ -23,8 +23,10 @@
 #include "type.h"
 #include "macro.h"
 #include "config.h"
+#include "runtime.h"
 #include "api_http.h"
 #include "dpdk_init.h"
+#include "dataplane.h"
 
 #define RUN_LOCK_FILE "/run/lock/api_gateway.lock"
 
@@ -199,7 +201,13 @@ int main(int argc, char *argv[])
         goto _quit;
     }
 
-    sleep(200);
+    ret = pthread_create(&tid, &attr, runtime_startup, &context);
+    if (ret < 0) {
+        LOG_ERROR("Function(pthread_create) failure: %s", strerror(-ret));
+        goto _quit;
+    }
+
+    dpdk_thread_startup(dp_startup, &context);
     return EXIT_SUCCESS;
 
 _quit:

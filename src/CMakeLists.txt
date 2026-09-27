@@ -30,9 +30,9 @@ pkg_check_modules(OPENSSL REQUIRED IMPORTED_TARGET openssl)
 add_subdirectory(${API})
 add_subdirectory(${DPDK})
 add_subdirectory(${COMMON})
-#add_subdirectory(${RUNTIME})
+add_subdirectory(${RUNTIME})
 #add_subdirectory(${PROTOCOL})
-#add_subdirectory(${DATAPLANE})
+add_subdirectory(${DATAPLANE})
 
 add_executable(${PROJECT_NAME} main.c)
 target_include_directories(${PROJECT_NAME} PRIVATE ${API_INC})
@@ -48,9 +48,9 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
                       ${API}
                       ${DPDK}
                       ${COMMON}
-                      #${RUNTIME}
+                      ${RUNTIME}
                       #${PROTOCOL}
-                      #${DATAPLANE}
+                      ${DATAPLANE}
                       -L${TP_LIB} -lmongoose -ltimeout
                       -Wl,--no-whole-archive
                       PkgConfig::LIBYANG

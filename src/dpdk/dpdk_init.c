@@ -78,12 +78,10 @@ void dpdk_hw_info_init(void *arg)
     LOG_INFO("cpu_count = %d, nic_count = %d, numa_count = %d", info->cpu_count, info->nic_count, info->numa_count);
 }
 
-void dpdk_thread_startup(void *f, void *arg)
+void dpdk_thread_startup(void *f1, void *arg)
 {
-    RUNTIME_ASSERT(f != NULL);
-
-    LOG_INFO("STARTUP DPDK THREAD.");
-    rte_eal_mp_remote_launch(f, arg, CALL_MAIN);
+    RUNTIME_ASSERT(f1 != NULL);
+    rte_eal_mp_remote_launch(f1, arg, CALL_MAIN);
 }
 
 void dpdk_thread_set_name(uint8_t numa_idx, uint8_t cpu_id)
