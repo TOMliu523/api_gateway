@@ -12,15 +12,12 @@
 #include <mongoose.h>
 
 #include "log.h"
+#include "api.h"
 #include "type.h"
 #include "api_http.h"
 
 #define URL_LEN 512
 #define API_APP_JSON "Content-Type: application/json\r\n"
-
-struct api {
-
-};
 
 static UNUSED const char *s_code_to_msg[] = {
     [100] = "Continue",
@@ -53,11 +50,6 @@ static void _api_http_reply(struct mg_connection *c, int code, const char *msg)
     mg_http_reply(c, code, API_APP_JSON, buffer);
 }
 
-static struct api *_api_get(struct mg_str *method, struct mg_str *uri)
-{
-    return NULL;
-}
-
 static void _api_http_task(struct mg_connection *c, int ev, void *ev_data)
 {
     /*int ret = 0;
@@ -73,15 +65,16 @@ static void _api_http_task(struct mg_connection *c, int ev, void *ev_data)
     }*/
 
     if (ev == MG_EV_HTTP_MSG) {
-        struct api *api = NULL;
+        struct api_interface *iface = NULL;
         struct mg_http_message *hm = ev_data;
 
-        api = _api_get(&hm->method, &hm->uri);
-        if (api == NULL) {
+        iface = api_get(hm->method.buf, hm->method.len, hm->uri.buf, hm->uri.len);
+        if (iface == NULL) {
             _api_http_reply(c, 404, "");
             return;
         }
 
+        _api_http_reply(c, 200, "OK");
         // api->callback();
     }
 }
@@ -93,7 +86,7 @@ void *api_http(void *arg)
     struct mg_connection *conn = NULL;
     struct context *context = (struct context *)arg;
 
-    // pthread_setname_np(pthread_self(), "API_HTTP");
+    pthread_setname_np(pthread_self(), "API_HTTP");
     mg_log_set(MG_LL_INFO);
     mg_mgr_init(&mgr);
 
