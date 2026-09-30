@@ -16,28 +16,28 @@
 #define API_POST(c, url) \
     static int CAT(c, _post)(void *param); \
     static PROC_INIT(200) void CAT2(c, _post, _startup)(void) { \
-        api_register(API_METHOD_POST, #c, #url, CAT(c, _post)); \
+        api_register(API_HTTP_POST, #c, #url, CAT(c, _post)); \
     } \
     static int CAT(c, _post)(void *param)
 
 #define API_PUT(c, url) \
     static int CAT(c, _put)(void *param); \
     static PROC_INIT(201) void CAT2(c, _put, _startup)(void) { \
-        api_register(API_METHOD_PUT, #c, #url, CAT(c, _put)); \
+        api_register(API_HTTP_PUT, #c, #url, CAT(c, _put)); \
     } \
     static int CAT(c, _put)(void *param)
 
 #define API_GET(c, url) \
     static int CAT(c, _get)(void *param); \
-    static PROC_INIT(201) void CAT2(c, _get, _startup)(void) { \
-        api_register(API_METHOD_GET, #c, #url, CAT(c, _get)); \
+    static PROC_INIT(202) void CAT2(c, _get, _startup)(void) { \
+        api_register(API_HTTP_GET, #c, #url, CAT(c, _get)); \
     } \
     static int CAT(c, _get)(void *param)
 
 #define API_DELETE(c, url) \
     static int CAT(c, _delete)(void *param); \
-    static PROC_INIT(201) void CAT2(c, _delete, _startup)(void) { \
-        api_register(API_METHOD_DELETE, #c, #url, CAT(c, _delete)); \
+    static PROC_INIT(203) void CAT2(c, _delete, _startup)(void) { \
+        api_register(API_HTTP_DELETE, #c, #url, CAT(c, _delete)); \
     } \
     static int CAT(c, _delete)(void *param)
 
@@ -50,8 +50,8 @@ typedef int (*api_cb_t)(void *);
     XX(2, PUT)      \
     XX(3, DELETE)
 
-enum API_METHOD {
-#define XX(num, method) API_METHOD_##method = num,
+enum API_HTTP_METHOD {
+#define XX(num, method) API_HTTP_##method = num,
     API_XX(XX)
 #undef XX
 };
@@ -67,7 +67,7 @@ struct api_param {
 struct api_interface {
     struct list_head node;
     uint32_t hash;
-    enum API_METHOD method;
+    enum API_HTTP_METHOD method;
     const char *container;
     const char *url;
     size_t url_len;
@@ -75,7 +75,7 @@ struct api_interface {
 };
 
 extern struct api_interface *api_get(const char *method, size_t method_len, const char *url, size_t url_len);
-extern void api_register(enum API_METHOD method, const char *container, const char *url, api_cb_t cb);
+extern void api_register(enum API_HTTP_METHOD method, const char *container, const char *url, api_cb_t cb);
 
 static UNUSED void *api_param_get_session(void *param)
 {
