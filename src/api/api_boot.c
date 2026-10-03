@@ -1,29 +1,27 @@
 /*****************************************************************************
- * filename: api_arp.c
+ * filename: api_boot.c
  * function:
  * description:
  ****************************************************************************/
 
-#include "log.h"
 #include "api.h"
 
-API_POST(arp, /v1/arp)
-{
-    LOG_ERROR("ARP");
-    return 0;
-}
-
-API_PUT(arp, /v1/arp)
+API_POST(boot, /v1/boot)
 {
     return 0;
 }
 
-API_GET(arp, /v1/arp)
+API_PUT(boot, /v1/boot)
 {
     return 0;
 }
 
-API_DELETE(arp, /v1/arp)
+API_GET(boot, /v1/boot)
+{
+    return 0;
+}
+
+API_DELETE(boot, /v1/boot)
 {
     return 0;
 }

@@ -4,6 +4,7 @@ module v1 {
   prefix v1;
 
   include boot;
+  include arp;
 
   container dynamic {
     leaf log-level {

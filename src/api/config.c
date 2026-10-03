@@ -8,6 +8,7 @@
 #include <libyang/libyang.h>
 
 #include "log.h"
+#include "api.h"
 #include "config.h"
 
 static int _config_read_value(sr_data_t *data, const char *key, const char **value)
@@ -80,6 +81,110 @@ _quit:
     return -1;
 }
 
+static int _config_update(sr_session_ctx_t *sess, uint32_t sub_id, const char *module_name,
+                          const char *xpath, sr_event_t event, uint32_t operation_id, void *private_data)
+{
+    struct api_iface_param *iface_param = private_data;
+    struct api_interface *iface = iface_param->iface;
+    struct api_param *param = iface_param->param;
+
+    switch (event) {
+    case SR_EV_UPDATE:
+        return iface->callback(param);
+    case SR_EV_CHANGE:
+        break;
+    case SR_EV_DONE:
+        break;
+    case SR_EV_ENABLED:
+        break;
+    default:
+        break;
+    }
+
+    return 0;
+}
+
+static int _config_apply_changes(void *sess)
+{
+    int ret = 0;
+
+    ret = sr_apply_changes(sess, 0);
+    if (ret != 0) {
+        LOG_ERROR("Function(sr_apply_changes) failure: %s", sr_strerror(ret));
+        return API_ERRCODE_INTERNAL;
+    }
+
+    return API_ERRCODE_SUCCESS;
+}
+
+static int _config_parse_json(void *sess, const char *body, size_t len, struct lyd_node **tree)
+{
+    LY_ERR err = 0;
+    void *conn = NULL;
+    const struct ly_ctx *ly_ctx = NULL;
+
+    conn = sr_session_get_connection(sess);
+    ly_ctx = sr_acquire_context(conn);
+    err = lyd_parse_data_mem(ly_ctx, body, LYD_JSON, LYD_PARSE_STRICT, LYD_VALIDATE_PRESENT, tree);
+    if (err != LY_SUCCESS) {
+        LOG_ERROR("Function(lyd_parse_data_mem) failure: %s", ly_strerr(err));
+        return API_ERRCODE_INTERNAL;
+    }
+
+    sr_release_context(conn);
+    return API_ERRCODE_SUCCESS;
+}
+
+int config_post(void *param, char *body, size_t len)
+{
+    int ret = 0;
+    void *sess = NULL;
+    struct lyd_node *tree = NULL;
+
+    if (param == NULL || body == NULL) {
+        LOG_ERROR("Invalid parameter.");
+        return API_ERRCODE_INTERNAL;
+    }
+
+    sess = api_param_get_session(param);
+    ret = _config_parse_json(sess, body, len, &tree);
+    if (ret != 0) {
+        return ret;
+    }
+
+    ret = sr_edit_batch(sess, tree, "merge");
+    if (ret != 0) {
+        LOG_ERROR("Function(sr_edit_batch) failure: %s", sr_strerror(ret));
+        lyd_free_all(tree);
+        return API_ERRCODE_INTERNAL;
+    }
+
+    lyd_free_all(tree);
+
+    return _config_apply_changes(sess);
+}
+
+int config_put(void *param, char *body, size_t len)
+{
+    return 0;
+}
+
+int config_patch(void *param, char *body, size_t len)
+{
+    return 0;
+}
+
+
+int config_delete(void *param, char *body, size_t len)
+{
+    return 0;
+}
+
+int config_get(void *param, char *body, size_t len)
+{
+    return 0;
+}
+
 void config_boot_free(struct boot_config *config)
 {
     sr_conn_ctx_t *conn = NULL;
@@ -100,6 +205,24 @@ void config_boot_free(struct boot_config *config)
     }
 }
 
+int config_subscript(void *arg)
+{
+    int ret = 0;
+    sr_session_ctx_t *sess = NULL;
+    sr_subscription_ctx_t *subscript = NULL;
+    struct api_iface_param *iface_param = arg;
+
+    sess = api_param_get_session(iface_param->param);
+
+    ret = sr_module_change_subscribe(sess, "v1", NULL, _config_update, iface_param, 0, SR_SUBSCR_UPDATE | SR_SUBSCR_ENABLED, &subscript);
+    if (ret != SR_ERR_OK) {
+        LOG_ERROR("Function(sr_module_change_subscribt) failure: %s", sr_strerror(ret));
+        return -1;
+    }
+
+    return 0;
+}
+
 int config_boot_load(struct boot_config *config)
 {
     int ret = 0;
@@ -114,17 +237,11 @@ int config_boot_load(struct boot_config *config)
         return -1;
     }
 
-    ret = sr_session_start(conn, SR_DS_RUNNING, (sr_session_ctx_t **)&config->session);
+    ret = sr_session_start(conn, SR_DS_STARTUP, (sr_session_ctx_t **)&config->session);
     if (ret != SR_ERR_OK) {
         LOG_ERROR("Function(sr_session_start) failure: %s", sr_strerror(ret));
         sr_disconnect(conn);
         return -1;
-    }
-
-    ret = sr_copy_config(config->session, NULL, SR_DS_STARTUP, 0);
-    if (ret != SR_ERR_OK) {
-        LOG_ERROR("Function(sr_copy_config) failure: %s", sr_strerror(ret));
-        goto _quit;
     }
 
     ret = _config_read_listener(config);

@@ -1,0 +1,58 @@
+submodule arp {
+    yang-version 1.1;
+
+    belongs-to v1 {
+        prefix v1;
+    }
+
+    import ietf-inet-types {
+        prefix inet;
+    }
+
+    import ietf-yang-types {
+        prefix yang;
+    }
+
+    container arp {
+        description "ARP configuration.";
+
+        /*
+         * Global ARP configuration
+         */
+
+        leaf aging-time {
+            type uint32 {
+                range "1..86400";
+            }
+            units "seconds";
+            default "1200";
+            description "ARP entry aging time.";
+        }
+
+        /*
+         * Static ARP entries
+         */
+
+        list entry {
+            key "port-id address";
+
+            description "Static ARP entry.";
+
+            leaf port-id {
+                type uint16;
+                description "Interface or physical port identifier.";
+            }
+
+            leaf address {
+                type inet:ipv4-address-no-zone;
+                description "IPv4 address of the neighbor.";
+            }
+
+            leaf mac-address {
+                type yang:mac-address;
+                mandatory true;
+                description "MAC address associated with the IPv4 address.";
+            }
+        }
+    }
+}
