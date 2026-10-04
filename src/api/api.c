@@ -6,6 +6,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <assert.h>
 
 #include "log.h"
 #include "api.h"
@@ -13,12 +14,14 @@
 #define API_HASH_BUCKET 1024
 #define API_IDX(h) ((h) % API_HASH_BUCKET)
 
-static struct list_head s_api_head[API_HASH_BUCKET];
 static const char *s_api_method_string[] = {
 #define XX(num, method) [num] = #method,
     API_XX(XX)
 #undef XX
 };
+static struct list_head s_api_head[API_HASH_BUCKET];
+static int s_api_interface_idx = 0;
+static struct api_interface *s_api_interface[API_HASH_BUCKET] = {NULL};
 
 static PROC_INIT(102) void _api_init(void)
 {
@@ -62,6 +65,14 @@ static struct api_interface *_api_get(enum API_HTTP_METHOD method, const char *u
     }
 
     return NULL;
+}
+
+const struct api_interface **api_get_all_post(int *nums)
+{
+    assert(nums != 0);
+
+    *nums = s_api_interface_idx;
+    return (const struct api_interface **)s_api_interface;
 }
 
 struct api_interface *api_get(const char *method, size_t method_len, const char *url, size_t url_len)
@@ -154,6 +165,9 @@ void api_register(enum API_HTTP_METHOD method, const char *container, const char
     head = &s_api_head[idx];
 
     list_add(&iface->node, head);
+    if (method == API_HTTP_POST) {
+        s_api_interface[s_api_interface_idx++] = iface;
+    }
 
     LOG_INFO("(%s, %s, %s) SUCCESS", container, s_api_method_string[method], url);
 }

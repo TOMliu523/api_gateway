@@ -47,7 +47,7 @@ static void _api_http_reply(struct mg_connection *c, int code, const void *outpu
 {
     static __thread char buffer[BUFSIZ] = "";
 
-    if (code == 200) {
+    if (code == 200 && output != NULL) {
         json_dumpb(output, buffer, sizeof(buffer) - 1, JSON_INDENT(4));
         mg_http_reply(c, code, API_APP_JSON, buffer);
     } else {
@@ -58,13 +58,12 @@ static void _api_http_reply(struct mg_connection *c, int code, const void *outpu
 static INLINE int _api_errcode_to_http_status(enum API_ERRCODE errcode)
 {
     switch (errcode) {
-    case API_ERRCODE_SUCCESS:
-    case API_ERRCODE_NOT_FOUND:
-    case API_ERRCODE_EXISTS:
+    default:
         return 200;
     case API_ERRCODE_METHOD_NOT_SUPPORT:
+    case API_ERRCODE_URL_NOT_EXIST:
         return 404;
-    default:
+    case API_ERRCODE_INTERNAL:
         return 500;
     }
 }
@@ -183,5 +182,5 @@ void *api_http(void *arg)
 
 _quit:
     mg_mgr_free(&mgr);
-    pthread_exit(NULL);
+    exit(EXIT_FAILURE);
 }

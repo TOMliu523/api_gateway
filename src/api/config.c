@@ -4,6 +4,7 @@
  * description:
  ****************************************************************************/
 
+#include <jansson.h>
 #include <sysrepo.h>
 #include <libyang/libyang.h>
 
@@ -81,6 +82,100 @@ _quit:
     return -1;
 }
 
+static int _config_submodule_init(void **pp_json, void *sess, char *xpath)
+{
+    int ret;
+    LY_ERR err = 0;
+    char *str = NULL;
+    void *json = NULL;
+    sr_data_t *data = NULL;
+
+    ret = sr_get_data(sess, xpath, 0, 0, 0, &data);
+    if (ret != SR_ERR_OK) {
+        LOG_ERROR("Function(sr_get_data) failure: %s", sr_strerror(ret));
+        return -1;
+    }
+
+    if (data == NULL || data->tree == NULL) {
+        sr_release_data(data);
+        return 0;
+    }
+
+    err = lyd_print_mem(&str, data->tree, LYD_JSON, LYD_PRINT_WITHSIBLINGS);
+    sr_release_data(data);
+    if (err != LY_SUCCESS) {
+        LOG_ERROR("Function(lyd_print_mem) failure: %s", ly_strerr(err));
+        return -1;
+    }
+
+    json = json_loads(str, 0, NULL);
+    if (json == NULL) {
+        LOG_ERROR("String(%s) to json failure", str);
+        return -1;
+    }
+
+    free(str);
+    *pp_json = json;
+
+    return 0;
+}
+
+static int _config_init(void *sess, const char *module_name, void *param)
+{
+    int ret = 0;
+    int count = 0;
+    void *json = NULL;
+    char xpath[BUFSIZ] = "";
+    sr_conn_ctx_t *conn = NULL;
+    const struct ly_ctx *ly_ctx = NULL;
+    const struct lys_module *module = NULL;
+    const struct api_interface **interface = NULL;
+
+    conn = sr_session_get_connection(sess);
+    ly_ctx = sr_acquire_context(conn);
+
+    module = ly_ctx_get_module_implemented(ly_ctx, module_name);
+    if (module == NULL) {
+        LOG_ERROR("Sysrepo (%s) not exist", module_name);
+        return -1;
+    }
+
+    interface = api_get_all_post(&count);
+    for (int i = 0; i < count; i++) {
+        const struct lysp_submodule *submodule = NULL;
+        const struct api_interface *one = interface[i];
+
+        if (strcmp(one->container, "boot") == 0) {
+            continue;
+        }
+
+        submodule = ly_ctx_get_submodule2(module, one->container, NULL);
+        if (submodule == NULL) {
+            continue;
+        }
+
+        snprintf(xpath, sizeof(xpath), "/%s:%s", module_name, one->container);
+        ret = _config_submodule_init(&json, sess, xpath);
+        if (ret != 0) {
+            return -1;
+        }
+
+        api_param_set_input(param, json);
+
+        ret = one->callback(param);
+        json_decref(json);
+
+        api_param_set_input(param, NULL);
+        if (ret != 0) {
+            return -1;
+        }
+
+        LOG_INFO("Load(%s) SUCCESS.", xpath);
+    }
+
+    return 0;
+}
+
 static int _config_update(sr_session_ctx_t *sess, uint32_t sub_id, const char *module_name,
                           const char *xpath, sr_event_t event, uint32_t operation_id, void *private_data)
 {
@@ -94,6 +189,7 @@ static int _config_update(sr_session_ctx_t *sess, uint32_t sub_id, const char *m
     case SR_EV_CHANGE:
         break;
     case SR_EV_DONE:
+        return _config_init(sess, module_name, param);
         break;
     case SR_EV_ENABLED:
         break;
@@ -135,9 +231,10 @@ static int _config_parse_json(void *sess, const char *body, size_t len, struct l
     return API_ERRCODE_SUCCESS;
 }
 
-int config_post(void *param, char *body, size_t len)
+static int _config_change(void *param, char *body, size_t len, const char *change)
 {
     int ret = 0;
+    void *root = NULL;
     void *sess = NULL;
     struct lyd_node *tree = NULL;
 
@@ -152,28 +249,37 @@ int config_post(void *param, char *body, size_t len)
         return ret;
     }
 
-    ret = sr_edit_batch(sess, tree, "merge");
+    ret = sr_edit_batch(sess, tree, change);
+    lyd_free_all(tree);
     if (ret != 0) {
         LOG_ERROR("Function(sr_edit_batch) failure: %s", sr_strerror(ret));
-        lyd_free_all(tree);
         return API_ERRCODE_INTERNAL;
     }
 
-    lyd_free_all(tree);
+    root = json_loadb(body, len, 0, NULL);
+    if (root == NULL) {
+        LOG_ERROR("Format(%*.s) error", len, body);
+        return API_ERRCODE_FORMAT;
+    }
+
 
     return _config_apply_changes(sess);
 }
 
+int config_post(void *param, char *body, size_t len)
+{
+    return _config_change(param, body, len, "merge");
+}
+
 int config_put(void *param, char *body, size_t len)
 {
-    return 0;
+    return _config_change(param, body, len, "replace");
 }
 
 int config_patch(void *param, char *body, size_t len)
 {
-    return 0;
+    return _config_change(param, body, len, "merge");
 }
-
 
 int config_delete(void *param, char *body, size_t len)
 {

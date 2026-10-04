@@ -67,12 +67,11 @@ enum API_ERRCODE {
     API_ERRCODE_SUCCESS = 0,
 
     API_ERRCODE_METHOD_NOT_SUPPORT = -1,
-    API_ERRCODE_INTERNAL = -2,
-    API_ERRCODE_NOT_FOUND = -3,
-    API_ERRCODE_EXISTS = -4,
+    API_ERRCODE_URL_NOT_EXIST = -2,
+    API_ERRCODE_INTERNAL = -3,
+    API_ERRCODE_NOT_FOUND = -4,
     API_ERRCODE_INVALID_ARG = -5,
-
-    API_ERRCODE_MAX,
+    API_ERRCODE_FORMAT = -6,
 };
 
 struct api_param {
@@ -98,6 +97,7 @@ struct api_iface_param {
     struct api_param *param;
 };
 
+extern const struct api_interface **api_get_all_post(int *nums);
 extern struct api_interface *api_get(const char *method, size_t method_len, const char *url, size_t url_len);
 extern void api_register(enum API_HTTP_METHOD method, const char *container, const char *url, api_cb_t cb);
 
