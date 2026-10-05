@@ -19,13 +19,6 @@
     } \
     static int CAT(c, _post)(void *param)
 
-#define API_PUT(c, url) \
-    static int CAT(c, _put)(void *param); \
-    static PROC_INIT(201) void CAT2(c, _put, _startup)(void) { \
-        api_register(API_HTTP_PUT, #c, #url, CAT(c, _put)); \
-    } \
-    static int CAT(c, _put)(void *param)
-
 #define API_PATCH(c, url) \
     static int CAT(c, _put)(void *param); \
     static PROC_INIT(202) void CAT2(c, _put, _startup)(void) { \
@@ -53,9 +46,8 @@ typedef int (*api_cb_t)(void *);
 #define API_XX(XX)  \
     XX(0, GET)      \
     XX(1, POST)     \
-    XX(2, PUT)      \
-    XX(3, PATCH)    \
-    XX(4, DELETE)
+    XX(2, PATCH)    \
+    XX(3, DELETE)
 
 enum API_HTTP_METHOD {
 #define XX(num, method) API_HTTP_##method = num,
@@ -72,6 +64,7 @@ enum API_ERRCODE {
     API_ERRCODE_NOT_FOUND = -4,
     API_ERRCODE_INVALID_ARG = -5,
     API_ERRCODE_FORMAT = -6,
+    API_ERRCODE_EXIST = -7,
 };
 
 struct api_param {

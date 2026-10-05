@@ -97,8 +97,8 @@ struct api_interface *api_get(const char *method, size_t method_len, const char 
         if (method_len == 4 && strncmp(method, "POST", 4) == 0) {
             m = API_HTTP_POST;
             break;
-        } else if (method_len == 3 && strncmp(method, "PUT", 3) == 0) {
-            m = API_HTTP_PUT;
+        } else if (method_len == 5 && strncmp(method, "PATCH", 5) == 0) {
+            m = API_HTTP_PATCH;
             break;
         }
 

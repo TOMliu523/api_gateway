@@ -4,6 +4,9 @@
  * description:
  ****************************************************************************/
 
+#define _GNU_SOURCE
+#include <pthread.h>
+
 #include <jansson.h>
 #include <sysrepo.h>
 #include <libyang/libyang.h>
@@ -11,6 +14,8 @@
 #include "log.h"
 #include "api.h"
 #include "config.h"
+
+#define CONFIG_XPATH_LEN 128
 
 static int _config_read_value(sr_data_t *data, const char *key, const char **value)
 {
@@ -176,23 +181,24 @@ static int _config_init(void *sess, const char *module_name, void *param)
     return 0;
 }
 
-static int _config_update(sr_session_ctx_t *sess, uint32_t sub_id, const char *module_name,
-                          const char *xpath, sr_event_t event, uint32_t operation_id, void *private_data)
+static int _config_update_exec(sr_session_ctx_t *sess, uint32_t sub_id, const char *module_name,
+                               const char *xpath, sr_event_t event, uint32_t operation_id, void *private_data)
 {
     struct api_iface_param *iface_param = private_data;
     struct api_interface *iface = iface_param->iface;
     struct api_param *param = iface_param->param;
 
+    LOG_INFO("event: %d", event);
     switch (event) {
     case SR_EV_UPDATE:
         return iface->callback(param);
     case SR_EV_CHANGE:
         break;
     case SR_EV_DONE:
-        return _config_init(sess, module_name, param);
         break;
     case SR_EV_ENABLED:
-        break;
+        pthread_setname_np(pthread_self(), "API_EXEC");
+        return _config_init(sess, module_name, param);
     default:
         break;
     }
@@ -207,6 +213,7 @@ static int _config_apply_changes(void *sess)
     ret = sr_apply_changes(sess, 0);
     if (ret != 0) {
         LOG_ERROR("Function(sr_apply_changes) failure: %s", sr_strerror(ret));
+        sr_discard_changes(sess);
         return API_ERRCODE_INTERNAL;
     }
 
@@ -221,24 +228,173 @@ static int _config_parse_json(void *sess, const char *body, size_t len, struct l
 
     conn = sr_session_get_connection(sess);
     ly_ctx = sr_acquire_context(conn);
-    err = lyd_parse_data_mem(ly_ctx, body, LYD_JSON, LYD_PARSE_STRICT, LYD_VALIDATE_PRESENT, tree);
+    err = lyd_parse_data_mem(ly_ctx, body, LYD_JSON, LYD_PARSE_STRICT | LYD_PARSE_ONLY, 0, tree);
     if (err != LY_SUCCESS) {
         LOG_ERROR("Function(lyd_parse_data_mem) failure: %s", ly_strerr(err));
         return API_ERRCODE_INTERNAL;
+    }
+
+    if (tree == NULL) {
+        LOG_ERROR("Empty input");
+        return API_ERRCODE_FORMAT;
     }
 
     sr_release_context(conn);
     return API_ERRCODE_SUCCESS;
 }
 
-static int _config_change(void *param, char *body, size_t len, const char *change)
+static int _config_post_check_node(const struct lyd_node *node, const struct lyd_node *current)
+{
+    LY_ERR err = 0;
+    char *path = NULL;
+    struct lyd_node *match = NULL;
+    const struct lyd_node *iter = NULL;
+
+    LY_LIST_FOR(node, iter) {
+        if (iter->schema->nodetype & LYS_CONTAINER) {
+            const struct lysc_node_container *c = NULL;
+
+            c = (const struct lysc_node_container *)iter->schema;
+            if (!(c->flags & LYS_PRESENCE)) {
+                if (!(c->flags & LYS_PRESENCE)) {
+                    int ret = 0;
+
+                    ret = _config_post_check_node(lyd_child(iter), current);
+                    if (ret != 0) {
+                        return ret;
+                    }
+                }
+
+                continue;
+            }
+        }
+
+        path = lyd_path(iter, LYD_PATH_STD, NULL, 0);
+        if (path == NULL) {
+            LOG_ERROR("Function(lyd_path) failure");
+            return API_ERRCODE_INTERNAL;
+        }
+
+        match = NULL;
+        if (current != NULL) {
+            err = lyd_find_path(current, path, 0, &match);
+            if (err == LY_SUCCESS && match != NULL) {
+                LOG_ERROR("POST target already exists: %s", path);
+                free(path);
+                return API_ERRCODE_EXIST;
+            }
+
+            if ((err != LY_SUCCESS) && (err != LY_ENOTFOUND) && (err != LY_EINCOMPLETE)) {
+                LOG_ERROR("Function(lyd_find_path) failure: path=%s, error=%s", path, ly_strerr(err));
+                free(path);
+                return API_ERRCODE_INTERNAL;
+            }
+        }
+
+        free(path);
+        path = NULL;
+    }
+
+    return 0;
+}
+
+static int _config_patch_check_node(const struct lyd_node *node, const struct lyd_node *current)
+{
+    LY_ERR err = 0;
+    char *path = NULL;
+    struct lyd_node *match = NULL;
+    const struct lyd_node *iter = NULL;
+
+    LY_LIST_FOR(node, iter) {
+        if (iter->schema->nodetype & LYS_CONTAINER) {
+            const struct lysc_node_container *c = NULL;
+
+            c = (const struct lysc_node_container *)iter->schema;
+            if (!(c->flags & LYS_PRESENCE)) {
+                if (!(c->flags & LYS_PRESENCE)) {
+                    int ret = 0;
+
+                    ret = _config_patch_check_node(lyd_child(iter), current);
+                    if (ret != 0) {
+                        return ret;
+                    }
+                }
+
+                continue;
+            }
+        }
+
+        path = lyd_path(iter, LYD_PATH_STD, NULL, 0);
+        if (path == NULL) {
+            LOG_ERROR("Function(lyd_path) failure");
+            return API_ERRCODE_INTERNAL;
+        }
+
+        match = NULL;
+        if (current != NULL) {
+            err = lyd_find_path(current, path, 0, &match);
+            if (err != LY_SUCCESS || match == NULL) {
+                LOG_ERROR("Function(lyd_find_path) failure: path=%s, error=%s", path, ly_strerr(err));
+                return API_ERRCODE_NOT_FOUND;
+            }
+        }
+
+        free(path);
+        path = NULL;
+    }
+
+    return 0;
+}
+
+static int _config_check(void *sess, struct lyd_node *tree, enum API_HTTP_METHOD method)
 {
     int ret = 0;
-    void *root = NULL;
+    sr_data_t *data = NULL;
+    char xpath[CONFIG_XPATH_LEN] = "";
+
+    if (lyd_path(tree, LYD_PATH_STD, xpath, sizeof(xpath)) == NULL) {
+        LOG_ERROR("Function(lyd_path) failure.");
+        return API_ERRCODE_INTERNAL;
+    }
+
+    ret = sr_get_data(sess, xpath, 0, 0, 0, &data);
+    if (ret != SR_ERR_OK) {
+        LOG_ERROR("Function(sr_get_data) failure: %s", sr_strerror(ret));
+        lyd_free_all(tree);
+        return API_ERRCODE_INTERNAL;
+    }
+
+    if (method == API_HTTP_POST) {
+        ret = _config_post_check_node(tree, data != NULL ? data->tree : NULL);
+    } else {
+        ret = _config_patch_check_node(tree, data != NULL ? data->tree : NULL);
+    }
+
+    if (ret != 0) {
+        if (data != NULL) {
+            sr_release_data(data);
+        }
+
+        lyd_free_all(tree);
+        return ret;
+    }
+
+    if (data != NULL) {
+        sr_release_data(data);
+        data = NULL;
+    }
+
+    return ret;
+}
+
+static int _config_update(void *param, char *body, size_t len, enum API_HTTP_METHOD method)
+{
+    int ret = 0;
     void *sess = NULL;
+    void *root = NULL;
     struct lyd_node *tree = NULL;
 
-    if (param == NULL || body == NULL) {
+    if (param == NULL || body == NULL || len == 0) {
         LOG_ERROR("Invalid parameter.");
         return API_ERRCODE_INTERNAL;
     }
@@ -249,7 +405,13 @@ static int _config_change(void *param, char *body, size_t len, const char *chang
         return ret;
     }
 
-    ret = sr_edit_batch(sess, tree, change);
+    ret = _config_check(sess, tree, method);
+    if (ret != 0) {
+        lyd_free_all(tree);
+        return ret;
+    }
+
+    ret = sr_edit_batch(sess, tree, "merge");
     lyd_free_all(tree);
     if (ret != 0) {
         LOG_ERROR("Function(sr_edit_batch) failure: %s", sr_strerror(ret));
@@ -262,28 +424,59 @@ static int _config_change(void *param, char *body, size_t len, const char *chang
         return API_ERRCODE_FORMAT;
     }
 
-
+    api_param_set_input(param, root);
     return _config_apply_changes(sess);
 }
 
 int config_post(void *param, char *body, size_t len)
 {
-    return _config_change(param, body, len, "merge");
-}
-
-int config_put(void *param, char *body, size_t len)
-{
-    return _config_change(param, body, len, "replace");
+    return _config_update(param, body, len, API_HTTP_POST);
 }
 
 int config_patch(void *param, char *body, size_t len)
 {
-    return _config_change(param, body, len, "merge");
+    return _config_update(param, body, len, API_HTTP_PATCH);
 }
 
 int config_delete(void *param, char *body, size_t len)
 {
-    return 0;
+    int ret = 0;
+    void *sess = NULL;
+    void *root = NULL;
+    struct lyd_node *tree = NULL;
+
+    if (param == NULL || body == NULL || len == 0) {
+        LOG_ERROR("Invalid parameter");
+        return API_ERRCODE_INTERNAL;
+    }
+
+    sess = api_param_get_session(param);
+    ret = _config_parse_json(sess, body, len, &tree);
+    if (ret != 0) {
+        return ret;
+    }
+
+    // ret = _config_delete(sess, tree);
+    if (ret != 0) {
+        lyd_free_all(tree);
+        return ret;
+    }
+
+    ret = sr_edit_batch(sess, tree, "none");
+    lyd_free_all(tree);
+    if (ret != 0) {
+        LOG_ERROR("Function(sr_edit_batch) failure: %s", sr_strerror(ret));
+        return API_ERRCODE_INTERNAL;
+    }
+
+    root = json_loadb(body, len, 0, NULL);
+    if (root == NULL) {
+        LOG_ERROR("Format(%.*s) error", (int)len, body);
+        return API_ERRCODE_FORMAT;
+    }
+
+    api_param_set_input(param, root);
+    return _config_apply_changes(sess);
 }
 
 int config_get(void *param, char *body, size_t len)
@@ -320,7 +513,7 @@ int config_subscript(void *arg)
 
     sess = api_param_get_session(iface_param->param);
 
-    ret = sr_module_change_subscribe(sess, "v1", NULL, _config_update, iface_param, 0, SR_SUBSCR_UPDATE | SR_SUBSCR_ENABLED, &subscript);
+    ret = sr_module_change_subscribe(sess, "v1", NULL, _config_update_exec, iface_param, 0, SR_SUBSCR_UPDATE | SR_SUBSCR_ENABLED, &subscript);
     if (ret != SR_ERR_OK) {
         LOG_ERROR("Function(sr_module_change_subscribt) failure: %s", sr_strerror(ret));
         return -1;

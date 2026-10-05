@@ -11,7 +11,7 @@ API_POST(boot, /v1/boot)
     return 0;
 }
 
-API_PUT(boot, /v1/boot)
+API_PATCH(boot, /v1/boot)
 {
     return 0;
 }

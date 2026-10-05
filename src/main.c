@@ -207,7 +207,7 @@ int main(int argc, char *argv[])
         goto _quit;
     }
 
-    dpdk_thread_startup(dp_startup, &context);
+    dpdk_thread_startup(dp_startup, &context.root);
     return EXIT_SUCCESS;
 
 _quit:

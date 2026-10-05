@@ -8,6 +8,7 @@
 #define __LOG_H__
 
 #include <libgen.h>
+#include <string.h>
 
 #define DEBUG 8U
 #define INFO 7U
@@ -15,7 +16,7 @@
 #define ERROR 4U
 
 #ifndef BASENAME
-#define BASENAME(f) basename(f)
+#define BASENAME(f) my_basename(f)
 #endif // BASENAME
 
 #ifndef LOG_LEVEL
@@ -63,5 +64,11 @@
 #endif
 
 extern void log_write(const char *, ...);
+
+static inline const char *my_basename(const char *file)
+{
+    const char *p = strrchr(file, '/');
+    return p ? p + 1 : file;
+}
 
 #endif // __LOG_H__

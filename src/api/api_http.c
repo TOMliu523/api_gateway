@@ -62,6 +62,7 @@ static INLINE int _api_errcode_to_http_status(enum API_ERRCODE errcode)
         return 200;
     case API_ERRCODE_METHOD_NOT_SUPPORT:
     case API_ERRCODE_URL_NOT_EXIST:
+    case API_ERRCODE_EXIST:
         return 404;
     case API_ERRCODE_INTERNAL:
         return 500;
@@ -82,7 +83,7 @@ static void _api_http_task(struct mg_connection *c, int ev, void *ev_data)
         };
 
         // mg_tls_init(c, &opts);
-    }*/
+}*/
 
     if (ev == MG_EV_HTTP_MSG) {
         struct api_interface *iface = NULL;
@@ -100,9 +101,6 @@ static void _api_http_task(struct mg_connection *c, int ev, void *ev_data)
         switch (iface->method) {
         case API_HTTP_POST:
             ret = config_post(param, hm->body.buf, hm->body.len);
-            break;
-        case API_HTTP_PUT:
-            ret = config_put(param, hm->body.buf, hm->body.len);
             break;
         case API_HTTP_PATCH:
             ret = config_patch(param, hm->body.buf, hm->body.len);

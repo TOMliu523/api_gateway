@@ -12,7 +12,7 @@
 #include "dpdk_type.h"
 
 #ifndef MBUF_STORE_MAX
-#define MBUF_STORE_MAX 4096
+#define MBUF_STORE_MAX 256
 #endif // MBUF_STORE_PER_MAX
 
 #ifndef MBUF_NOTIFY_MAX
@@ -86,24 +86,16 @@ struct pkt_tx {
 
 struct pkt_classifier {
     struct pkt_store
-        arp,
-        ip4,
-        ip6,
-        icmp,
-        icmp6,
-        tcp4,
-        tcp6,
-        drop,
-        notify,
-        pending,
-        // Try to use it all within one interface instead of carrying it over to the next interface.
-        cache, cache1, cache2, cache3;
+        l2,
+        l3,
+        tcp,
+        udp,
+        drop;
 
-    struct pkt_tx *tx;
+    struct pkt_tx tx;
 };
 
 struct dataplane {
-    void *rcu;
     struct thread_config *tc; // Pointer to the configuration for this NUMA node
     struct pkt_classifier *pc;
     void *pktmbuf_pool;
@@ -154,63 +146,16 @@ struct boot_config {
     };
 };
 
-struct context {
-    struct boot_config config;
-    struct hw_info info;
-};
-
-struct root {
+struct data_root {
     bool inited;
     uint64_t startup_time;
-    struct context context;
     struct dataplane *dpdk_thread[CPU_MAX];
 };
 
-extern __thread uint8_t tlv_numa_id;
-extern __thread uint8_t tlv_thread_id;
-extern __thread uint8_t tlv_hw_numa_id;
-extern __thread struct dataplane *tlv_dp;
-extern __thread struct pkt_store *tlv_arp;
-extern __thread struct pkt_store *tlv_ip4;
-extern __thread struct pkt_store *tlv_ip6;
-extern __thread struct pkt_store *tlv_icmp;
-extern __thread struct pkt_store *tlv_icmp6;
-extern __thread struct pkt_store *tlv_tcp4;
-extern __thread struct pkt_store *tlv_tcp6;
-extern __thread struct pkt_store *tlv_notify;
-extern __thread struct pkt_store *tlv_drop;
-// Temporary bug: it must be freed immediately after use to avoid affecting the next module.
-extern __thread struct pkt_store *tlv_pending;
-// Try to use it all within one interface instead of carrying it over to the next interface.
-extern __thread struct pkt_store *tlv_cache;
-extern __thread struct pkt_store *tlv_cache1;
-extern __thread struct pkt_store *tlv_cache2;
-extern __thread struct pkt_store *tlv_cache3;
-extern __thread struct pkt_tx *tlv_tx;
-extern __thread struct thread_config *tlv_th_cfg;
-extern __thread uint64_t tlv_rx_offload[DPDK_ETHPORT_MAX];
-extern __thread uint64_t tlv_tx_offload[DPDK_ETHPORT_MAX];
-
-static INLINE bool tx_offload_f_test(uint16_t port, uint64_t f)
-{
-    return ((tlv_tx_offload[port] & f) != 0);
-}
-
-static INLINE bool rx_offload_f_test(uint16_t port, uint64_t f)
-{
-    return ((tlv_rx_offload[port] & f) != 0);
-}
-
-static INLINE void pktmbuf_drop(struct dpdk_mbuf *m)
-{
-    struct pkt_store *drop = tlv_drop;
-    drop->data[drop->count++] = m;
-}
-
-static INLINE void pktmbuf_send(struct dpdk_mbuf *m)
-{
-    struct pkt_tx *tx = &tlv_tx[m->port];
-    tx->data[tx->count++] = m;
-}
+struct context {
+    struct boot_config config;
+    struct hw_info info;
+    struct data_root root;
+};
 
 #endif // __TYPE_H__

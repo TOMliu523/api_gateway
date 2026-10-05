@@ -4,17 +4,21 @@
  * description:
  ****************************************************************************/
 
+#include <jansson.h>
+
 #include "log.h"
 #include "api.h"
 
 API_POST(arp, /v1/arp)
 {
-    LOG_ERROR("ARP");
+    LOG_INFO("POST: /v1/arp");
+
     return 0;
 }
 
-API_PUT(arp, /v1/arp)
+API_PATCH(arp, /v1/arp)
 {
+    LOG_INFO("PATHC: /v1/arp");
     return 0;
 }
 
