@@ -72,6 +72,7 @@ static INLINE int _api_errcode_to_http_status(enum API_ERRCODE errcode)
 static void _api_http_task(struct mg_connection *c, int ev, void *ev_data)
 {
     int ret = 0;
+    void *in = NULL;
     void *param = NULL;
     void *output = NULL;
     struct api_iface_param *iface_param = c->fn_data;
@@ -98,6 +99,7 @@ static void _api_http_task(struct mg_connection *c, int ev, void *ev_data)
         iface_param->iface = iface;
         param = iface_param->param;
         api_param_set_url(param, iface->url);
+
         switch (iface->method) {
         case API_HTTP_POST:
             ret = config_post(param, hm->body.buf, hm->body.len);
@@ -118,9 +120,12 @@ static void _api_http_task(struct mg_connection *c, int ev, void *ev_data)
 
         output = api_param_get_output(param);
         _api_http_reply(c, _api_errcode_to_http_status(ret), output);
-
         json_decref(output);
         api_param_set_output(param, NULL);
+
+        in = api_param_get_input(param);
+        json_decref(in);
+        api_param_set_input(param, NULL);
     }
 }
 

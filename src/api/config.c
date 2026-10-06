@@ -190,10 +190,10 @@ static int _config_update_exec(sr_session_ctx_t *sess, uint32_t sub_id, const ch
 
     LOG_INFO("event: %d", event);
     switch (event) {
-    case SR_EV_UPDATE:
-        return iface->callback(param);
-    case SR_EV_CHANGE:
+    case SR_EV_UPDATE: // password
         break;
+    case SR_EV_CHANGE:
+        return iface->callback(param);
     case SR_EV_DONE:
         break;
     case SR_EV_ENABLED:
@@ -421,6 +421,7 @@ static int _config_update(void *param, char *body, size_t len, enum API_HTTP_MET
     root = json_loadb(body, len, 0, NULL);
     if (root == NULL) {
         LOG_ERROR("Format(%*.s) error", len, body);
+        sr_discard_changes(sess);
         return API_ERRCODE_FORMAT;
     }
 
@@ -457,6 +458,7 @@ int config_delete(void *param, char *body, size_t len)
     }
 
     // ret = _config_delete(sess, tree);
+    // TODO
     if (ret != 0) {
         lyd_free_all(tree);
         return ret;
@@ -471,7 +473,8 @@ int config_delete(void *param, char *body, size_t len)
 
     root = json_loadb(body, len, 0, NULL);
     if (root == NULL) {
-        LOG_ERROR("Format(%.*s) error", (int)len, body);
+        LOG_ERROR("Format(%*.s) error", (int)len, body);
+        sr_discard_changes(sess);
         return API_ERRCODE_FORMAT;
     }
 
@@ -481,7 +484,44 @@ int config_delete(void *param, char *body, size_t len)
 
 int config_get(void *param, char *body, size_t len)
 {
-    return 0;
+    int ret = 0;
+    void *root = NULL;
+    void *sess = NULL;
+    sr_val_t *val = NULL;
+    const char *xpath = "/v1:query/counter";
+
+    if (param == NULL) {
+        LOG_ERROR("Invalid parameter.");
+        return API_ERRCODE_INTERNAL;
+    }
+
+    sess = api_param_get_session(param);
+    ret = sr_get_item(sess, xpath, 0, &val);
+    if (ret != 0) {
+        LOG_ERROR("Get xpath failure: %s", sr_strerror(ret));
+        return API_ERRCODE_INTERNAL;
+    }
+
+    val->data.uint64_val += 1;
+    ret = sr_set_item(sess, xpath, val, SR_EDIT_DEFAULT);
+    sr_free_val(val);
+    if (ret != 0) {
+        LOG_ERROR("Set val failure: %s", sr_strerror(ret));
+        return API_ERRCODE_INTERNAL;
+    }
+
+    if (body != NULL && len != 0) {
+        root = json_loadb(body, len, 0, NULL);
+        if (root == NULL) {
+            LOG_ERROR("Format(%*.s) error", (int)len, body);
+            sr_discard_changes(sess);
+            return API_ERRCODE_FORMAT;
+        }
+
+        api_param_set_input(param, root);
+    }
+
+    return _config_apply_changes(sess);
 }
 
 void config_boot_free(struct boot_config *config)

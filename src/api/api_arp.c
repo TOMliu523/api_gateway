@@ -24,10 +24,12 @@ API_PATCH(arp, /v1/arp)
 
 API_GET(arp, /v1/arp)
 {
+    LOG_INFO("ARP GET: /v1/arp");
     return 0;
 }
 
 API_DELETE(arp, /v1/arp)
 {
+    LOG_INFO("ARP DELETE: /v1/arp");
     return 0;
 }

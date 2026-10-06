@@ -1,8 +1,16 @@
 module v1 {
-  yang-version 1.1;
-  namespace "urn:example:v1";
-  prefix v1;
+    yang-version 1.1;
+    namespace "urn:example:v1";
+    prefix v1;
 
-  include boot;
-  include arp;
+    include boot;
+    include arp;
+
+    container query {
+        leaf counter {
+            type uint64;
+            default 0;
+            description "Number of query requests.";
+        }
+    }
 }
