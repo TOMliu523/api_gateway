@@ -429,6 +429,97 @@ static int _config_update(void *param, char *body, size_t len, enum API_HTTP_MET
     return _config_apply_changes(sess);
 }
 
+static int __config_delete(void *sess, const struct lyd_node *node)
+{
+    int ret = 0;
+    char *xpath = NULL;
+
+    xpath = lyd_path(node, LYD_PATH_STD, NULL, 0);
+    if (xpath == NULL) {
+        LOG_ERROR("Function(lyd_path) failure");
+        return API_ERRCODE_FORMAT;
+    }
+
+    ret = sr_delete_item(sess, xpath, SR_EDIT_STRICT);
+    if (ret != 0) {
+        LOG_ERROR("Function(sr_delete_item) failure: xpath=%s, error=%s", xpath, sr_strerror(ret));
+        ret = API_ERRCODE_INTERNAL;
+    }
+
+    free(xpath);
+    return ret;
+}
+
+static int _config_delete(void *sess, struct lyd_node *tree)
+{
+    int ret = 0;
+    const struct lyd_node *node = NULL;
+    const struct lysc_node_container *container = NULL;
+
+    LY_LIST_FOR(tree, node) {
+        switch (node->schema->nodetype) {
+        case LYS_LIST:
+            ret = __config_delete(sess, node);
+            if (ret != 0) {
+                return ret;
+            }
+            break;
+
+        case LYS_CONTAINER:
+            container = (const struct lysc_node_container *)node->schema;
+
+            if (container->flags & LYS_PRESENCE) {
+                ret = __config_delete(sess, node);
+                if (ret != 0) {
+                    return ret;
+                }
+
+                continue;
+            }
+
+            if (lyd_child(node) != NULL) {
+                ret = _config_delete(sess, lyd_child(node));
+                if (ret != 0) {
+                    return ret;
+                }
+            }
+            break;
+
+        case LYS_LEAFLIST:
+            ret = __config_delete(sess, node);
+            if (ret != 0) {
+                return ret;
+            }
+            break;
+
+        case LYS_LEAF:
+            if ((node->schema->flags & LYS_KEY) != 0) {
+                continue;
+            }
+
+            ret = __config_delete(sess, node);
+            if (ret != 0) {
+                return ret;
+            }
+            break;
+
+        case LYS_ANYXML:
+        case LYS_ANYDATA:
+            ret = __config_delete(sess, node);
+            if (ret != API_ERRCODE_SUCCESS) {
+                return ret;
+            }
+            break;
+
+        default:
+            LOG_ERROR("Unsupported node type: name=%s, nodetype=0x%x", node->schema->name, node->schema->nodetype);
+            return API_ERRCODE_FORMAT;
+        }
+    }
+
+    return 0;
+}
+
 int config_post(void *param, char *body, size_t len)
 {
     return _config_update(param, body, len, API_HTTP_POST);
@@ -457,18 +548,11 @@ int config_delete(void *param, char *body, size_t len)
         return ret;
     }
 
-    // ret = _config_delete(sess, tree);
-    // TODO
-    if (ret != 0) {
-        lyd_free_all(tree);
-        return ret;
-    }
-
-    ret = sr_edit_batch(sess, tree, "none");
+    ret = _config_delete(sess, tree);
     lyd_free_all(tree);
     if (ret != 0) {
-        LOG_ERROR("Function(sr_edit_batch) failure: %s", sr_strerror(ret));
-        return API_ERRCODE_INTERNAL;
+        sr_discard_changes(sess);
+        return ret;
     }
 
     root = json_loadb(body, len, 0, NULL);
