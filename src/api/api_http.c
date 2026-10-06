@@ -8,7 +8,6 @@
 #include <stdio.h>
 #include <pthread.h>
 
-#include <jansson.h>
 #include <mongoose.h>
 
 #include "log.h"
@@ -43,28 +42,21 @@ static UNUSED const char *s_code_to_msg[] = {
     [503] = "Service Unavailable",
 };
 
-static void _api_http_reply(struct mg_connection *c, int code, const void *output)
+static void _api_http_reply(struct mg_connection *c, int code, void *output)
 {
-    static __thread char buffer[BUFSIZ] = "";
-
-    if (code == 200 && output != NULL) {
-        json_dumpb(output, buffer, sizeof(buffer) - 1, JSON_INDENT(4));
-        mg_http_reply(c, code, API_APP_JSON, buffer);
-    } else {
-        mg_http_reply(c, code, API_APP_JSON, "");
-    }
+    mg_http_reply(c, code, API_APP_JSON, output);
 }
 
-static INLINE int _api_errcode_to_http_status(enum API_ERRCODE errcode)
+static INLINE int _api_status_to_http_status(enum API_STATUS errcode)
 {
     switch (errcode) {
     default:
         return 200;
-    case API_ERRCODE_METHOD_NOT_SUPPORT:
-    case API_ERRCODE_URL_NOT_EXIST:
-    case API_ERRCODE_EXIST:
+    case API_STATUS_METHOD_NOT_SUPPORT:
+    case API_STATUS_URL_NOT_EXIST:
+    case API_STATUS_EXIST:
         return 404;
-    case API_ERRCODE_INTERNAL:
+    case API_STATUS_INTERNAL:
         return 500;
     }
 }
@@ -72,7 +64,6 @@ static INLINE int _api_errcode_to_http_status(enum API_ERRCODE errcode)
 static void _api_http_task(struct mg_connection *c, int ev, void *ev_data)
 {
     int ret = 0;
-    void *in = NULL;
     void *param = NULL;
     void *output = NULL;
     struct api_iface_param *iface_param = c->fn_data;
@@ -114,18 +105,13 @@ static void _api_http_task(struct mg_connection *c, int ev, void *ev_data)
             ret = config_get(param, hm->body.buf, hm->body.len);
             break;
         default:
-            ret = API_ERRCODE_METHOD_NOT_SUPPORT;
+            ret = API_STATUS_METHOD_NOT_SUPPORT;
             break;
         }
 
         output = api_param_get_output(param);
-        _api_http_reply(c, _api_errcode_to_http_status(ret), output);
-        json_decref(output);
-        api_param_set_output(param, NULL);
-
-        in = api_param_get_input(param);
-        json_decref(in);
-        api_param_set_input(param, NULL);
+        _api_http_reply(c, _api_status_to_http_status(ret), output);
+        config_param_clean(param);
     }
 }
 
@@ -134,20 +120,26 @@ void *api_http(void *arg)
     int ret = 0;
     char url[URL_LEN] = {0};
     struct mg_mgr mgr = {0};
-    struct api_param param = {0};
+    struct api_param *param = {0};
     struct mg_connection *conn = NULL;
     struct api_iface_param iface_param = {0};
     struct context *context = (struct context *)arg;
     struct boot_config *config = &context->config;
 
-    iface_param.param = &param;
+    param = malloc(sizeof(*param));
+    if (param == NULL) {
+        LOG_ERROR("OOM.");
+        return NULL;
+    }
+
+    iface_param.param = param;
 
     pthread_setname_np(pthread_self(), "API_HTTP");
     mg_log_set(MG_LL_INFO);
     mg_mgr_init(&mgr);
 
-    api_param_set_session(&param, config->session);
-    api_param_set_context(&param, context);
+    api_param_set_session(param, config->session);
+    api_param_set_context(param, context);
 
     ret = config_subscript(&iface_param);
     if (ret != 0) {
@@ -185,5 +177,6 @@ void *api_http(void *arg)
 
 _quit:
     mg_mgr_free(&mgr);
+    free(param);
     exit(EXIT_FAILURE);
 }

@@ -112,13 +112,13 @@ struct api_interface *api_get(const char *method, size_t method_len, const char 
         goto _default;
     default:
     _default:
-        LOG_ERROR("Not support method(%*.s).", method_len, method);
+        LOG_ERROR("Not support method(%.*s).", method_len, method);
         return NULL;
     }
 
     iface = _api_get(m, url, url_len);
     if (iface == NULL) {
-        LOG_ERROR("method(%s), url: %*.s not register.", s_api_method_string[m], url_len, url);
+        LOG_ERROR("method(%s), url: %.*s not register.", s_api_method_string[m], url_len, url);
         return NULL;
     }
 

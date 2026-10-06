@@ -188,7 +188,6 @@ static int _config_update_exec(sr_session_ctx_t *sess, uint32_t sub_id, const ch
     struct api_interface *iface = iface_param->iface;
     struct api_param *param = iface_param->param;
 
-    LOG_INFO("event: %d", event);
     switch (event) {
     case SR_EV_UPDATE: // password
         break;
@@ -214,10 +213,10 @@ static int _config_apply_changes(void *sess)
     if (ret != 0) {
         LOG_ERROR("Function(sr_apply_changes) failure: %s", sr_strerror(ret));
         sr_discard_changes(sess);
-        return API_ERRCODE_INTERNAL;
+        return API_STATUS_INTERNAL;
     }
 
-    return API_ERRCODE_SUCCESS;
+    return API_STATUS_SUCCESS;
 }
 
 static int _config_parse_json(void *sess, const char *body, size_t len, struct lyd_node **tree)
@@ -231,16 +230,15 @@ static int _config_parse_json(void *sess, const char *body, size_t len, struct l
     err = lyd_parse_data_mem(ly_ctx, body, LYD_JSON, LYD_PARSE_STRICT | LYD_PARSE_ONLY, 0, tree);
     if (err != LY_SUCCESS) {
         LOG_ERROR("Function(lyd_parse_data_mem) failure: %s", ly_strerr(err));
-        return API_ERRCODE_INTERNAL;
+        return API_STATUS_INTERNAL;
     }
 
-    if (tree == NULL) {
+    if (*tree == NULL) {
         LOG_ERROR("Empty input");
-        return API_ERRCODE_FORMAT;
+        return API_STATUS_FORMAT;
     }
 
-    sr_release_context(conn);
-    return API_ERRCODE_SUCCESS;
+    return API_STATUS_SUCCESS;
 }
 
 static int _config_post_check_node(const struct lyd_node *node, const struct lyd_node *current)
@@ -272,7 +270,7 @@ static int _config_post_check_node(const struct lyd_node *node, const struct lyd
         path = lyd_path(iter, LYD_PATH_STD, NULL, 0);
         if (path == NULL) {
             LOG_ERROR("Function(lyd_path) failure");
-            return API_ERRCODE_INTERNAL;
+            return API_STATUS_INTERNAL;
         }
 
         match = NULL;
@@ -281,13 +279,13 @@ static int _config_post_check_node(const struct lyd_node *node, const struct lyd
             if (err == LY_SUCCESS && match != NULL) {
                 LOG_ERROR("POST target already exists: %s", path);
                 free(path);
-                return API_ERRCODE_EXIST;
+                return API_STATUS_EXIST;
             }
 
             if ((err != LY_SUCCESS) && (err != LY_ENOTFOUND) && (err != LY_EINCOMPLETE)) {
                 LOG_ERROR("Function(lyd_find_path) failure: path=%s, error=%s", path, ly_strerr(err));
                 free(path);
-                return API_ERRCODE_INTERNAL;
+                return API_STATUS_INTERNAL;
             }
         }
 
@@ -311,13 +309,11 @@ static int _config_patch_check_node(const struct lyd_node *node, const struct ly
 
             c = (const struct lysc_node_container *)iter->schema;
             if (!(c->flags & LYS_PRESENCE)) {
-                if (!(c->flags & LYS_PRESENCE)) {
-                    int ret = 0;
+                int ret = 0;
 
-                    ret = _config_patch_check_node(lyd_child(iter), current);
-                    if (ret != 0) {
-                        return ret;
-                    }
+                ret = _config_patch_check_node(lyd_child(iter), current);
+                if (ret != 0) {
+                    return ret;
                 }
 
                 continue;
@@ -327,7 +323,7 @@ static int _config_patch_check_node(const struct lyd_node *node, const struct ly
         path = lyd_path(iter, LYD_PATH_STD, NULL, 0);
         if (path == NULL) {
             LOG_ERROR("Function(lyd_path) failure");
-            return API_ERRCODE_INTERNAL;
+            return API_STATUS_INTERNAL;
         }
 
         match = NULL;
@@ -335,7 +331,8 @@ static int _config_patch_check_node(const struct lyd_node *node, const struct ly
             err = lyd_find_path(current, path, 0, &match);
             if (err != LY_SUCCESS || match == NULL) {
                 LOG_ERROR("Function(lyd_find_path) failure: path=%s, error=%s", path, ly_strerr(err));
-                return API_ERRCODE_NOT_FOUND;
+                free(path);
+                return API_STATUS_NOT_FOUND;
             }
         }
 
@@ -354,14 +351,13 @@ static int _config_check(void *sess, struct lyd_node *tree, enum API_HTTP_METHOD
 
     if (lyd_path(tree, LYD_PATH_STD, xpath, sizeof(xpath)) == NULL) {
         LOG_ERROR("Function(lyd_path) failure.");
-        return API_ERRCODE_INTERNAL;
+        return API_STATUS_INTERNAL;
     }
 
     ret = sr_get_data(sess, xpath, 0, 0, 0, &data);
     if (ret != SR_ERR_OK) {
         LOG_ERROR("Function(sr_get_data) failure: %s", sr_strerror(ret));
-        lyd_free_all(tree);
-        return API_ERRCODE_INTERNAL;
+        return API_STATUS_INTERNAL;
     }
 
     if (method == API_HTTP_POST) {
@@ -373,9 +369,9 @@ static int _config_check(void *sess, struct lyd_node *tree, enum API_HTTP_METHOD
     if (ret != 0) {
         if (data != NULL) {
             sr_release_data(data);
+            data = NULL;
         }
 
-        lyd_free_all(tree);
         return ret;
     }
 
@@ -396,7 +392,7 @@ static int _config_update(void *param, char *body, size_t len, enum API_HTTP_MET
 
     if (param == NULL || body == NULL || len == 0) {
         LOG_ERROR("Invalid parameter.");
-        return API_ERRCODE_INTERNAL;
+        return API_STATUS_INTERNAL;
     }
 
     sess = api_param_get_session(param);
@@ -415,14 +411,14 @@ static int _config_update(void *param, char *body, size_t len, enum API_HTTP_MET
     lyd_free_all(tree);
     if (ret != 0) {
         LOG_ERROR("Function(sr_edit_batch) failure: %s", sr_strerror(ret));
-        return API_ERRCODE_INTERNAL;
+        return API_STATUS_INTERNAL;
     }
 
     root = json_loadb(body, len, 0, NULL);
     if (root == NULL) {
-        LOG_ERROR("Format(%*.s) error", len, body);
+        LOG_ERROR("Format(%.*s) error", len, body);
         sr_discard_changes(sess);
-        return API_ERRCODE_FORMAT;
+        return API_STATUS_FORMAT;
     }
 
     api_param_set_input(param, root);
@@ -437,13 +433,13 @@ static int __config_delete(void *sess, const struct lyd_node *node)
     xpath = lyd_path(node, LYD_PATH_STD, NULL, 0);
     if (xpath == NULL) {
         LOG_ERROR("Function(lyd_path) failure");
-        return API_ERRCODE_FORMAT;
+        return API_STATUS_FORMAT;
     }
 
     ret = sr_delete_item(sess, xpath, SR_EDIT_STRICT);
     if (ret != 0) {
         LOG_ERROR("Function(sr_delete_item) failure: xpath=%s, error=%s", xpath, sr_strerror(ret));
-        ret = API_ERRCODE_INTERNAL;
+        ret = API_STATUS_INTERNAL;
     }
 
     free(xpath);
@@ -506,14 +502,14 @@ static int _config_delete(void *sess, struct lyd_node *tree)
         case LYS_ANYXML:
         case LYS_ANYDATA:
             ret = __config_delete(sess, node);
-            if (ret != API_ERRCODE_SUCCESS) {
+            if (ret != API_STATUS_SUCCESS) {
                 return ret;
             }
             break;
 
         default:
             LOG_ERROR("Unsupported node type: name=%s, nodetype=0x%x", node->schema->name, node->schema->nodetype);
-            return API_ERRCODE_FORMAT;
+            return API_STATUS_FORMAT;
         }
     }
 
@@ -539,7 +535,7 @@ int config_delete(void *param, char *body, size_t len)
 
     if (param == NULL || body == NULL || len == 0) {
         LOG_ERROR("Invalid parameter");
-        return API_ERRCODE_INTERNAL;
+        return API_STATUS_INTERNAL;
     }
 
     sess = api_param_get_session(param);
@@ -557,9 +553,9 @@ int config_delete(void *param, char *body, size_t len)
 
     root = json_loadb(body, len, 0, NULL);
     if (root == NULL) {
-        LOG_ERROR("Format(%*.s) error", (int)len, body);
+        LOG_ERROR("Format(%.*s) error", (int)len, body);
         sr_discard_changes(sess);
-        return API_ERRCODE_FORMAT;
+        return API_STATUS_FORMAT;
     }
 
     api_param_set_input(param, root);
@@ -576,14 +572,14 @@ int config_get(void *param, char *body, size_t len)
 
     if (param == NULL) {
         LOG_ERROR("Invalid parameter.");
-        return API_ERRCODE_INTERNAL;
+        return API_STATUS_INTERNAL;
     }
 
     sess = api_param_get_session(param);
     ret = sr_get_item(sess, xpath, 0, &val);
     if (ret != 0) {
         LOG_ERROR("Get xpath failure: %s", sr_strerror(ret));
-        return API_ERRCODE_INTERNAL;
+        return API_STATUS_INTERNAL;
     }
 
     val->data.uint64_val += 1;
@@ -591,21 +587,30 @@ int config_get(void *param, char *body, size_t len)
     sr_free_val(val);
     if (ret != 0) {
         LOG_ERROR("Set val failure: %s", sr_strerror(ret));
-        return API_ERRCODE_INTERNAL;
+        return API_STATUS_INTERNAL;
     }
 
     if (body != NULL && len != 0) {
         root = json_loadb(body, len, 0, NULL);
         if (root == NULL) {
-            LOG_ERROR("Format(%*.s) error", (int)len, body);
+            LOG_ERROR("Format(%.*s) error", (int)len, body);
             sr_discard_changes(sess);
-            return API_ERRCODE_FORMAT;
+            return API_STATUS_FORMAT;
         }
 
         api_param_set_input(param, root);
     }
 
     return _config_apply_changes(sess);
+}
+
+void config_param_clean(void *param)
+{
+    void *in = NULL;
+
+    in = api_param_get_input(param);
+    json_decref(in);
+    api_param_set_input(param, NULL);
 }
 
 void config_boot_free(struct boot_config *config)

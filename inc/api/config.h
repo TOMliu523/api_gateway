@@ -16,5 +16,6 @@ extern int config_put(void *, char *, size_t);
 extern int config_patch(void *, char *, size_t);
 extern int config_delete(void *, char *, size_t);
 extern int config_get(void *, char *, size_t);
+extern void config_param_clean(void *);
 
 #endif // __CONFIG_H__

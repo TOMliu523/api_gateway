@@ -7,7 +7,9 @@
 #ifndef __API_H__
 #define __API_H__
 
+#include <stdio.h>
 #include <stdint.h>
+#include <string.h>
 
 #include "list.h"
 #include "macro.h"
@@ -40,6 +42,10 @@
     } \
     static int CAT(c, _delete)(void *param)
 
+#define API_OUTPUT_LEN (1024 * 1024)
+#define API_RETURN_ERROR "{\"code\":%d, \"message\":\"%s\"}"
+#define API_RETURN_SUCCESS "{\"code\":0, \"data\":%s}"
+
 struct api_param;
 typedef int (*api_cb_t)(void *);
 
@@ -55,24 +61,31 @@ enum API_HTTP_METHOD {
 #undef XX
 };
 
-enum API_ERRCODE {
-    API_ERRCODE_SUCCESS = 0,
+enum API_STATUS {
+    API_STATUS_SUCCESS = 0,
 
-    API_ERRCODE_METHOD_NOT_SUPPORT = -1,
-    API_ERRCODE_URL_NOT_EXIST = -2,
-    API_ERRCODE_INTERNAL = -3,
-    API_ERRCODE_NOT_FOUND = -4,
-    API_ERRCODE_INVALID_ARG = -5,
-    API_ERRCODE_FORMAT = -6,
-    API_ERRCODE_EXIST = -7,
+    API_STATUS_METHOD_NOT_SUPPORT = -1,
+    API_STATUS_URL_NOT_EXIST = -2,
+    API_STATUS_INTERNAL = -3,
+    API_STATUS_NOT_FOUND = -4,
+    API_STATUS_INVALID_ARG = -5,
+    API_STATUS_FORMAT = -6,
+    API_STATUS_EXIST = -7,
+};
+
+enum API_ERRCODE {
+    API_ERRCODE_SUCCESS,
+
+    API_ERRCODE_ARP_DB = 100,
+    API_ERRCODE_ARP_FORMAT = 101,
 };
 
 struct api_param {
     void *sess;
     void *json;
-    void *output;
     void *context;
     const char *url;
+    char output[API_OUTPUT_LEN];
 };
 
 struct api_interface {
@@ -134,9 +147,16 @@ static UNUSED const char *api_param_get_url(void *param)
     return ((struct api_param *) param)->url;
 }
 
-static UNUSED void api_param_set_output(void *param, void *output)
+static UNUSED void api_param_set_error(void *param, int code, const char *output)
 {
-    ((struct api_param *) param)->output = output;
+    char *out = ((struct api_param *) param)->output;
+    snprintf(out, API_OUTPUT_LEN, API_RETURN_ERROR, code, output);
+}
+
+static UNUSED void api_param_set_success(void *param, const char *output)
+{
+    char *out = ((struct api_param *) param)->output;
+    snprintf(out, API_OUTPUT_LEN, API_RETURN_SUCCESS, output);
 }
 
 static UNUSED void *api_param_get_output(void *param)
