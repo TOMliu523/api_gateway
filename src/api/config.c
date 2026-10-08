@@ -188,6 +188,7 @@ static int _config_update_exec(sr_session_ctx_t *sess, uint32_t sub_id, const ch
     struct api_interface *iface = iface_param->iface;
     struct api_param *param = iface_param->param;
 
+    LOG_INFO("event: %d\n", event);
     switch (event) {
     case SR_EV_UPDATE: // password
         break;

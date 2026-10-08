@@ -7,7 +7,7 @@
 #define _GNU_SOURCE
 #include <pthread.h>
 
-#include "type.h"
+#include "top.h"
 
 static int _dp_init(struct data_root *root)
 {

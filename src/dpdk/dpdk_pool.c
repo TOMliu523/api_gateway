@@ -8,7 +8,7 @@
 #include <stdio.h>
 
 #include "log.h"
-#include "type.h"
+#include "top.h"
 #include "macro.h"
 #include "dpdk_type.h"
 #include "dpdk_core.h"

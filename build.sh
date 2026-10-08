@@ -13,6 +13,7 @@ mkdir ${CDIR}
 pushd ${CDIR}
 
 cmake .. -DCMAKE_INSTALL_PREFIX=${INSTALL}
+make 
 make install
 
 popd

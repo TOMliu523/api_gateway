@@ -20,7 +20,7 @@
 #include <rte_ethdev.h>
 
 #include "log.h"
-#include "type.h"
+#include "top.h"
 #include "macro.h"
 #include "config.h"
 #include "runtime.h"

@@ -22,7 +22,7 @@
 #include <rte_version.h>
 
 #include "log.h"
-#include "type.h"
+#include "top.h"
 #include "macro.h"
 #include "dpdk_rcu.h"
 #include "dpdk_type.h"
@@ -47,7 +47,7 @@ static int _dpdk_memory_info(const struct rte_memseg_list *msl, const struct rte
 int dpdk_alloc_socket_get(void *arg, int socket_id)
 {
     int ret = 0;
-    struct dpdk_socket_stat *stat = arg;
+    struct hw_socket_stat *stat = arg;
     struct rte_malloc_socket_stats st = {0};
 
     ret = rte_malloc_get_socket_stats(socket_id, &st);

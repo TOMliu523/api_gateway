@@ -12,7 +12,7 @@
 
 #include "log.h"
 #include "api.h"
-#include "type.h"
+#include "top.h"
 #include "config.h"
 #include "api_http.h"
 
