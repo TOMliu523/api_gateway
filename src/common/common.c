@@ -4,27 +4,43 @@
  * description:
  *****************************************************************************/
 
-#include "top.h"
+#include <stdio.h>
+#include <stdlib.h>
+
+#include "macro.h"
+#include "atomic.h"
 #include "common.h"
 
-void check_dataplane_all_startup(void *arg)
+int alloc_align_system(void **data, size_t size)
 {
-    struct context *context = arg;
-    int cpu_count = context->info.cpu_count;
-    struct data_root *root = &context->root;
+    int ret = 0;
 
+    if (data == NULL || size == 0) {
+        return -1;
+    }
+
+    ret = posix_memalign(data, CACHE_LINE, size);
+    if (ret != 0 || *data == NULL) {
+        return -1;
+    }
+
+    return 0;
+}
+
+void check_and_wait(void *array[], int count)
+{
     for (;;) {
-        int count = 0;
+        int n = 0;
 
-        for (int i = 0; i < cpu_count; i++) {
-            if (atomic_load(&root->dataplane[i]) == NULL) {
+        for (int i = 0; i < count; i++) {
+            if (atomic_load(&array[i]) == NULL) {
                 break;
             }
 
-            count += 1;
+            n += 1;
         }
 
-        if (count == cpu_count) {
+        if (n == count) {
             return;
         }
     }

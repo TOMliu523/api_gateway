@@ -1,5 +1,5 @@
 /*****************************************************************************
- * filename: common.c
+ * filename: common.h
  * function:
  * description:
  *****************************************************************************/
@@ -7,6 +7,9 @@
 #ifndef __COMMON_H__
 #define __COMMON_H__
 
-extern void check_dataplane_all_startup(void *arg);
+#include <stddef.h>
+
+extern void check_and_wait(void *array[], int count);
+extern int alloc_align_system(void **, size_t);
 
 #endif // __COMMON_H__

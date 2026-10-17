@@ -10,6 +10,7 @@
 #include "top.h"
 
 extern int config_boot_load(struct boot_config *config);
+extern void config_boot_free(struct boot_config *config);
 extern int config_subscript(void *param);
 extern int config_post(void *, char *, size_t);
 extern int config_put(void *, char *, size_t);

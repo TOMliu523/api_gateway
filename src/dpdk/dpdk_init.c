@@ -92,21 +92,21 @@ void dpdk_thread_set_name(uint8_t numa_idx, uint8_t cpu_id)
     rte_thread_set_name(rte_thread_self(), name);
 }
 
-void dpdk_thread_info(uint8_t *numa_idx, uint8_t *local_idx, uint8_t *cpu_lcore, uint8_t *hw_numa_id, uint8_t *hw_cpu_id)
+void dpdk_thread_info(uint8_t *numa_idx, uint8_t *cpu_idx, uint8_t *numa_cpu_id, uint8_t *hw_numa_id, uint8_t *hw_cpu_id)
 {
     struct numa_cpu *nc = dpdk_numa_cpu_get();
 
     RUNTIME_ASSERT(numa_idx != NULL
-                   && local_idx != NULL
-                   && cpu_lcore != NULL
+                   && cpu_idx != NULL
+                   && numa_cpu_id != NULL
                    && hw_numa_id != NULL
                    && hw_cpu_id != NULL);
 
     *hw_cpu_id = (uint8_t)rte_lcore_id();
     *hw_numa_id = (uint8_t)rte_socket_id();
-    *cpu_lcore = (uint8_t)rte_lcore_index(*hw_cpu_id);
-    *local_idx = nc->c2n[*cpu_lcore].numa_cpu_id;
-    *numa_idx = nc->c2n[*cpu_lcore].numa_id;
+    *cpu_idx = (uint8_t)rte_lcore_index(*hw_cpu_id);
+    *numa_cpu_id = nc->c2n[*cpu_idx].numa_cpu_id;
+    *numa_idx = nc->c2n[*cpu_idx].numa_id;
 }
 
 int dpdk_init(int argc, char *argv[])
@@ -122,7 +122,7 @@ int dpdk_init(int argc, char *argv[])
     }
 
     rte_srand(rte_rdtsc());
-    return ret;
+    return 0;
 }
 
 /*

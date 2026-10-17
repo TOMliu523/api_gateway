@@ -99,25 +99,22 @@ struct dataplane {
     struct thread_config *tc; // Pointer to the configuration for this NUMA node
     struct pkt_classifier *pc;
     void *pktmbuf_pool;
-    struct {
-        uint8_t numa_id; // NUMA index in your application (0-based)
-        uint8_t numa_cpu_id; // Thread index within the NUMA node (0-based)
-        uint8_t cpu_id; // *Logical CPU (lcore) index used by the thread (0-based)
-        uint8_t hw_numa_id; // Actual system NUMA node ID (as reported by the OS)
-        uint8_t hw_cpu_id; // Actual system CPU/core ID (OS-level, may not start from 0)
-    };
-    uint16_t mtu;
 
+    struct stats *stats;
+    void *notice_ring;
+    void *indirect_pool;
+    void *frag_handle;
+    struct thread_ctx *ctx;
     uint64_t off_time;
     uint64_t off_time_ms;
     uint64_t timer_cycles;
-
-    struct stats *stats;
-    void *indirect_pool;
-    void *notice_ring;
-    void *frag_handle;
-
-    struct thread_ctx *ctx;
+    struct {
+        uint8_t numa_id; // NUMA index in your application (0-based)
+        uint8_t cpu_id; // *Logical CPU (lcore) index used by the thread (0-based)
+        uint8_t numa_cpu_id; // Thread index within the NUMA node (0-based)
+        uint8_t hw_numa_id; // Actual system NUMA node ID (as reported by the OS)
+        uint8_t hw_cpu_id; // Actual system CPU/core ID (OS-level, may not start from 0)
+    };
 } ALIGNED(CACHE_LINE);
 
 extern int dp_startup(void *arg);

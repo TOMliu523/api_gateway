@@ -22,9 +22,11 @@
 #include "log.h"
 #include "top.h"
 #include "macro.h"
+#include "common.h"
 #include "config.h"
 #include "runtime.h"
 #include "api_http.h"
+#include "dpdk_port.h"
 #include "dpdk_init.h"
 #include "dataplane.h"
 
@@ -156,11 +158,45 @@ static int _non_dpdk_thread_attr_init(pthread_attr_t *attr)
     return 0;
 }
 
+static void _context_fini(struct context *context)
+{
+    if (context == NULL) {
+        return;
+    }
+
+    config_boot_free(&context->config);
+    free(context);
+}
+
+static struct context *_context_init(void)
+{
+    int ret = 0;
+    struct context *context = NULL;
+
+    ret = alloc_align_system((void **)&context, sizeof(*context));
+    if (ret != 0) {
+        LOG_ERROR("OOM.");
+        return NULL;
+    }
+
+    memset(context, 0, sizeof(*context));
+
+    dpdk_hw_info_init(&context->info);
+    ret = config_boot_load(&context->config);
+    if (ret != 0) {
+        _context_fini(context);
+        return NULL;
+    }
+
+    context->root.info = &context->info;
+    return context;
+}
+
 int main(int argc, char *argv[])
 {
     int ret = 0;
     pthread_t tid = {0};
-    struct context context = {0};
+    struct context *context = NULL;
     AUTO_CLEANUP(_fd_cleanup) int fd = -1;
     AUTO_CLEANUP(_non_dpdk_thread_attr_fini) pthread_attr_t attr = {0};
 
@@ -189,28 +225,33 @@ int main(int argc, char *argv[])
     argc -= ret;
     argv += ret;
 
-    dpdk_hw_info_init(&context.info);
-    ret = config_boot_load(&context.config);
+    context = _context_init();
+    if (context == NULL) {
+        goto _quit;
+    }
+
+    ret = dpdk_port_init();
     if (ret < 0) {
         goto _quit;
     }
 
-    ret = pthread_create(&tid, &attr, api_http, &context);
-    if (ret < 0) {
-        LOG_ERROR("Function(pthread_create) failure: %s", strerror(-ret));
-        goto _quit;
-    }
-
-    ret = pthread_create(&tid, &attr, runtime_startup, &context);
+    ret = pthread_create(&tid, &attr, api_http, context);
     if (ret < 0) {
         LOG_ERROR("Function(pthread_create) failure: %s", strerror(-ret));
         goto _quit;
     }
 
-    dpdk_thread_startup(dp_startup, &context.root);
+    ret = pthread_create(&tid, &attr, runtime_startup, context);
+    if (ret < 0) {
+        LOG_ERROR("Function(pthread_create) failure: %s", strerror(-ret));
+        goto _quit;
+    }
+
+    dpdk_thread_startup(dp_startup, &context->root);
     return EXIT_SUCCESS;
 
 _quit:
     dpdk_fini(0);
+    _context_fini(context);
     return EXIT_FAILURE;
 }

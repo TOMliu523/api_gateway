@@ -5,8 +5,6 @@
  ***********************************************/
 
 #include <errno.h>
-#include <ctype.h>
-#include <stdlib.h>
 #include <net/if.h>
 #include <stdint.h>
 
@@ -14,7 +12,6 @@
 
 #include "log.h"
 #include "macro.h"
-#include "dpdk_type.h"
 #include "dpdk_port.h"
 #include "dpdk_core.h"
 #include "dpdk_inner.h"

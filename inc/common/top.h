@@ -41,6 +41,7 @@ struct boot_config {
 
 struct data_root {
     bool inited;
+    struct hw_info *info;
     uint64_t startup_time;
     void *dataplane[CPU_MAX];
 };
