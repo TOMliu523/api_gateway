@@ -11,7 +11,7 @@
 #include "atomic.h"
 #include "common.h"
 
-int alloc_align_system(void **data, size_t size)
+int alloc_align(void **data, size_t size)
 {
     int ret = 0;
 

@@ -173,7 +173,7 @@ static struct context *_context_init(void)
     int ret = 0;
     struct context *context = NULL;
 
-    ret = alloc_align_system((void **)&context, sizeof(*context));
+    ret = alloc_align((void **)&context, sizeof(*context));
     if (ret != 0) {
         LOG_ERROR("OOM.");
         return NULL;
