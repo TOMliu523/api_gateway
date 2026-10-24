@@ -1,0 +1,45 @@
+submodule ipv6 {
+    yang-version 1.1;
+
+    belongs-to v1 {
+        prefix v1;
+    }
+
+    description "IPv6 address configuration for network interfaces.";
+
+    container ipv6 { 
+        description "IPv6 interface address configuration.";
+
+        list interface {
+            key "name";
+
+            description "IPv6 configuration for each network interface.";
+
+            leaf name {
+                type string {
+                    length "1..15";
+                }
+                description "Linux network interface name.";
+            }
+
+            list address {
+                key "ip";
+                description "IPv6 addresses assigned to the interface.";
+
+                leaf ip {
+                    type inet:ipv6-address-no-zone;
+                    description "IPv6 address without zone identifier.";
+                }
+
+                leaf prefix-length {
+                    type uint8 {
+                        range "0..128";
+                    }
+
+                    mandatory true;
+                    description "IPv6 subnet prefix length.";
+                }
+            }
+        }
+    }
+}

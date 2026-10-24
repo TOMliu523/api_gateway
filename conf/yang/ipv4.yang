@@ -1,0 +1,45 @@
+submodule ipv4 {
+    yang-version 1.1;
+
+    belongs-to v1 {
+        prefix v1;
+    }
+
+    description "IPv4 address configuration for network interfaces.";
+
+    container ipv4 {
+        description "IPv4 interface address configuration.";
+
+        list interface {
+            key "name";
+            description "IPv4 configuration for each network interface.";
+
+            leaf name {
+                type string {
+                    length "1..15";
+                }
+                description "Linux network interface name.";
+            }
+
+            list address {
+                key "ip";
+
+                description "IPv4 addresses assigned to the interface.";
+
+                leaf ip {
+                    type inet:ipv4-address-no-zone;
+                    description "IPv4 address without zone identifier.";
+                }
+
+                leaf prefix-length {
+                    type uint8 {
+                        range "0..32";
+                    }
+
+                    mandatory true;
+                    description "IPv4 subnet prefix length.";
+                }
+            }
+        }
+    }
+}

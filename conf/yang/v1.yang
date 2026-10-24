@@ -3,8 +3,14 @@ module v1 {
     namespace "urn:example:v1";
     prefix v1;
 
+    import ietf-inet-types {
+        prefix inet;
+    }
+
     include boot;
     include arp;
+    include ipv4;
+    include ipv6;
 
     container query {
         leaf counter {
