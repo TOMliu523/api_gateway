@@ -17,17 +17,24 @@
 #include "dpdk_common.h"
 
 #define DATAPLANE_NAME_LEN 16
+#define DATAPLANE_MBUF_NUMS 64
+#define DATAPLANE_BATCH_NUMS 64
+#define DATAPLANE_PORT_LOOP_MAX 16
 #define DATAPLANE_MSG_MAX (65536 * 2)
 
 static __thread struct dataplane *dataplane;
 
-static INLINE void _dataplane_time_update(double inv_hz, double inv_hz_ms)
+static INLINE void _dp_time_update(double inv_hz_us)
 {
-    dataplane->off_time = dataplane->timer_cycles * inv_hz;
-    dataplane->off_time_ms = dataplane->timer_cycles * inv_hz_ms;
+    dataplane->off_time_us = dataplane->timer_cycles * inv_hz_us;
 }
 
-static void _dataplane_fini(void)
+static void _dp_ctx_init(struct thread_ctx *ctx)
+{
+
+}
+
+static void _dp_fini(void)
 {
     if (dataplane->pc != NULL) {
         free(dataplane->pc);
@@ -60,7 +67,7 @@ static void _dataplane_fini(void)
     dataplane = NULL;
 }
 
-static void _dataplane_init(struct data_root *root)
+static void _dp_init(struct data_root *root)
 {
     int ret = 0;
     struct hw_info *info = root->info;
@@ -126,6 +133,7 @@ static void _dataplane_init(struct data_root *root)
     }
 
     memset(dataplane->ctx, 0, sizeof(*dataplane->ctx));
+    _dp_ctx_init(dataplane->ctx);
 
     dpdk_thread_set_name(dataplane->numa_id, dataplane->cpu_id);
     atomic_store(&root->dataplane[dataplane->cpu_id], dataplane);
@@ -135,23 +143,41 @@ static void _dataplane_init(struct data_root *root)
     return;
 
 _quit:
-    _dataplane_fini();
+    _dp_fini();
     exit(EXIT_FAILURE); // TODO process quit
 }
 
 int dp_startup(void *arg)
 {
-    double inv_hz = 0.0;
-    double inv_hz_ms = 0.0;
+    int ports_nums = 0;
+    double inv_hz_us = 0.0;
     struct data_root *root = (struct data_root *) arg;
 
-    _dataplane_init(root);
+    static __thread void *mbufs[DATAPLANE_MBUF_NUMS] = {NULL};
 
-    inv_hz = 1.0 / (double) dpdk_timer_hz();
-    inv_hz_ms = 1000.0 / (double) dpdk_timer_hz();
+    _dp_init(root);
+    inv_hz_us = 1000000.0 / (double) dpdk_timer_hz();
 
     for (;;) {
-        _dataplane_time_update(inv_hz, inv_hz_ms);
+        dp_config_update(dataplane);
+        _dp_time_update(inv_hz_us);
+
+        for (int i = 0; i < DATAPLANE_BATCH_NUMS; i++) {
+            for (int j = 0; j < ports_nums; j++) {
+                int count = 0;
+                // int total = 0;
+                int budget = DATAPLANE_PORT_LOOP_MAX;
+
+                do {
+                    count = dpdk_pktmbuf_rx(0, dataplane->cpu_id, mbufs, ARR_NUMS(mbufs));
+                    if (count == 0) {
+                        break;
+                    }
+                } while (--budget > 0);
+            }
+
+            // timer_check();
+        }
     }
 
     return 0;

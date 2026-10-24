@@ -19,6 +19,22 @@
 #define MBUF_NOTIFY_MAX 128
 #endif // MBUF_NOTIFY_MAX
 
+enum DP_CONFIG {
+    DP_CONFIG_IFACE,
+    DP_CONFIG_IP4_TABLE,
+    DP_CONFIG_IP6_TABLE,
+    DP_CONFIG_RS_TABLE,
+    DP_CONFIG_POOL_TABLE,
+    DP_CONFIG_SNAT_TABLE,
+    DP_CONFIG_VS_TABLE,
+    DP_CONFIG_ARP_TABLE,
+    DP_CONFIG_ROUTE4_TABLE,
+    DP_CONFIG_NDP_TABLE,
+    DP_CONFIG_ROUTE6_TABLE,
+
+    DP_CONFIG_MAX,
+};
+
 /*
  * If a structure’s data is only updated by the configuration thread,
  * it should be stored in struct thread_config.
@@ -29,39 +45,12 @@
  */
 struct thread_config {
     uint64_t version;
-
-    void *iface;
-    void *ip4_table;
-    void *ip6_table;
-    void *rs_table;
-    void *pool_table;
-    void *snat_table;
-    void *vs_table;
-
-    struct dpdk_mac *mac;
-
-    void *arp_table;
-    void *route4_table;
-    void *ndp_table;
-    void *route6_table;
-    // ... other per-CPU modules
+    void *table[DP_CONFIG_MAX];
 } ALIGNED(CACHE_LINE);
 
 struct thread_ctx {
     uint64_t version;
-
-    void **pp_iface;
-    void **pp_ip4_table;
-    void **pp_ip6_table;
-    void **pp_rs_table;
-    void **pp_pool_table;
-    void **pp_snat_table;
-    void **pp_vs_table;
-
-    void **pp_arp_table;
-    void **pp_route4_table;
-    void **pp_ndp_table;
-    void **pp_route6_table;
+    void **pp_tables[DP_CONFIG_MAX];
 } ALIGNED(CACHE_LINE);
 
 struct stats {
@@ -97,7 +86,6 @@ struct pkt_classifier {
 
 struct dataplane {
     struct pkt_classifier *pc;
-    void *pktmbuf_pool;
     struct stats *stats;
     struct {
         uint8_t numa_id; // NUMA index in your application (0-based)
@@ -106,8 +94,8 @@ struct dataplane {
         uint8_t hw_numa_id; // Actual system NUMA node ID (as reported by the OS)
         uint8_t hw_cpu_id; // Actual system CPU/core ID (OS-level, may not start from 0)
     };
-    uint64_t off_time;
-    uint64_t off_time_ms;
+
+    uint64_t off_time_us;
     uint64_t timer_cycles;
 
     void *message_ring;
@@ -115,8 +103,45 @@ struct dataplane {
     struct thread_ctx *ctx;
     struct thread_config *tc; // Pointer to the configuration for this NUMA node
     void *indirect_pool;
+    void *pktmbuf_pool;
 } ALIGNED(CACHE_LINE);
 
 extern int dp_startup(void *arg);
+
+static INLINE void dp_config_update(struct dataplane *dp)
+{
+    uint64_t version = 0;
+    struct thread_ctx *ctx = dp->ctx;
+    struct thread_config *tc = dp->tc;
+
+    version = __atomic_load_n(&tc->version, __ATOMIC_ACQUIRE);
+    if (ctx->version == version) {
+        return;
+    }
+
+    for (int i = 0; i < DP_CONFIG_MAX; i++) {
+        *ctx->pp_tables[i] = tc->table[i];
+    }
+
+    __atomic_store_n(&ctx->version, version, __ATOMIC_RELEASE);
+}
+
+static INLINE void dp_config_synchronize(struct dataplane *dp[], int count, int new_ver)
+{
+    for (int i = 0; i < count; i++) {
+        struct thread_config *tc = dp[i]->tc;
+        __atomic_store_n(&tc->version, new_ver, __ATOMIC_RELEASE);
+    }
+
+    for (int i = 0; i < count; i++) {
+        struct thread_ctx *ctx = dp[i]->ctx;
+
+        while (__atomic_load_n(&ctx->version, __ATOMIC_ACQUIRE) != new_ver) {
+            PAUSE();
+        }
+    }
+
+    return;
+}
 
 #endif // __DATAPLANE_H__
