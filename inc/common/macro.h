@@ -113,11 +113,11 @@
 #endif // MAX
 
 #ifndef UNROLL_LOOP_8
-#define UNROLL_LOOP_8(__idx, _count, _body)                      \
+#define UNROLL_LOOP_8(__idx, _start, _end, _body)                \
     do {                                                         \
-        typeof(_count) __idx = 0;                                \
-        typeof(_count) __n = (_count);                           \
-        switch (__n % 8) {                                       \
+        typeof(_start) __idx = (_start);                         \
+        typeof(_end) __n = (_end);                               \
+        switch ((__n - __idx) % 8) {                             \
         case 0: do { _body; __idx++;                             \
                     FALLTHROUGH;                                 \
         case 7: _body; __idx++;                                  \
@@ -139,11 +139,11 @@
 #endif // UNROLL_LOOP_8
 
 #ifndef UNROLL_LOOP_4
-#define UNROLL_LOOP_4(__idx, _count, _body)                      \
+#define UNROLL_LOOP_4(__idx, _start, _end, _body)                \
     do {                                                         \
-        typeof(_count) __idx = 0;                                \
-        typeof(_count) __n = (_count);                           \
-        switch (__n % 4) {                                       \
+        typeof(_start) __idx = (_start);                         \
+        typeof(_end) __n = (_end);                               \
+        switch ((__n - __idx) % 4) {                             \
         case 0: do { _body; __idx++;                             \
                   FALLTHROUGH;                                   \
         case 3: _body; __idx++;                                  \

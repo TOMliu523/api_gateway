@@ -119,9 +119,7 @@ static INLINE void dp_config_update(struct dataplane *dp)
         return;
     }
 
-    for (int i = 0; i < DP_CONFIG_MAX; i++) {
-        *ctx->pp_tables[i] = tc->table[i];
-    }
+    UNROLL_LOOP_8(i, 0, DP_CONFIG_MAX, *ctx->pp_tables[i] = tc->table[i]);
 
     __atomic_store_n(&ctx->version, version, __ATOMIC_RELEASE);
 }
