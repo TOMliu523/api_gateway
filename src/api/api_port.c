@@ -6,10 +6,9 @@
 
 #include <jansson.h>
 
-#include "dpdk_port.h"
-
 #include "log.h"
 #include "api.h"
+#include "dpdk_port.h"
 
 API_GET(port, /v1/port)
 {
