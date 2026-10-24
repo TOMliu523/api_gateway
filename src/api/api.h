@@ -42,7 +42,7 @@
     } \
     static int CAT(c, _delete)(void *param)
 
-#define API_OUTPUT_LEN (1024 * 1024)
+#define API_OUTPUT_LEN (2 * 1024 * 1024)
 #define API_RETURN_ERROR "{\"code\":%d, \"message\":\"%s\"}"
 #define API_RETURN_SUCCESS "{\"code\":0, \"data\":%s}"
 
@@ -107,6 +107,10 @@ extern const struct api_interface **api_get_all_post(int *nums);
 extern struct api_interface *api_get(const char *method, size_t method_len, const char *url, size_t url_len);
 extern void api_register(enum API_HTTP_METHOD method, const char *container, const char *url, api_cb_t cb);
 
+extern int api_param_set_success(void *param, void *data);
+extern void api_param_set_error(void *param, int code, const char *msg);
+extern int api_json_set(void *obj, const char *key, void *value, int type);
+
 static UNUSED void api_param_set_session(void *param, void *sess)
 {
     ((struct api_param *) param)->sess = sess;
@@ -145,18 +149,6 @@ static UNUSED void api_param_set_url(void *param, const char *url)
 static UNUSED const char *api_param_get_url(void *param)
 {
     return ((struct api_param *) param)->url;
-}
-
-static UNUSED void api_param_set_error(void *param, int code, const char *output)
-{
-    char *out = ((struct api_param *) param)->output;
-    snprintf(out, API_OUTPUT_LEN, API_RETURN_ERROR, code, output);
-}
-
-static UNUSED void api_param_set_success(void *param, const char *output)
-{
-    char *out = ((struct api_param *) param)->output;
-    snprintf(out, API_OUTPUT_LEN, API_RETURN_SUCCESS, output);
 }
 
 static UNUSED void *api_param_get_output(void *param)

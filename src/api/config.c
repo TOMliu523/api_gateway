@@ -188,7 +188,6 @@ static int _config_update_exec(sr_session_ctx_t *sess, uint32_t sub_id, const ch
     struct api_interface *iface = iface_param->iface;
     struct api_param *param = iface_param->param;
 
-    LOG_INFO("event: %d\n", event);
     switch (event) {
     case SR_EV_UPDATE: // password
         break;
@@ -212,7 +211,6 @@ static int _config_apply_changes(void *sess)
 
     ret = sr_apply_changes(sess, 0);
     if (ret != 0) {
-        LOG_ERROR("Function(sr_apply_changes) failure: %s", sr_strerror(ret));
         sr_discard_changes(sess);
         return API_STATUS_INTERNAL;
     }

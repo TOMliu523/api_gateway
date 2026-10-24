@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
+#include <jansson.h>
 
 #include "log.h"
 #include "api.h"
@@ -170,4 +171,142 @@ void api_register(enum API_HTTP_METHOD method, const char *container, const char
     }
 
     LOG_INFO("(%s, %s, %s) SUCCESS", container, s_api_method_string[method], url);
+}
+
+void api_param_set_error(void *param, int code, const char *msg)
+{
+    char *out = ((struct api_param *) param)->output;
+    snprintf(out, API_OUTPUT_LEN, API_RETURN_ERROR, code, msg);
+}
+
+int api_param_set_success(void *param, void *data)
+{
+    char *str = NULL;
+    struct api_param *ap = param;
+
+    str = json_dumps(data, 0);
+    if (str == NULL) {
+        LOG_ERROR("OOM");
+        return -1;
+    }
+
+    snprintf(ap->output, API_OUTPUT_LEN, API_RETURN_SUCCESS, str);
+    free(str);
+
+    return 0;
+}
+
+int api_json_set(void *obj, const char *key, void *value, int type)
+{
+    int ret = 0;
+
+    switch (type) {
+    case JSON_OBJECT:
+    case JSON_ARRAY:
+        ret = json_object_set(obj, key, value);
+        if (ret != 0) {
+            LOG_ERROR("OOM");
+            return -1;
+        }
+
+        break;
+    case JSON_STRING: {
+        json_t *str = json_string(value);
+        if (str == NULL) {
+            LOG_ERROR("OOM.");
+            return -1;
+        }
+
+        ret = json_object_set(obj, key, str);
+        if (ret != 0) {
+            LOG_ERROR("OOM");
+            json_decref(str);
+            return -1;
+        }
+
+        break;
+    }
+    case JSON_INTEGER: {
+        json_t *ivalue = json_integer(*(json_int_t *)value);
+        if (ivalue == NULL) {
+            LOG_ERROR("OOM.");
+            return -1;
+        }
+
+        ret = json_object_set(obj, key, ivalue);
+        if (ret != 0) {
+            LOG_ERROR("OOM");
+            json_decref(ivalue);
+            return -1;
+        }
+
+        break;
+    }
+    case JSON_REAL: {
+        json_t *real = json_real(*(double *)value);
+        if (real == NULL) {
+            LOG_ERROR("OOM.");
+            return -1;
+        }
+
+        ret = json_object_set(obj, key, real);
+        if (ret != 0) {
+            LOG_ERROR("OOM");
+            json_decref(real);
+            return -1;
+        }
+
+        break;
+    }
+    case JSON_TRUE: {
+        json_t *b = json_true();
+        if (b == NULL) {
+            LOG_ERROR("OOM.");
+            return -1;
+        }
+
+        ret = json_object_set(obj, key, b);
+        if (ret != 0) {
+            LOG_ERROR("OOM");
+            json_decref(b);
+            return -1;
+        }
+
+        break;
+    }
+    case JSON_FALSE: {
+        json_t *b = json_false();
+        if (b == NULL) {
+            LOG_ERROR("OOM.");
+            return -1;
+        }
+
+        ret = json_object_set(obj, key, b);
+        if (ret != 0) {
+            LOG_ERROR("OOM");
+            json_decref(b);
+            return -1;
+        }
+
+        break;
+    }
+    default: {
+        json_t *n = json_null();
+        if (n == NULL) {
+            LOG_ERROR("OOM.");
+            return -1;
+        }
+
+        ret = json_object_set(obj, key, n);
+        if (ret != 0) {
+            LOG_ERROR("OOM");
+            json_decref(n);
+            return -1;
+        }
+
+        break;
+    }
+    }
+
+    return ret;
 }
