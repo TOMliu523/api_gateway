@@ -115,31 +115,28 @@ static INLINE void dp_config_update(struct dataplane *dp)
     struct thread_config *tc = dp->tc;
 
     version = __atomic_load_n(&tc->version, __ATOMIC_ACQUIRE);
-    if (ctx->version == version) {
-        return;
-    }
 
-    UNROLL_LOOP_8(i, 0, DP_CONFIG_MAX, *ctx->pp_tables[i] = tc->table[i]);
+    if (ctx->version == version) { return; }
+    UNROLL_LOOP_8(i, 0, DP_CONFIG_MAX, {
+        *ctx->pp_tables[i] = tc->table[i];
+    });
 
     __atomic_store_n(&ctx->version, version, __ATOMIC_RELEASE);
 }
 
 static INLINE void dp_config_synchronize(struct dataplane *dp[], int count, int new_ver)
 {
-    for (int i = 0; i < count; i++) {
+    UNROLL_LOOP_8(i, 0, count, {
         struct thread_config *tc = dp[i]->tc;
         __atomic_store_n(&tc->version, new_ver, __ATOMIC_RELEASE);
-    }
+    });
 
-    for (int i = 0; i < count; i++) {
+    UNROLL_LOOP_8(i, 0, count, {
         struct thread_ctx *ctx = dp[i]->ctx;
-
         while (__atomic_load_n(&ctx->version, __ATOMIC_ACQUIRE) != new_ver) {
             PAUSE();
         }
-    }
-
-    return;
+    });
 }
 
 #endif // __DATAPLANE_H__

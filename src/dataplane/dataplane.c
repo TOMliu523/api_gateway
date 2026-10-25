@@ -160,8 +160,8 @@ int dp_startup(void *arg)
 
     for (;;) {
         dp_config_update(dataplane);
-        _dp_time_update(inv_hz_us);
 
+        _dp_time_update(inv_hz_us);
         for (int i = 0; i < DATAPLANE_BATCH_NUMS; i++) {
             for (int j = 0; j < ports_nums; j++) {
                 int count = 0;
