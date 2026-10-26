@@ -6,6 +6,7 @@
 
 #define _GNU_SOURCE
 #include <pthread.h>
+#include <sys/epoll.h>
 
 #include <jansson.h>
 #include <sysrepo.h>
@@ -14,8 +15,14 @@
 #include "log.h"
 #include "api.h"
 #include "config.h"
+#include "common.h"
 
 #define CONFIG_XPATH_LEN 128
+
+struct config_listen {
+    void *context;
+    void *subscript;
+};
 
 static int _config_read_value(sr_data_t *data, const char *key, const char **value)
 {
@@ -196,13 +203,73 @@ static int _config_update_exec(sr_session_ctx_t *sess, uint32_t sub_id, const ch
     case SR_EV_DONE:
         break;
     case SR_EV_ENABLED:
-        pthread_setname_np(pthread_self(), "API_EXEC");
         return _config_init(sess, module_name, param);
     default:
         break;
     }
 
     return 0;
+}
+
+static void *_config_update_listen(void *arg)
+{
+    int ret = 0;
+    int epoll_fd = -1;
+    UNUSED void *context = NULL;
+    int event_pipe_fd = -1;
+    struct epoll_event ev = {0};
+    struct epoll_event events[1] = {0};
+    struct config_listen *cli = (struct config_listen *)arg;
+
+    pthread_setname_np(pthread_self(), "CONFIG_UPDATE");
+    ret = sr_get_event_pipe(cli->subscript, &event_pipe_fd);
+    if (ret != SR_ERR_OK) {
+        LOG_ERROR("sr_get_event_pipe failed: %s", sr_strerror(ret));
+        pthread_exit(NULL);
+    }
+
+    epoll_fd = epoll_create1(EPOLL_CLOEXEC);
+    if (epoll_fd < 0) {
+        LOG_ERROR("Function(epoll_create1) failure: %s", strerror(errno));
+        pthread_exit(NULL);
+    }
+
+    ev.events = EPOLLIN;
+    ev.data.fd = event_pipe_fd;
+
+    ret = epoll_ctl(epoll_fd, EPOLL_CTL_ADD, event_pipe_fd, &ev);
+    if (ret < 0) {
+        LOG_ERROR("Function(epoll_ctl) failure: %s", strerror(errno));
+        goto _quit;
+    }
+
+    context = cli->context;
+    for (;;) {
+        int n = epoll_wait(epoll_fd, events, 1, 0);
+        if (n > 0) {
+            if (events[0].events & EPOLLIN) {
+                ret = sr_subscription_process_events(cli->subscript, NULL, NULL);
+                if (ret != SR_ERR_OK) {
+                    LOG_ERROR("sr_subscription_process_events failed: %s", sr_strerror(ret));
+                    break;
+                }
+            }
+        } else if (n < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+
+            LOG_ERROR("epoll_wait failed: %s", strerror(errno));
+            break;
+        }
+
+        // READ RING
+        // context
+    }
+
+_quit:
+    close(epoll_fd);
+    pthread_exit(NULL);
 }
 
 static int _config_apply_changes(void *sess)
@@ -635,15 +702,31 @@ void config_boot_free(struct boot_config *config)
 int config_subscript(void *arg)
 {
     int ret = 0;
+    int options = 0;
+    pthread_t thid = {0};
     sr_session_ctx_t *sess = NULL;
     sr_subscription_ctx_t *subscript = NULL;
     struct api_iface_param *iface_param = arg;
+    struct context *context = (struct context *)iface_param->param->context;
+
+    static __thread struct config_listen s_config_listen = {0};
+
+    check_and_wait(context->root.dataplane, context->info.cpu_count);
 
     sess = api_param_get_session(iface_param->param);
-
-    ret = sr_module_change_subscribe(sess, "v1", NULL, _config_update_exec, iface_param, 0, SR_SUBSCR_UPDATE | SR_SUBSCR_ENABLED, &subscript);
+    options = SR_SUBSCR_NO_THREAD | SR_SUBSCR_UPDATE | SR_SUBSCR_ENABLED;
+    ret = sr_module_change_subscribe(sess, "v1", NULL, _config_update_exec, iface_param, 0, options, &subscript);
     if (ret != SR_ERR_OK) {
         LOG_ERROR("Function(sr_module_change_subscribt) failure: %s", sr_strerror(ret));
+        return -1;
+    }
+
+    s_config_listen.subscript = subscript;
+    s_config_listen.context = ((struct api_param *)(iface_param->param))->context;
+    ret = pthread_create(&thid, NULL, _config_update_listen, &s_config_listen);
+    if (ret != 0) {
+        LOG_ERROR("Function(pthread_create) failure: %s", strerror(ret));
+        sr_unsubscribe(subscript);
         return -1;
     }
 
