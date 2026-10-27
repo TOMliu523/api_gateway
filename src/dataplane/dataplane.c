@@ -9,6 +9,7 @@
 
 #include "top.h"
 #include "log.h"
+#include "atomic.h"
 #include "common.h"
 #include "dpdk_ip.h"
 #include "dpdk_core.h"
