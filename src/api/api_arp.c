@@ -13,7 +13,7 @@
 
 #define API_ARP_CONTAINER "/v1:arp"
 
-static char *_arp_get(void *param, sr_data_t *data)
+static void *_arp_get(void *param, sr_data_t *data)
 {
     LY_ERR err = 0;
     char *json = NULL;
@@ -41,15 +41,7 @@ static char *_arp_get(void *param, sr_data_t *data)
         return NULL;
     }
 
-    json = json_dumps(root, JSON_COMPACT);
-    json_decref(root);
-    if (json == NULL) {
-        LOG_ERROR("Function(json_dumps) failure");
-        api_param_set_error(param, API_ERRCODE_ARP_FORMAT, "json format error");
-        return NULL;
-    }
-
-    return json;
+    return root;
 }
 
 API_POST(arp, /v1/arp)
