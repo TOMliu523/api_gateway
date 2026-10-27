@@ -20,7 +20,8 @@
 #define DATAPLANE_MBUF_NUMS 64
 #define DATAPLANE_BATCH_NUMS 64
 #define DATAPLANE_PORT_LOOP_MAX 16
-#define DATAPLANE_MSG_MAX (65536 * 2)
+#define DATAPLANE_CONFIG_MAX (1024 * 16)
+#define DATAPLANE_RUNTIME_MAX (65536 * 16)
 
 static __thread struct dataplane *dataplane;
 
@@ -48,8 +49,12 @@ static void _dp_fini(void)
         free(dataplane->stats);
     }
 
-    if (dataplane->message_ring != NULL) {
-        dpdk_ring_destroy(dataplane->message_ring);
+    if (dataplane->to_runtime != NULL) {
+        dpdk_ring_destroy(dataplane->to_runtime);
+    }
+
+    if (dataplane->to_config != NULL) {
+        dpdk_ring_destroy(dataplane->to_config);
     }
 
     if (dataplane->frag_handle != NULL) {
@@ -116,9 +121,15 @@ static void _dp_init(struct data_root *root)
 
     dataplane->timer_cycles = dpdk_timer_cycles();
 
-    snprintf(name, sizeof(name), "MSG_RING_%d", dataplane->cpu_id);
-    dataplane->message_ring = dpdk_ring_ss_create(name, DATAPLANE_MSG_MAX, dataplane->hw_numa_id);
-    if (dataplane->message_ring == NULL) {
+    snprintf(name, sizeof(name), "TO_RUNTIME_%d", dataplane->cpu_id);
+    dataplane->to_runtime = dpdk_ring_ss_create(name, DATAPLANE_RUNTIME_MAX, dataplane->hw_numa_id);
+    if (dataplane->to_runtime == NULL) {
+        goto _quit;
+    }
+
+    snprintf(name, sizeof(name), "TO_CONFIG_%d", dataplane->cpu_id);
+    dataplane->to_config = dpdk_ring_ss_create(name, DATAPLANE_CONFIG_MAX, dataplane->hw_numa_id);
+    if (dataplane->to_config == NULL) {
         goto _quit;
     }
 

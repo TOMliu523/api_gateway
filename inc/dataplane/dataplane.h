@@ -98,7 +98,8 @@ struct dataplane {
     uint64_t off_time_us;
     uint64_t timer_cycles;
 
-    void *message_ring;
+    void *to_runtime;
+    void *to_config;
     void *frag_handle;
     struct thread_ctx *ctx;
     struct thread_config *tc; // Pointer to the configuration for this NUMA node
