@@ -184,14 +184,18 @@ int api_param_set_success(void *param, void *data)
     char *str = NULL;
     struct api_param *ap = param;
 
-    str = json_dumps(data, 0);
-    if (str == NULL) {
-        LOG_ERROR("OOM");
-        return -1;
-    }
+    if (data != NULL) {
+        str = json_dumps(data, 0);
+        if (str == NULL) {
+            LOG_ERROR("OOM");
+            return -1;
+        }
 
-    snprintf(ap->output, API_OUTPUT_LEN, API_RETURN_SUCCESS, str);
-    free(str);
+        snprintf(ap->output, API_OUTPUT_LEN, API_RETURN_SUCCESS, str);
+        free(str);
+    } else {
+        snprintf(ap->output, API_OUTPUT_LEN, API_RETURN_SUCCESS, "\"\"");
+    }
 
     return 0;
 }

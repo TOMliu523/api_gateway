@@ -20,11 +20,6 @@ static void *_arp_get(void *param, sr_data_t *data)
     json_t *root = NULL;
     const char *errmsg = NULL;
 
-    if (data == NULL || data->tree == NULL) {
-        api_param_set_success(param, "");
-        return NULL;
-    }
-
     err = lyd_print_mem(&json, data->tree, LYD_JSON, LYD_PRINT_WITHSIBLINGS);
     if (err != 0) {
         errmsg = ly_strerr(err);
@@ -78,6 +73,9 @@ API_GET(arp, /v1/arp)
         LOG_ERROR("Function(sr_get_data) error: %s", errmsg);
         api_param_set_error(param, API_ERRCODE_ARP_DB, errmsg);
         goto _quit;
+    } else if (data == NULL || data->tree == NULL) {
+        api_param_set_success(data, NULL);
+        return 0;
     }
 
     str = _arp_get(param, data);

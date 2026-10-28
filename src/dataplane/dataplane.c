@@ -141,7 +141,8 @@ static void _dp_init(struct data_root *root)
 
     ret = alloc_align((void **)&dataplane->ctx, sizeof(*dataplane->ctx));
     if (ret != 0) {
-        LOG_ERROR();
+        LOG_ERROR("OOM.");
+        goto _quit;
     }
 
     memset(dataplane->ctx, 0, sizeof(*dataplane->ctx));

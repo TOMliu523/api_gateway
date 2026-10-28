@@ -212,13 +212,18 @@ static int _config_update_exec(sr_session_ctx_t *sess, uint32_t sub_id, const ch
     return 0;
 }
 
+static void _config_event(void **array, int nums)
+{
+
+}
+
 static void *_config_update_listen(void *arg)
 {
     int ret = 0;
     int epoll_fd = -1;
-    UNUSED void *context = NULL;
     int event_pipe_fd = -1;
     struct epoll_event ev = {0};
+    struct context *context = NULL;
     struct epoll_event events[1] = {0};
     struct config_listen *cli = (struct config_listen *)arg;
 
@@ -265,7 +270,7 @@ static void *_config_update_listen(void *arg)
         }
 
         // READ RING
-        // context
+        _config_event(context->root.dataplane, context->info.cpu_count);
     }
 
 _quit:
