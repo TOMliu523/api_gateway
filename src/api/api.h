@@ -61,6 +61,7 @@ enum API_HTTP_METHOD {
 #undef XX
 };
 
+// http status
 enum API_STATUS {
     API_STATUS_SUCCESS = 0,
 
@@ -73,14 +74,19 @@ enum API_STATUS {
     API_STATUS_EXIST = -7,
 };
 
+#define API_ERRCODE(XX) \
+    XX(SUCCESS, 0, "OK") \
+    XX(INNER, -1, "inner error") \
+    XX(OOM, -2, "oom") \
+    XX(CONFIG_QUERY, -10, "config query error") \
+    XX(JSON_FORMAT, -11, "json format error") \
+    XX(CONTENT, -12, "")
+
+// Business Error Code
 enum API_ERRCODE {
-    API_ERRCODE_SUCCESS,
-
-    API_ERRCODE_ARP_DB = -100,
-    API_ERRCODE_ARP_FORMAT = -101,
-
-    API_ERRCODE_IPv4_DB = -200,
-    API_ERRCODE_IPv4_FORMAT = -201,
+#define XX(code, value, msg) API_ERRCODE_##code = value,
+    API_ERRCODE(XX)
+#undef XX
 };
 
 struct api_param {
@@ -111,8 +117,11 @@ extern struct api_interface *api_get(const char *method, size_t method_len, cons
 extern void api_register(enum API_HTTP_METHOD method, const char *container, const char *url, api_cb_t cb);
 
 extern int api_param_set_success(void *param, void *data);
-extern void api_param_set_error(void *param, int code, const char *msg);
+extern void api_param_set_error(void *param, int code, ...);
+
+extern int api_json_get(const void *obj, const char *key, const void **pp_value, int type);
 extern int api_json_set(void *obj, const char *key, void *value, int type);
+extern int api_json_v1_update_list(void *json, const char *module_name, const char *list_name, void **pp_array, size_t *p_count);
 
 static UNUSED void api_param_set_session(void *param, void *sess)
 {

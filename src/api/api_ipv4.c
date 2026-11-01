@@ -8,12 +8,116 @@
 #include <sysrepo.h>
 #include <libyang/libyang.h>
 
+#include "top.h"
 #include "log.h"
 #include "api.h"
 
-#define API_IPV4_CONTAINER "/v1/ipv4"
+#define API_IPv4_NAME_LEN 16
+#define API_IPv4_MODULE_NAME "ipv4"
+#define API_IPv4_LIST_NAME "interface"
 
-static void *_ipv4_get(void *param, sr_data_t *data)
+struct api_ipv4_address {
+    uint32_t ip;
+    int mask;
+};
+
+struct api_ipv4 {
+    char name[API_IPv4_NAME_LEN];
+
+    int count;
+    struct api_ipv4_address *address;
+};
+
+struct api_ipv4_hdr {
+    int count;
+    struct api_ipv4 *ipv4;
+};
+
+static INLINE void _api_ipv4_fini(struct api_ipv4 *ipv4)
+{
+    if (ipv4 == NULL || ipv4->count == 0 || ipv4->address == NULL) {
+        return;
+    }
+
+    free(ipv4->address);
+
+    ipv4->count = 0;
+    ipv4->address = NULL;
+
+    return;
+}
+
+static void _api_ipv4_hdr_fini(struct api_ipv4_hdr *ipv4hdr)
+{
+    if (ipv4hdr == NULL) {
+        return;
+    }
+
+    for (int i = 0; i < ipv4hdr->count; i++) {
+        struct api_ipv4 *one = &ipv4hdr->ipv4[i];
+
+        _api_ipv4_fini(one);
+    }
+
+    free(ipv4hdr);
+}
+
+static struct api_ipv4_hdr *_api_ipv4_parse(void *param)
+{
+    int ret = 0;
+    int total = 0;
+    size_t count = 0;
+    void *json = NULL;
+    void *array = NULL;
+    struct api_ipv4_hdr *ipv4hdr = NULL;
+
+    json = api_param_get_input(param);
+    ret = api_json_v1_update_list(json, "ipv4", "interface", &array, &count);
+    if (ret != 0) {
+        api_param_set_error(param, ret, "inner error");
+        return NULL;
+    }
+
+    total = sizeof(*ipv4hdr) + count * sizeof(struct api_ipv4);
+    ipv4hdr = malloc(total);
+    if (ipv4hdr == NULL) {
+        LOG_ERROR("OOM");
+        api_param_set_error(param, API_ERRCODE_OOM, "OOM");
+        return NULL;
+    }
+
+    memset(ipv4hdr, 0, total);
+
+    for (int i = 0; i < count; i++) {
+        const char *name = NULL;
+        void *one = json_array_get(array, i);
+        struct api_ipv4 *ipv4 = &ipv4hdr->ipv4[i];
+
+        ret = api_json_set(one, "name", (const void **)&name, JSON_STRING);
+        if (ret != 0) {
+            api_param_set_error(param, ret, "inner error");
+            goto _quit;
+        }
+
+        if (strlen(name) >= API_IPv4_NAME_LEN) {
+            LOG_ERROR("Inner error");
+            api_param_set_error(param, ret, "inner error");
+            goto _quit;
+        }
+
+        strcpy(ipv4->name, name);
+
+        ipv4hdr->count += 1;
+    }
+
+    return ipv4hdr;
+
+_quit:
+    _api_ipv4_hdr_fini(ipv4hdr);
+    return NULL;
+}
+
+static void *_api_ipv4_get(void *param, sr_data_t *data)
 {
     LY_ERR err = 0;
     char *json = NULL;
@@ -24,7 +128,7 @@ static void *_ipv4_get(void *param, sr_data_t *data)
     if (err != 0) {
         errmsg = ly_strerr(err);
         LOG_ERROR("Function(lyd_print_mem) failure: %s", errmsg);
-        api_param_set_error(param, API_ERRCODE_IPv4_DB, errmsg);
+        api_param_set_error(param, API_ERRCODE_CONFIG_QUERY);
         return NULL;
     }
 
@@ -32,7 +136,7 @@ static void *_ipv4_get(void *param, sr_data_t *data)
     free(json);
     if (root == NULL) {
         LOG_ERROR("Function(json_loads) failure");
-        api_param_set_error(param, API_ERRCODE_IPv4_FORMAT, "format error");
+        api_param_set_error(param, API_ERRCODE_JSON_FORMAT);
         return NULL;
     }
 
@@ -41,6 +145,16 @@ static void *_ipv4_get(void *param, sr_data_t *data)
 
 API_POST(ipv4, /v1/ipv4)
 {
+    // void *json = NULL;
+    // struct context *context = NULL;
+    struct api_ipv4_hdr *ipv4hdr = NULL;
+
+    ipv4hdr = _api_ipv4_parse(param);
+    if (ipv4hdr == NULL) {
+        return -1;
+    }
+
+
     return 0;
 }
 
@@ -63,11 +177,11 @@ API_GET(ipv4, /v1/ipv4)
     const char *errmsg = NULL;
 
     sess = api_param_get_session(param);
-    ret = sr_get_data(sess, API_IPV4_CONTAINER, 0, 0, 0, &data);
+    ret = sr_get_data(sess, "/v1/ipv4", 0, 0, 0, &data);
     if (ret != 0 && ret != SR_ERR_NOT_FOUND) {
         errmsg = sr_strerror(ret);
         LOG_ERROR("Function(sr_get_data) error: %s", errmsg);
-        api_param_set_error(param, API_ERRCODE_IPv4_DB, errmsg);
+        api_param_set_error(param, API_ERRCODE_CONFIG_QUERY, errmsg);
 
         goto _quit;
     } else if (data == NULL || data->tree == NULL) {
@@ -75,7 +189,7 @@ API_GET(ipv4, /v1/ipv4)
         return 0;
     }
 
-    str = _ipv4_get(param, data);
+    str = _api_ipv4_get(param, data);
     if (str == NULL) {
         goto _quit;
     }

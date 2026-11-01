@@ -24,7 +24,7 @@ static void *_arp_get(void *param, sr_data_t *data)
     if (err != 0) {
         errmsg = ly_strerr(err);
         LOG_ERROR("Function(lyd_print_mem) failure: %s", errmsg);
-        api_param_set_error(param, API_ERRCODE_ARP_DB, errmsg);
+        api_param_set_error(param, API_ERRCODE_CONFIG_QUERY, errmsg);
         return NULL;
     }
 
@@ -32,7 +32,7 @@ static void *_arp_get(void *param, sr_data_t *data)
     free(json);
     if (root == NULL) {
         LOG_ERROR("Function(json_loads) failure");
-        api_param_set_error(param, API_ERRCODE_ARP_FORMAT, "format error");
+        api_param_set_error(param, API_ERRCODE_JSON_FORMAT, "format error");
         return NULL;
     }
 
@@ -71,7 +71,7 @@ API_GET(arp, /v1/arp)
     if (ret != 0) {
         errmsg = sr_strerror(ret);
         LOG_ERROR("Function(sr_get_data) error: %s", errmsg);
-        api_param_set_error(param, API_ERRCODE_ARP_DB, errmsg);
+        api_param_set_error(param, API_ERRCODE_CONFIG_QUERY, errmsg);
         goto _quit;
     } else if (data == NULL || data->tree == NULL) {
         api_param_set_success(data, NULL);

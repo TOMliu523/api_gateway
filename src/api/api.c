@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
+#include <stdarg.h>
 #include <jansson.h>
 
 #include "log.h"
@@ -18,6 +19,11 @@
 static const char *s_api_method_string[] = {
 #define XX(num, method) [num] = #method,
     API_XX(XX)
+#undef XX
+};
+static const char *s_api_errcode_msg[] = {
+#define XX(code, value, msg) [-API_ERRCODE_##code] = msg,
+    API_ERRCODE(XX)
 #undef XX
 };
 static struct list_head s_api_head[API_HASH_BUCKET];
@@ -173,10 +179,27 @@ void api_register(enum API_HTTP_METHOD method, const char *container, const char
     LOG_INFO("(%s, %s, %s) SUCCESS", container, s_api_method_string[method], url);
 }
 
-void api_param_set_error(void *param, int code, const char *msg)
+void api_param_set_error(void *param, int code, ...)
 {
     char *out = ((struct api_param *) param)->output;
-    snprintf(out, API_OUTPUT_LEN, API_RETURN_ERROR, code, msg);
+
+    switch (code) {
+    case API_ERRCODE_CONTENT: {
+        va_list vp;
+        const char *msg = NULL;
+
+        va_start(vp, code);
+        msg = va_arg(vp, const char *);
+        va_end(vp);
+
+        snprintf(out, API_OUTPUT_LEN, API_RETURN_ERROR, code, msg);
+        break;
+    }
+
+    default:
+        snprintf(out, API_OUTPUT_LEN, API_RETURN_ERROR, code, s_api_errcode_msg[-code]);
+        break;
+    }
 }
 
 int api_param_set_success(void *param, void *data)
@@ -195,6 +218,60 @@ int api_param_set_success(void *param, void *data)
         free(str);
     } else {
         snprintf(ap->output, API_OUTPUT_LEN, API_RETURN_SUCCESS, "\"\"");
+    }
+
+    return 0;
+}
+
+int api_json_get(const void *obj, const char *key, const void **pp_value, int type)
+{
+    double d = 0;
+    void *value = NULL;
+    json_int_t json_i = 0;
+
+    if (obj == NULL || key == NULL) {
+        LOG_ERROR("Invalid parameter");
+        return API_ERRCODE_INNER;
+    }
+
+    value = json_object_get(obj, key);
+    if (value == NULL) {
+        LOG_ERROR("Inner error");
+        return API_ERRCODE_INNER;
+    }
+
+    switch (type) {
+    case JSON_STRING:
+        *pp_value = json_string_value(value);
+        if (*pp_value == NULL) {
+            LOG_ERROR("Inner error.");
+            return API_ERRCODE_INNER;
+        }
+        break;
+
+    case JSON_INTEGER:
+        json_i = json_integer_value(value);
+        *pp_value = *(void **)&json_i;
+        break;
+
+    case JSON_TRUE:
+        json_i = json_integer_value(value);
+        *pp_value = *(void **)&json_i;
+        break;
+
+    case JSON_FALSE:
+        json_i = json_integer_value(value);
+        *pp_value = *(void **)&json_i;
+        break;
+
+    case JSON_REAL:
+        d = json_real_value(value);
+        *pp_value = *(void **)&d;
+        break;
+
+    default:
+        LOG_ERROR("Invalid type(%d)", type);
+        return API_ERRCODE_INNER;
     }
 
     return 0;
@@ -313,4 +390,40 @@ int api_json_set(void *obj, const char *key, void *value, int type)
     }
 
     return ret;
+}
+
+int api_json_v1_update_list(void *json, const char *module_name, const char *list_name, void **pp_array, size_t *p_count)
+{
+    int nbytes = 0;
+    void *obj = NULL;
+    void *array = NULL;
+    char buffer[BUFSIZ] = "";
+
+    if (json == NULL || module_name == NULL || list_name == NULL || pp_array == NULL || p_count == NULL) {
+        LOG_ERROR("Invalid parameter.");
+        return API_ERRCODE_INNER;
+    }
+
+    nbytes = snprintf(buffer, sizeof(buffer), "v1:%s", module_name);
+    if (nbytes >= sizeof(buffer) || nbytes < 0) {
+        LOG_ERROR("Inner error.");
+        return API_ERRCODE_INNER;
+    }
+
+    obj = json_object_get(json, buffer);
+    if (obj == NULL) {
+        LOG_ERROR("Invalid parameter.");
+        return API_ERRCODE_INNER;
+    }
+
+    array = json_object_get(obj, list_name);
+    if (array == NULL) {
+        LOG_ERROR("Invalid parameter.");
+        return API_ERRCODE_INNER;
+    }
+
+    *pp_array = array;
+    *p_count = json_array_size(array);
+
+    return 0;
 }
