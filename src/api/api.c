@@ -184,7 +184,8 @@ void api_param_set_error(void *param, int code, ...)
     char *out = ((struct api_param *) param)->output;
 
     switch (code) {
-    case API_ERRCODE_CONTENT: {
+    case API_ERRCODE_CONTENT:
+    case API_ERRCODE_CONFIG_QUERY: {
         va_list vp;
         const char *msg = NULL;
 

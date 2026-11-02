@@ -74,7 +74,7 @@ static struct api_ipv4_hdr *_api_ipv4_parse(void *param)
     json = api_param_get_input(param);
     ret = api_json_v1_update_list(json, "ipv4", "interface", &array, &count);
     if (ret != 0) {
-        api_param_set_error(param, ret, "inner error");
+        api_param_set_error(param, ret);
         return NULL;
     }
 
@@ -82,7 +82,7 @@ static struct api_ipv4_hdr *_api_ipv4_parse(void *param)
     ipv4hdr = malloc(total);
     if (ipv4hdr == NULL) {
         LOG_ERROR("OOM");
-        api_param_set_error(param, API_ERRCODE_OOM, "OOM");
+        api_param_set_error(param, API_ERRCODE_OOM);
         return NULL;
     }
 
@@ -95,17 +95,18 @@ static struct api_ipv4_hdr *_api_ipv4_parse(void *param)
 
         ret = api_json_set(one, "name", (const void **)&name, JSON_STRING);
         if (ret != 0) {
-            api_param_set_error(param, ret, "inner error");
+            api_param_set_error(param, ret);
             goto _quit;
         }
 
         if (strlen(name) >= API_IPv4_NAME_LEN) {
             LOG_ERROR("Inner error");
-            api_param_set_error(param, ret, "inner error");
+            api_param_set_error(param, ret);
             goto _quit;
         }
 
         strcpy(ipv4->name, name);
+
 
         ipv4hdr->count += 1;
     }

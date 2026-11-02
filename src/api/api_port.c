@@ -19,7 +19,7 @@ API_GET(port, /v1/port)
     info = dpdk_port_info_get();
     if (info == NULL) {
         LOG_INFO("PORT info failure.");
-        api_param_set_error(param, API_STATUS_INTERNAL, "PORT info failure");
+        api_param_set_error(param, API_ERRCODE_INNER);
         return -1;
     }
 
@@ -75,6 +75,6 @@ API_GET(port, /v1/port)
 _quit:
     LOG_ERROR("OOM");
     json_decref(data);
-    api_param_set_error(param, API_STATUS_INTERNAL, "PORT info failure");
+    api_param_set_error(param, API_ERRCODE_INNER);
     return -1;
 }

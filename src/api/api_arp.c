@@ -32,7 +32,7 @@ static void *_arp_get(void *param, sr_data_t *data)
     free(json);
     if (root == NULL) {
         LOG_ERROR("Function(json_loads) failure");
-        api_param_set_error(param, API_ERRCODE_JSON_FORMAT, "format error");
+        api_param_set_error(param, API_ERRCODE_JSON_FORMAT);
         return NULL;
     }
 

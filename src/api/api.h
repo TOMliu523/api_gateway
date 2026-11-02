@@ -78,7 +78,7 @@ enum API_STATUS {
     XX(SUCCESS, 0, "OK") \
     XX(INNER, -1, "inner error") \
     XX(OOM, -2, "oom") \
-    XX(CONFIG_QUERY, -10, "config query error") \
+    XX(CONFIG_QUERY, -10, "") \
     XX(JSON_FORMAT, -11, "json format error") \
     XX(CONTENT, -12, "")
 
