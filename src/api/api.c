@@ -242,6 +242,14 @@ int api_json_get(const void *obj, const char *key, const void **pp_value, int ty
     }
 
     switch (type) {
+    case JSON_ARRAY:
+        *pp_value = json_object_get(obj, key);
+        if (*pp_value == NULL) {
+            LOG_ERROR("Inner error.");
+            return API_ERRCODE_INNER;
+        }
+        break;
+
     case JSON_STRING:
         *pp_value = json_string_value(value);
         if (*pp_value == NULL) {

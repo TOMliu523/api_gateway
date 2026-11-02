@@ -54,6 +54,7 @@ static INLINE int _api_status_to_http_status(enum API_STATUS errcode)
         return 200;
     case API_STATUS_METHOD_NOT_SUPPORT:
     case API_STATUS_URL_NOT_EXIST:
+    case API_STATUS_FORMAT:
     case API_STATUS_EXIST:
         return 404;
     case API_STATUS_INTERNAL:

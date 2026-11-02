@@ -168,4 +168,10 @@ static UNUSED void *api_param_get_output(void *param)
     return ((struct api_param *) param)->output;
 }
 
+static UNUSED void api_param_output_clean(void *param)
+{
+    char *out = ((struct api_param *) param)->output;
+    memset(out, 0, API_OUTPUT_LEN);
+}
+
 #endif // __API_H__

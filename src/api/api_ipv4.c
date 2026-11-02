@@ -6,6 +6,7 @@
 
 #include <jansson.h>
 #include <sysrepo.h>
+#include <arpa/inet.h>
 #include <libyang/libyang.h>
 
 #include "top.h"
@@ -18,7 +19,7 @@
 
 struct api_ipv4_address {
     uint32_t ip;
-    int mask;
+    uint8_t mask;
 };
 
 struct api_ipv4 {
@@ -89,7 +90,9 @@ static struct api_ipv4_hdr *_api_ipv4_parse(void *param)
     memset(ipv4hdr, 0, total);
 
     for (int i = 0; i < count; i++) {
+        int address_count = 0;
         const char *name = NULL;
+        void *address_array = NULL;
         void *one = json_array_get(array, i);
         struct api_ipv4 *ipv4 = &ipv4hdr->ipv4[i];
 
@@ -106,7 +109,48 @@ static struct api_ipv4_hdr *_api_ipv4_parse(void *param)
         }
 
         strcpy(ipv4->name, name);
+        ret = api_json_get(one, "address", (const void **)&address_array, JSON_ARRAY);
+        if (ret != 0) {
+            api_param_set_error(param, ret);
+            goto _quit;
+        }
 
+        address_count = json_array_size(address_array);
+        ipv4->address = malloc(sizeof(*ipv4->address) * address_count);
+        if (ipv4->address == NULL) {
+            LOG_ERROR("OOM");
+            api_param_set_error(param, API_ERRCODE_OOM);
+            goto _quit;
+        }
+
+        memset(ipv4->address, 0, sizeof(*ipv4->address) * address_count);
+        ipv4->count = address_count;
+
+        for (int j = 0; j < address_count; j++) {
+            char *ip_value = NULL;
+            json_int_t prefix_value = 0;
+            void *addr_json = json_array_get(address_array, j);
+            struct api_ipv4_address *address = &ipv4->address[j];
+
+            ret = api_json_get(addr_json, "ip", (const void **)&ip_value, JSON_STRING);
+            if (ret != 0) {
+                api_param_set_error(param, ret);
+                goto _quit;
+            }
+
+            ret = api_json_get(addr_json, "prefix-length", (const void **)&prefix_value, JSON_INTEGER);
+            if (ret != 0) {
+                api_param_set_error(param, ret);
+                goto _quit;
+            }
+
+            address->mask = (uint8_t)prefix_value;
+            ret = inet_pton(AF_INET, ip_value, &address->ip);
+            if (ret != 1) {
+                LOG_ERROR("IPv4 address format error.");
+                goto _quit;
+            }
+        }
 
         ipv4hdr->count += 1;
     }

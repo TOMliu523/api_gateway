@@ -683,6 +683,7 @@ void config_param_clean(void *param)
     in = api_param_get_input(param);
     json_decref(in);
     api_param_set_input(param, NULL);
+    api_param_output_clean(param);
 }
 
 void config_boot_free(struct boot_config *config)
