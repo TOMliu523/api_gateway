@@ -5,6 +5,10 @@ submodule ipv4 {
         prefix v1;
     }
 
+    import ietf-inet-types {
+        prefix inet;
+    }
+
     description "IPv4 address configuration for network interfaces.";
 
     container ipv4 {

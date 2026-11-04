@@ -104,32 +104,36 @@ static int _config_submodule_init(void **pp_json, void *sess, char *xpath)
     sr_data_t *data = NULL;
 
     ret = sr_get_data(sess, xpath, 0, 0, 0, &data);
-    if (ret != SR_ERR_OK) {
+    if (ret != SR_ERR_OK || data == NULL) {
         LOG_ERROR("Function(sr_get_data) failure: %s", sr_strerror(ret));
         return -1;
     }
 
-    if (data == NULL || data->tree == NULL) {
+    if (lyd_child(data->tree) == NULL) {
         sr_release_data(data);
-        return 0;
+        return 1;
     }
 
-    err = lyd_print_mem(&str, data->tree, LYD_JSON, LYD_PRINT_WITHSIBLINGS);
+    err = lyd_print_mem(&str, data->tree, LYD_JSON, LYD_PRINT_WITHSIBLINGS | LYD_PRINT_SHRINK);
     sr_release_data(data);
     if (err != LY_SUCCESS) {
         LOG_ERROR("Function(lyd_print_mem) failure: %s", ly_strerr(err));
         return -1;
     }
 
+    if (strcmp(str, "{}") == 0) {
+        free(str);
+        return 1;
+    }
+
     json = json_loads(str, 0, NULL);
+    free(str);
     if (json == NULL) {
         LOG_ERROR("String(%s) to json failure", str);
         return -1;
     }
 
-    free(str);
     *pp_json = json;
-
     return 0;
 }
 
@@ -169,7 +173,9 @@ static int _config_init(void *sess, const char *module_name, void *param)
 
         snprintf(xpath, sizeof(xpath), "/%s:%s", module_name, one->container);
         ret = _config_submodule_init(&json, sess, xpath);
-        if (ret != 0) {
+        if (ret > 0) {
+            continue;
+        } else if (ret < 0) {
             return -1;
         }
 

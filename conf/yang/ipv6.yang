@@ -5,9 +5,13 @@ submodule ipv6 {
         prefix v1;
     }
 
+    import ietf-inet-types {
+        prefix inet;
+    }
+
     description "IPv6 address configuration for network interfaces.";
 
-    container ipv6 { 
+    container ipv6 {
         description "IPv6 interface address configuration.";
 
         list interface {
