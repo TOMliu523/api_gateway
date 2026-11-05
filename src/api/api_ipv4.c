@@ -17,60 +17,49 @@
 #define API_IPv4_MODULE_NAME "ipv4"
 #define API_IPv4_LIST_NAME "interface"
 
-struct api_ipv4_address {
+struct interface_address {
     uint32_t ip;
     uint8_t mask;
 };
 
-struct api_ipv4 {
+struct ipv4_interface {
     char name[API_IPv4_NAME_LEN];
 
     int count;
-    struct api_ipv4_address *address;
+    struct interface_address *address;
 };
 
-struct api_ipv4_hdr {
+struct api_ipv4 {
     int count;
-    struct api_ipv4 *ipv4;
+    struct ipv4_interface iface[];
 };
 
 static INLINE void _api_ipv4_fini(struct api_ipv4 *ipv4)
 {
-    if (ipv4 == NULL || ipv4->count == 0 || ipv4->address == NULL) {
+    if (ipv4 == NULL || ipv4->count == 0) {
         return;
     }
 
-    free(ipv4->address);
+    for (int i = 0; i < ipv4->count; i++) {
+        struct ipv4_interface *iface = &ipv4->iface[i];
 
-    ipv4->count = 0;
-    ipv4->address = NULL;
-
-    return;
-}
-
-static void _api_ipv4_hdr_fini(struct api_ipv4_hdr *ipv4hdr)
-{
-    if (ipv4hdr == NULL) {
-        return;
+        if (iface->address != NULL) {
+            free(iface->address);
+            iface->address = NULL;
+        }
     }
 
-    for (int i = 0; i < ipv4hdr->count; i++) {
-        struct api_ipv4 *one = &ipv4hdr->ipv4[i];
-
-        _api_ipv4_fini(one);
-    }
-
-    free(ipv4hdr);
+    free(ipv4);
 }
 
-static struct api_ipv4_hdr *_api_ipv4_parse(void *param)
+static struct api_ipv4 *_api_ipv4_parse(void *param)
 {
     int ret = 0;
     int total = 0;
     size_t count = 0;
     void *json = NULL;
     void *array = NULL;
-    struct api_ipv4_hdr *ipv4hdr = NULL;
+    struct api_ipv4 *ipv4 = NULL;
 
     json = api_param_get_input(param);
     ret = api_json_v1_update_list(json, "ipv4", "interface", &array, &count);
@@ -79,24 +68,24 @@ static struct api_ipv4_hdr *_api_ipv4_parse(void *param)
         return NULL;
     }
 
-    total = sizeof(*ipv4hdr) + count * sizeof(struct api_ipv4);
-    ipv4hdr = malloc(total);
-    if (ipv4hdr == NULL) {
+    total = sizeof(*ipv4) + count * sizeof(struct api_ipv4);
+    ipv4 = malloc(total);
+    if (ipv4 == NULL) {
         LOG_ERROR("OOM");
         api_param_set_error(param, API_ERRCODE_OOM);
         return NULL;
     }
 
-    memset(ipv4hdr, 0, total);
+    memset(ipv4, 0, total);
 
     for (int i = 0; i < count; i++) {
         int address_count = 0;
         const char *name = NULL;
         void *address_array = NULL;
         void *one = json_array_get(array, i);
-        struct api_ipv4 *ipv4 = &ipv4hdr->ipv4[i];
+        struct ipv4_interface *iface = &ipv4->iface[i];
 
-        ret = api_json_set(one, "name", (const void **)&name, JSON_STRING);
+        ret = api_json_get(one, "name", (const void **)&name, JSON_STRING);
         if (ret != 0) {
             api_param_set_error(param, ret);
             goto _quit;
@@ -108,7 +97,7 @@ static struct api_ipv4_hdr *_api_ipv4_parse(void *param)
             goto _quit;
         }
 
-        strcpy(ipv4->name, name);
+        strcpy(iface->name, name);
         ret = api_json_get(one, "address", (const void **)&address_array, JSON_ARRAY);
         if (ret != 0) {
             api_param_set_error(param, ret);
@@ -116,21 +105,21 @@ static struct api_ipv4_hdr *_api_ipv4_parse(void *param)
         }
 
         address_count = json_array_size(address_array);
-        ipv4->address = malloc(sizeof(*ipv4->address) * address_count);
-        if (ipv4->address == NULL) {
+        iface->address = malloc(sizeof(*iface->address) * address_count);
+        if (iface->address == NULL) {
             LOG_ERROR("OOM");
             api_param_set_error(param, API_ERRCODE_OOM);
             goto _quit;
         }
 
-        memset(ipv4->address, 0, sizeof(*ipv4->address) * address_count);
+        memset(iface->address, 0, sizeof(*iface->address) * address_count);
         ipv4->count = address_count;
 
         for (int j = 0; j < address_count; j++) {
             char *ip_value = NULL;
             json_int_t prefix_value = 0;
             void *addr_json = json_array_get(address_array, j);
-            struct api_ipv4_address *address = &ipv4->address[j];
+            struct interface_address *address = &iface->address[j];
 
             ret = api_json_get(addr_json, "ip", (const void **)&ip_value, JSON_STRING);
             if (ret != 0) {
@@ -152,13 +141,13 @@ static struct api_ipv4_hdr *_api_ipv4_parse(void *param)
             }
         }
 
-        ipv4hdr->count += 1;
+        ipv4->count += 1;
     }
 
-    return ipv4hdr;
+    return ipv4;
 
 _quit:
-    _api_ipv4_hdr_fini(ipv4hdr);
+    _api_ipv4_fini(ipv4);
     return NULL;
 }
 
@@ -190,15 +179,13 @@ static void *_api_ipv4_get(void *param, sr_data_t *data)
 
 API_POST(ipv4, /v1/ipv4)
 {
-    // void *json = NULL;
     // struct context *context = NULL;
-    struct api_ipv4_hdr *ipv4hdr = NULL;
+    struct api_ipv4 *ipv4 = NULL;
 
-    ipv4hdr = _api_ipv4_parse(param);
-    if (ipv4hdr == NULL) {
+    ipv4 = _api_ipv4_parse(param);
+    if (ipv4 == NULL) {
         return -1;
     }
-
 
     return 0;
 }
