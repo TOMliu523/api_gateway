@@ -65,8 +65,10 @@ static int _config_read_listener(struct boot_config *config)
         goto _quit;
     }
 
-    strcpy(config->address, value);
-    LOG_INFO("address: %s", config->address);
+    if (value != NULL) {
+        strcpy(config->address, value);
+        LOG_INFO("address: %s", config->address);
+    }
 
     ret = _config_read_value(data, "ipv4/http-port", &value);
     if (ret != 0) {
@@ -127,12 +129,13 @@ static int _config_submodule_init(void **pp_json, void *sess, char *xpath)
     }
 
     json = json_loads(str, 0, NULL);
-    free(str);
     if (json == NULL) {
         LOG_ERROR("String(%s) to json failure", str);
+        free(str);
         return -1;
     }
 
+    free(str);
     *pp_json = json;
     return 0;
 }
@@ -154,7 +157,7 @@ static int _config_init(void *sess, const char *module_name, void *param)
     module = ly_ctx_get_module_implemented(ly_ctx, module_name);
     if (module == NULL) {
         LOG_ERROR("Sysrepo (%s) not exist", module_name);
-        return -1;
+        goto _quit;
     }
 
     interface = api_get_all_post(&count);
@@ -176,7 +179,7 @@ static int _config_init(void *sess, const char *module_name, void *param)
         if (ret > 0) {
             continue;
         } else if (ret < 0) {
-            return -1;
+            goto _quit;
         }
 
         api_param_set_input(param, json);
@@ -186,13 +189,17 @@ static int _config_init(void *sess, const char *module_name, void *param)
 
         api_param_set_input(param, NULL);
         if (ret != 0) {
-            return -1;
+            goto _quit;
         }
 
         LOG_INFO("Load(%s) SUCCESS.", xpath);
     }
 
     return 0;
+
+_quit:
+    sr_release_context(conn);
+    return -1;
 }
 
 static int _config_update_exec(sr_session_ctx_t *sess, uint32_t sub_id, const char *module_name,
@@ -220,7 +227,6 @@ static int _config_update_exec(sr_session_ctx_t *sess, uint32_t sub_id, const ch
 
 static void _config_event(void **array, int nums)
 {
-
 }
 
 static void *_config_update_listen(void *arg)
@@ -299,6 +305,7 @@ static int _config_apply_changes(void *sess)
 
 static int _config_parse_json(void *sess, const char *body, size_t len, struct lyd_node **tree)
 {
+    int ret = 0;
     LY_ERR err = 0;
     void *conn = NULL;
     const struct ly_ctx *ly_ctx = NULL;
@@ -308,15 +315,21 @@ static int _config_parse_json(void *sess, const char *body, size_t len, struct l
     err = lyd_parse_data_mem(ly_ctx, body, LYD_JSON, LYD_PARSE_STRICT | LYD_PARSE_ONLY, 0, tree);
     if (err != LY_SUCCESS) {
         LOG_ERROR("Function(lyd_parse_data_mem) failure: %s", ly_strerr(err));
-        return API_STATUS_INTERNAL;
+        ret = API_STATUS_INTERNAL;
+        goto _quit;
     }
 
     if (*tree == NULL) {
         LOG_ERROR("Empty input");
-        return API_STATUS_FORMAT;
+        ret = API_STATUS_FORMAT;
+        goto _quit;
     }
 
     return API_STATUS_SUCCESS;
+
+_quit:
+    sr_release_data(conn);
+    return ret;
 }
 
 static int _config_post_check_node(const struct lyd_node *node, const struct lyd_node *current)
