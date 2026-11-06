@@ -123,7 +123,7 @@ static int _config_submodule_init(void **pp_json, void *sess, char *xpath)
         return -1;
     }
 
-    if (strcmp(str, "{}") == 0) {
+    if (strcmp(str, "{}") == 0 || strcmp(str, "[]") == 0) {
         free(str);
         return 1;
     }
